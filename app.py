@@ -8,10 +8,10 @@ import time
 import sqlite3
 from datetime import datetime
 
-st.set_page_config(page_title="Painel Inteligente de Custos - Capry", layout="wide")
+st.set_page_config(page_title="Painel de Custos & DRE Spoleto - Capry", layout="wide")
 
 # ----------------- CONTROLE DE LOGIN -----------------
-USUARIO_CORRETO = "Admin"
+USUARIO_CORRETO = "admin"
 SENHA_CORRETA = "massima"
 
 if "autenticado" not in st.session_state:
@@ -21,18 +21,14 @@ def tela_login():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("<br><br>", unsafe_allow_html=True)
-        st.markdown("### 🔐 Acesso ao Painel de Custos - Capry")
-        st.write("Digite suas credenciais para acessar o sistema:")
-        
+        st.markdown("### 🔐 Acesso ao Painel de Custos & DRE - Capry")
+        st.write("Digite suas credenciais:")
         with st.form("form_login"):
-            usuario = st.text_input("Usuário", placeholder="Digite o usuário")
-            senha = st.text_input("Senha", type="password", placeholder="Digite a senha")
-            botao_entrar = st.form_submit_button("Entrar", type="primary", use_container_width=True)
-
-            if botao_entrar:
+            usuario = st.text_input("Usuário", placeholder="admin")
+            senha = st.text_input("Senha", type="password", placeholder="massima")
+            if st.form_submit_button("Entrar", type="primary", use_container_width=True):
                 if usuario == USUARIO_CORRETO and senha == SENHA_CORRETA:
                     st.session_state.autenticado = True
-                    st.success("Login efetuado com sucesso!")
                     st.rerun()
                 else:
                     st.error("❌ Usuário ou senha incorretos!")
@@ -41,34 +37,18 @@ if not st.session_state.autenticado:
     tela_login()
     st.stop()
 
-# Botão de Logout no menu lateral
 st.sidebar.write(f"👤 Logado como: **{USUARIO_CORRETO}**")
 if st.sidebar.button("🚪 Sair do Sistema"):
     st.session_state.autenticado = False
     st.rerun()
 st.sidebar.markdown("---")
 
-# CSS para expandir o visor da câmera
+# CSS para visor expandido da câmara
 st.markdown("""
 <style>
-div[data-testid="stCameraInput"] {
-    width: 100% !important;
-    max-width: 900px !important;
-    margin: 0 auto;
-}
-div[data-testid="stCameraInput"] video {
-    width: 100% !important;
-    height: 70vh !important;
-    min-height: 480px !important;
-    border-radius: 14px;
-    object-fit: cover !important;
-    border: 2px solid #ff4b4b;
-}
-div[data-testid="stCameraInput"] button {
-    padding: 0.75rem 1.5rem !important;
-    font-size: 1.1rem !important;
-    border-radius: 10px !important;
-}
+div[data-testid="stCameraInput"] { width: 100% !important; max-width: 900px !important; margin: 0 auto; }
+div[data-testid="stCameraInput"] video { width: 100% !important; height: 70vh !important; min-height: 480px !important; border-radius: 14px; object-fit: cover !important; border: 2px solid #ff4b4b; }
+div[data-testid="stCameraInput"] button { padding: 0.75rem 1.5rem !important; font-size: 1.1rem !important; border-radius: 10px !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -79,11 +59,36 @@ def init_db():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS notas (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mes_referencia TEXT,
             data_registo TEXT,
             razao_social TEXT,
             cnpj TEXT,
             valor_total REAL,
             itens_json TEXT
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS lancamentos_dre (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mes_referencia TEXT,
+            data TEXT,
+            fornecedor TEXT,
+            descricao TEXT,
+            valor REAL,
+            dre TEXT,
+            classificacao TEXT,
+            detalhamento TEXT
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS dados_mensais (
+            mes_referencia TEXT PRIMARY KEY,
+            fat_balcao REAL DEFAULT 0,
+            fat_delivery REAL DEFAULT 0,
+            imposto_estadual REAL DEFAULT 0,
+            gas REAL DEFAULT 0,
+            terceiros REAL DEFAULT 0,
+            bonificacao REAL DEFAULT 0
         )
     """)
     cursor.execute("""
@@ -97,68 +102,125 @@ def init_db():
 
 init_db()
 
-def salvar_nota(razao_social, cnpj, valor_total, lista_produtos):
+# Meses de Out/2026 até Dez/2027
+MESES_DISPONIVEIS = [
+    "2026-10", "2026-11", "2026-12",
+    "2027-01", "2027-02", "2027-03", "2027-04", "2027-05", "2027-06",
+    "2027-07", "2027-08", "2027-09", "2027-10", "2027-11", "2027-12"
+]
+NOMES_MESES = {
+    "2026-10": "Outubro / 2026", "2026-11": "Novembro / 2026", "2026-12": "Dezembro / 2026",
+    "2027-01": "Janeiro / 2027", "2027-02": "Fevereiro / 2027", "2027-03": "Março / 2027",
+    "2027-04": "Abril / 2027", "2027-05": "Maio / 2027", "2027-06": "Junho / 2027",
+    "2027-07": "Julho / 2027", "2027-08": "Agosto / 2027", "2027-09": "Setembro / 2027",
+    "2027-10": "Outubro / 2027", "2027-11": "Novembro / 2027", "2027-12": "Dezembro / 2027"
+}
+
+# Seletor global do mês no topo da barra lateral
+mes_ativo = st.sidebar.selectbox(
+    "📅 Mês de Trabalho (DRE):",
+    MESES_DISPONIVEIS,
+    index=0,
+    format_func=lambda m: NOMES_MESES[m]
+)
+st.sidebar.markdown("---")
+
+MAPA_DRE_REGRAS = {
+    "Alimentos": {"desc": "ALIMENTOS", "dre": "Alimentos", "class": "Demais Alimentos", "det": "Alimentos"},
+    "Bebidas": {"desc": "BEBIDAS", "dre": "Bebidas", "class": "Bebidas", "det": "Bebidas"},
+    "Descartáveis": {"desc": "DESCARTAVEIS", "dre": "Descartáveis", "class": "Embalagens E Descartáveis", "det": "Descartáveis"},
+    "Limpeza": {"desc": "LIMPEZA", "dre": "Material_De_Uso_E_Consumo", "class": "Material De Limpeza", "det": "Material De Limpeza"},
+    "Funcionários": {"desc": "FUNCIONARIO", "dre": "Pessoal", "class": "Alimentação Funcionário", "det": "Benefícios"},
+    "Utensílios": {"desc": "UTENSILIOS", "dre": "Material_De_Uso_E_Consumo", "class": "Utensílios De Cozinha", "det": "Utensílios"}
+}
+
+def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_produtos):
     conn = sqlite3.connect("notas_fiscais.db")
     cursor = conn.cursor()
-    data_registo = datetime.now().strftime("%d/%m/%Y %H:%M")
+    data_registo = datetime.now().strftime("%Y-%m-%d %H:%M")
     itens_json = json.dumps(lista_produtos, ensure_ascii=False)
     cursor.execute("""
-        INSERT INTO notas (data_registo, razao_social, cnpj, valor_total, itens_json)
-        VALUES (?, ?, ?, ?, ?)
-    """, (data_registo, razao_social, cnpj, valor_total, itens_json))
-    
-    for item in lista_produtos:
-        prod = str(item.get("Produto", "")).strip().upper()
-        cat = str(item.get("Categoria", "")).strip()
-        if prod:
-            cursor.execute("""
-                INSERT INTO regras_classificacao (produto, categoria)
-                VALUES (?, ?)
-                ON CONFLICT(produto) DO UPDATE SET categoria=excluded.categoria
-            """, (prod, cat))
-            
+        INSERT INTO notas (mes_referencia, data_registo, razao_social, cnpj, valor_total, itens_json)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (mes_ref, data_registo, razao_social, cnpj, valor_total, itens_json))
+
+    # Agrupar itens por categoria e lançar na tabela de DRE
+    df_temp = pd.DataFrame(lista_produtos)
+    if not df_temp.empty:
+        col_tot = "TotalItem" if "TotalItem" in df_temp.columns else "Total do Item (R$)"
+        totais = df_temp.groupby("Categoria")[col_tot].sum().to_dict()
+        data_hoje = datetime.now().strftime("%Y-%m-%d")
+
+        for cat, v in totais.items():
+            if v > 0:
+                cfg = MAPA_DRE_REGRAS.get(cat, {
+                    "desc": cat.upper(), "dre": "Alimentos", "class": "Demais Alimentos", "det": "Alimentos"
+                })
+                cursor.execute("""
+                    INSERT INTO lancamentos_dre (mes_referencia, data, fornecedor, descricao, valor, dre, classificacao, detalhamento)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (mes_ref, data_hoje, razao_social.upper(), cfg["desc"], float(v), cfg["dre"], cfg["class"], cfg["det"]))
+
+        # Memorizar regras
+        for item in lista_produtos:
+            prod = str(item.get("Produto", "")).strip().upper()
+            c = str(item.get("Categoria", "")).strip()
+            if prod:
+                cursor.execute("""
+                    INSERT INTO regras_classificacao (produto, categoria)
+                    VALUES (?, ?)
+                    ON CONFLICT(produto) DO UPDATE SET categoria=excluded.categoria
+                """, (prod, c))
+
     conn.commit()
     conn.close()
 
 def carregar_regras():
     conn = sqlite3.connect("notas_fiscais.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT produto, categoria FROM regras_classificacao")
-    regras = {row[0]: row[1] for row in cursor.fetchall()}
+    c = conn.cursor()
+    c.execute("SELECT produto, categoria FROM regras_classificacao")
+    r = {row[0]: row[1] for row in c.fetchall()}
     conn.close()
-    return regras
+    return r
 
-def listar_notas():
+def obter_lancamentos_mes(mes_ref):
     conn = sqlite3.connect("notas_fiscais.db")
-    df = pd.read_sql_query("SELECT id, data_registo, razao_social, cnpj, valor_total FROM notas ORDER BY id DESC", conn)
+    df = pd.read_sql_query("SELECT id, data, fornecedor, descricao, valor, dre, classificacao, detalhamento FROM lancamentos_dre WHERE mes_referencia = ? ORDER BY id DESC", conn, params=(mes_ref,))
     conn.close()
     return df
 
-def obter_detalhes_nota(nota_id):
+def obter_dados_mensais(mes_ref):
     conn = sqlite3.connect("notas_fiscais.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT itens_json, valor_total, razao_social FROM notas WHERE id = ?", (nota_id,))
-    linha = cursor.fetchone()
+    c = conn.cursor()
+    c.execute("SELECT fat_balcao, fat_delivery, imposto_estadual, gas, terceiros, bonificacao FROM dados_mensais WHERE mes_referencia = ?", (mes_ref,))
+    row = c.fetchone()
     conn.close()
-    if linha:
-        itens = json.loads(linha[0])
-        return itens, linha[1], linha[2]
-    return [], 0.0, ""
+    if row:
+        return {"balcao": row[0], "delivery": row[1], "imposto_est": row[2], "gas": row[3], "terceiros": row[4], "bonificacao": row[5]}
+    return {"balcao": 0.0, "delivery": 0.0, "imposto_est": 0.0, "gas": 0.0, "terceiros": 0.0, "bonificacao": 0.0}
 
-def excluir_nota(nota_id):
+def salvar_dados_mensais(mes_ref, dados):
     conn = sqlite3.connect("notas_fiscais.db")
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM notas WHERE id = ?", (nota_id,))
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO dados_mensais (mes_referencia, fat_balcao, fat_delivery, imposto_estadual, gas, terceiros, bonificacao)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(mes_referencia) DO UPDATE SET
+            fat_balcao=excluded.fat_balcao,
+            fat_delivery=excluded.fat_delivery,
+            imposto_estadual=excluded.imposto_estadual,
+            gas=excluded.gas,
+            terceiros=excluded.terceiros,
+            bonificacao=excluded.bonificacao
+    """, (mes_ref, dados["balcao"], dados["delivery"], dados["imposto_est"], dados["gas"], dados["terceiros"], dados["bonificacao"]))
     conn.commit()
     conn.close()
 
-# ----------------- CONFIGURAÇÕES & IA -----------------
-st.title("🛒 Painel Inteligente de Custos - Capry Comércio")
-
+# ----------------- CONFIGURAÇÕES IA -----------------
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
 except Exception:
-    st.error("⚠️ Chave de API não encontrada! Configure o secrets.toml com GEMINI_API_KEY.")
+    st.error("⚠️ Configure a GEMINI_API_KEY no arquivo .streamlit/secrets.toml.")
     st.stop()
 
 LISTA_CATEGORIAS = ["Alimentos", "Descartáveis", "Limpeza", "Funcionários", "Utensílios", "Bebidas"]
@@ -167,414 +229,415 @@ MODELOS_IA = ["gemini-3.8-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
 
 def chamar_gemini_com_fallback(chave, conteudos):
     client = genai.Client(api_key=chave)
-    ultimo_erro = None
-    for modelo in MODELOS_IA:
+    ultimo = None
+    for m in MODELOS_IA:
         for _ in range(2):
             try:
-                response = client.models.generate_content(
-                    model=modelo,
+                res = client.models.generate_content(
+                    model=m,
                     contents=conteudos,
                     config=types.GenerateContentConfig(response_mime_type="application/json"),
                 )
-                if response.text:
-                    return json.loads(response.text)
+                if res.text:
+                    return json.loads(res.text)
             except Exception as e:
-                ultimo_erro = e
+                ultimo = e
                 time.sleep(2)
                 continue
-    st.error(f"Erro ao processar com a IA: {ultimo_erro}")
+    st.error(f"Erro IA: {ultimo}")
     return None
 
-def processar_com_ia(conteudo_texto, nome_arquivo, chave):
+def processar_multiplas_imagens_com_ia(partes_img, chave):
     regras = carregar_regras()
-    exemplo_regras = json.dumps(regras, ensure_ascii=False) if regras else "Nenhuma ainda."
-    
+    ex_regras = json.dumps(regras, ensure_ascii=False) if regras else "Nenhuma ainda."
     prompt = f"""
-    Você é o assistente financeiro da empresa Capry Comércio Varejista de Alimentos LTDA.
-    Analise o seguinte conteúdo extraído do ficheiro '{nome_arquivo}'.
-    Classifique cada item obrigatoriamente entre: {CATEGORIAS_VALIDAS}.
-    
-    IMPORTANTE: Dê prioridade a estas classificações memorizadas anteriormente pelo utilizador:
-    {exemplo_regras}
+    Você é o assistente financeiro da franquia Spoleto (Capry Comércio).
+    Analise as imagens anexadas do cupom/nota fiscal.
+    Categorias obrigatórias: {CATEGORIAS_VALIDAS}.
+    Priorize este histórico de regras: {ex_regras}
+    Extraia: 'razao_social', 'cnpj', 'valor_total' (float) e 'itens' [Produto, Quantidade, Unid, PrecoUnitario, TotalItem, Categoria].
+    Retorne APENAS um JSON válido.
+    """
+    return chamar_gemini_com_fallback(chave, [prompt] + partes_img)
 
-    Retorne APENAS um JSON no formato de lista de dicionários com:
-    "Produto", "Quantidade", "Unid", "PrecoUnitario", "TotalItem", "Categoria".
-    Conteúdo:
-    {conteudo_texto[:15000]}
+def processar_texto_com_ia(texto, nome_arq, chave):
+    regras = carregar_regras()
+    ex_regras = json.dumps(regras, ensure_ascii=False) if regras else "Nenhuma."
+    prompt = f"""
+    Analise o arquivo '{nome_arq}'. Categorias obrigatórias: {CATEGORIAS_VALIDAS}.
+    Regras conhecidas: {ex_regras}.
+    Retorne lista JSON com: Produto, Quantidade, Unid, PrecoUnitario, TotalItem, Categoria.
+    Texto: {texto[:15000]}
     """
     res = chamar_gemini_com_fallback(chave, prompt)
     return res if isinstance(res, list) else []
 
-def processar_multiplas_imagens_com_ia(lista_partes_imagem, chave):
+def categorizar_nomes_xml(nomes, chave):
     regras = carregar_regras()
-    exemplo_regras = json.dumps(regras, ensure_ascii=False) if regras else "Nenhuma ainda."
-    
-    prompt = f"""
-    Você é o assistente financeiro da empresa Capry Comércio Varejista de Alimentos LTDA.
-    Analise as imagens anexadas que compõem uma ou mais páginas da mesma nota/cupão fiscal.
-    Junte todos os itens de todas as fotos sem duplicar, totalizando a compra completa.
-    
-    Categorias válidas: {CATEGORIAS_VALIDAS}.
-    IMPORTANTE: Respeite rigorosamente as preferências já ensinadas pelo utilizador:
-    {exemplo_regras}
-
-    Extraia:
-    1. 'razao_social': Nome do estabelecimento / fornecedor.
-    2. 'cnpj': CNPJ do emitente.
-    3. 'valor_total': Valor total final da nota (float).
-    4. 'itens': Lista com cada item comprado ("Produto", "Quantidade", "Unid", "PrecoUnitario", "TotalItem", "Categoria").
-
-    Retorne APENAS um JSON:
-    {{
-      "razao_social": "...",
-      "cnpj": "...",
-      "valor_total": 0.0,
-      "itens": [{{"Produto": "...", "Quantidade": 1.0, "Unid": "UN", "PrecoUnitario": 10.0, "TotalItem": 10.0, "Categoria": "Alimentos"}}]
-    }}
-    """
-    conteudos = [prompt] + lista_partes_imagem
-    return chamar_gemini_com_fallback(chave, conteudos)
-
-def categorizar_nomes_xml(lista_nomes, chave):
-    regras = carregar_regras()
-    mapa = {}
-    pendentes = []
-    for nome in lista_nomes:
-        if nome.strip().upper() in regras:
-            mapa[nome] = regras[nome.strip().upper()]
-        else:
-            pendentes.append(nome)
-            
-    if pendentes:
-        prompt = f"""
-        Classifique cada produto da lista abaixo estritamente em uma das categorias: {CATEGORIAS_VALIDAS}.
-        Retorne APENAS um JSON com o par produto: categoria.
-        Produtos: {json.dumps(pendentes, ensure_ascii=False)}
-        """
-        res = chamar_gemini_com_fallback(chave, prompt)
+    mapa = {n: regras[n.strip().upper()] for n in nomes if n.strip().upper() in regras}
+    faltam = [n for n in nomes if n.strip().upper() not in regras]
+    if faltam:
+        p = f"Classifique os itens em {CATEGORIAS_VALIDAS}: {json.dumps(faltam, ensure_ascii=False)}. Retorne JSON objeto {{\"nome\": \"categoria\"}}."
+        res = chamar_gemini_com_fallback(chave, p)
         if isinstance(res, dict):
             mapa.update(res)
     return mapa
+
+# ----------------- NAVEGAÇÃO -----------------
+menu = st.sidebar.radio("Módulo:", [
+    f"📊 DRE Spoleto ({NOMES_MESES[mes_ativo]})",
+    "📸 Escanear & Alimentar Nota",
+    "📝 Lançamentos do Mês",
+    "🧠 Regras Inteligentes"
+])
 
 if "fotos_acumuladas" not in st.session_state:
     st.session_state.fotos_acumuladas = []
 if "dados_extraidos" not in st.session_state:
     st.session_state.dados_extraidos = None
 
-# ----------------- NAVEGAÇÃO -----------------
-menu_principal = st.sidebar.radio("Navegação:", ["📄 Capturar / Enviar Nota", "🗄️ Histórico & Consultas", "🧠 Dicionário de Classificações"])
+# ==============================================================================
+# 1. ABA DO DRE OFICIAL (WEB INTERATIVO)
+# ==============================================================================
+if menu.startswith("📊 DRE Spoleto"):
+    st.subheader(f"📊 Demonstrativo de Resultados (DRE) — {NOMES_MESES[mes_ativo]}")
+    st.write(f"Todos os custos escaneados neste mês entram automaticamente no cálculo de CMV e despesas operacionais abaixo[cite: 7, 8].")
 
-if menu_principal == "📄 Capturar / Enviar Nota":
-    st.info("💡 **Dica:** Pode capturar ou anexar várias fotos da mesma nota. Elas ficam acumuladas até clicar no botão verde de processar!")
+    # Obter parâmetros mensais
+    dm = obter_dados_mensais(mes_ativo)
     
-    aba_alta_res, aba_camera_web, aba_ficheiros = st.tabs([
-        "📸 Fotos Nítidas (Telemóvel / Galeria)", 
-        "🖥️ Câmara ao Vivo", 
-        "📁 Ficheiro (XML / Excel / PDF)"
+    with st.expander("⚙️ Informar Faturamento & Dados de Venda do Mês", expanded=(dm["balcao"] == 0 and dm["delivery"] == 0)):
+        c_fb, c_fd, c_ie, c_gas, c_terc, c_bon = st.columns(6)
+        with c_fb:
+            fat_b = st.number_input("Fat. Balcão (R$)", value=float(dm["balcao"]), step=100.0)
+        with c_fd:
+            fat_d = st.number_input("Fat. Delivery (R$)", value=float(dm["delivery"]), step=100.0)
+        with c_ie:
+            imp_e = st.number_input("Imposto Estadual (R$)", value=float(dm["imposto_est"]), step=50.0)
+        with c_gas:
+            val_gas = st.number_input("Gás (R$)", value=float(dm["gas"]), step=50.0)
+        with c_terc:
+            val_terc = st.number_input("Serv. Terceiros (R$)", value=float(dm["terceiros"]), step=100.0)
+        with c_bon:
+            val_bon = st.number_input("Bonificações (R$)", value=float(dm["bonificacao"]), step=50.0)
+            
+        if st.button("💾 Salvar Parâmetros de Venda do Mês"):
+            salvar_dados_mensais(mes_ativo, {
+                "balcao": fat_b, "delivery": fat_d, "imposto_est": imp_e,
+                "gas": val_gas, "terceiros": val_terc, "bonificacao": val_bon
+            })
+            st.success("Dados salvos e DRE atualizado!")
+            st.rerun()
+
+    # Cálculos exatos das fórmulas do DRE Spoleto
+    df_l = obter_lancamentos_mes(mes_ativo)
+    somas_det = df_l.groupby("detalhamento")["valor"].sum().to_dict() if not df_l.empty else {}
+
+    def get_v(det_nome):
+        return float(somas_det.get(det_nome, 0.0))
+
+    venda_bruta = dm["balcao"] + dm["delivery"]
+    imposto_fed = get_v("Imposto Federal")
+    imposto_est = dm["imposto_est"]
+    rec_liquida = venda_bruta - (imposto_fed + imposto_est)
+
+    # CMV
+    cmv_alimentos = get_v("Alimentos")
+    cmv_bebidas = get_v("Bebidas")
+    cmv_descartaveis = get_v("Descartáveis")
+    cmv_fretes = get_v("Fretes")
+    subtotal_cmv = cmv_alimentos + cmv_bebidas + cmv_descartaveis
+    total_cmv = subtotal_cmv + cmv_fretes
+    lucro_bruto = rec_liquida - total_cmv
+
+    # Ocupação
+    ocup_aluguel = get_v("Aluguel")
+    ocup_ar = get_v("Ar Condicionado")
+    ocup_condo = get_v("Condomínio")
+    ocup_fundo = get_v("Fundo De Promoção")
+    ocup_iptu = get_v("Iptu")
+    ocup_taxas = get_v("Taxas E Outros")
+    total_ocupacao = ocup_aluguel + ocup_ar + ocup_condo + ocup_fundo + ocup_iptu + ocup_taxas
+
+    # Pessoal
+    pess_salario = get_v("Salário")
+    pess_adiant = get_v("Adiantamento")
+    pess_benef = get_v("Benefícios")  # Alimentação funcionário cai aqui
+    pess_encargos = get_v("Encargos")
+    pess_ferias = get_v("Férias")
+    pess_13 = get_v("13 Salário")
+    pess_provis = get_v("Provisões")
+    pess_rescisao = get_v("Rescisão")
+    pess_outros = get_v("Outros (pessoal)")
+    total_pessoal = pess_salario + pess_adiant + pess_benef + pess_encargos + pess_ferias + pess_13 + pess_provis + pess_rescisao + pess_outros
+
+    # Utilidades
+    util_agua = get_v("Água E Esgoto")
+    util_energia = get_v("Energia Elétrica")
+    util_gas = dm["gas"] + get_v("Gás")
+    util_internet = get_v("Internet")
+    util_tel = get_v("Telefone")
+    util_outros = get_v("Outros (utilidades)")
+    total_utilidades = util_agua + util_energia + util_gas + util_internet + util_tel + util_outros
+
+    # Serviços / Terceiros
+    serv_proprios = get_v("Serviços")
+    serv_terceiros = dm["terceiros"] + get_v("Terceiros")
+    total_servicos = serv_proprios + serv_terceiros
+
+    # Material de Uso e Consumo
+    mat_escritorio = get_v("Material De Escritório")
+    mat_limpeza = get_v("Material De Limpeza")
+    mat_uniformes = get_v("Uniformes")
+    mat_utensilios = get_v("Utensílios")
+    mat_outros = get_v("Outros Materiais De Uso E Consumo")
+    total_materiais = mat_escritorio + mat_limpeza + mat_uniformes + mat_utensilios + mat_outros
+
+    # Manutenção
+    manut_serv = get_v("Serviço - Manutenção E Reparos")
+    manut_mat = get_v("Material - Manutenção E Reparos")
+    total_manutencao = manut_serv + manut_mat
+
+    # Delivery & Marketing & Franqueador & Financeiro
+    total_delivery = get_v("Custo Com Entrega (Motoqueiros)") + get_v("Comissão Agregadores")
+    total_marketing = get_v("Anúncios/Propagandas") + get_v("Fundo De Marketing") + get_v("Royalties")
+    total_financeiro = get_v("Custo Cartão De Crédito") + get_v("Custo Cartão De Débito")
+
+    total_despesas_operacionais = (
+        imposto_fed + imposto_est + total_cmv + total_ocupacao + total_pessoal +
+        total_utilidades + total_servicos + total_materiais + total_manutencao +
+        total_delivery + total_marketing + total_financeiro
+    )
+    resultado_operacional = venda_bruta - total_despesas_operacionais
+    resultado_final = resultado_operacional + dm["bonificacao"]
+
+    # Montagem da tabela visual idêntica ao Spoleto
+    def fmt_pct(val):
+        if venda_bruta > 0:
+            return f"{(val / venda_bruta) * 100:.2f}%"
+        return "0.00%"
+
+    linhas_dre = [
+        {"CONTA": "🔹 VENDA BRUTA", "VALOR": venda_bruta, "%": "100.00%"},
+        {"CONTA": "  • Faturamento Balcão", "VALOR": dm["balcao"], "%": fmt_pct(dm["balcao"])},
+        {"CONTA": "  • Faturamento Delivery", "VALOR": dm["delivery"], "%": fmt_pct(dm["delivery"])},
+        {"CONTA": "(-) Imposto Federal", "VALOR": imposto_fed, "%": fmt_pct(imposto_fed)},
+        {"CONTA": "(-) Imposto Estadual", "VALOR": imposto_est, "%": fmt_pct(imposto_est)},
+        {"CONTA": "🔹 RECEITA LÍQUIDA", "VALOR": rec_liquida, "%": fmt_pct(rec_liquida)},
+        {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
+        {"CONTA": "📦 C M V (Custo de Mercadoria Vendida)", "VALOR": total_cmv, "%": fmt_pct(total_cmv)},
+        {"CONTA": "  • Alimentos (Escaneado)", "VALOR": cmv_alimentos, "%": fmt_pct(cmv_alimentos)},
+        {"CONTA": "  • Bebidas (Escaneado)", "VALOR": cmv_bebidas, "%": fmt_pct(cmv_bebidas)},
+        {"CONTA": "  • Descartáveis (Escaneado)", "VALOR": cmv_descartaveis, "%": fmt_pct(cmv_descartaveis)},
+        {"CONTA": "  • Fretes", "VALOR": cmv_fretes, "%": fmt_pct(cmv_fretes)},
+        {"CONTA": "🔹 LUCRO BRUTO", "VALOR": lucro_bruto, "%": fmt_pct(lucro_bruto)},
+        {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
+        {"CONTA": "🏢 TOTAL OCUPAÇÃO", "VALOR": total_ocupacao, "%": fmt_pct(total_ocupacao)},
+        {"CONTA": "  • Aluguel / Condomínio / Fundo", "VALOR": ocup_aluguel + ocup_condo + ocup_fundo, "%": fmt_pct(ocup_aluguel + ocup_condo + ocup_fundo)},
+        {"CONTA": "👥 TOTAL PESSOAL", "VALOR": total_pessoal, "%": fmt_pct(total_pessoal)},
+        {"CONTA": "  • Alimentação Funcionários (Escaneado)", "VALOR": pess_benef, "%": fmt_pct(pess_benef)},
+        {"CONTA": "💡 TOTAL UTILIDADES (Água, Energia, Gás)", "VALOR": total_utilidades, "%": fmt_pct(total_utilidades)},
+        {"CONTA": "🧹 MATERIAIS DE USO & LIMPEZA (Escaneado)", "VALOR": total_materiais, "%": fmt_pct(total_materiais)},
+        {"CONTA": "  • Material de Limpeza", "VALOR": mat_limpeza, "%": fmt_pct(mat_limpeza)},
+        {"CONTA": "  • Utensílios de Cozinha", "VALOR": mat_utensilios, "%": fmt_pct(mat_utensilios)},
+        {"CONTA": "🔧 MANUTENÇÃO", "VALOR": total_manutencao, "%": fmt_pct(total_manutencao)},
+        {"CONTA": "🛵 DELIVERY & TAXAS", "VALOR": total_delivery, "%": fmt_pct(total_delivery)},
+        {"CONTA": "📢 MARKETING & FRANQUEADOR", "VALOR": total_marketing, "%": fmt_pct(total_marketing)},
+        {"CONTA": "💳 CUSTO FINANCEIRO (Cartões)", "VALOR": total_financeiro, "%": fmt_pct(total_financeiro)},
+        {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
+        {"CONTA": "🔴 TOTAL DESPESAS GERAIS", "VALOR": total_despesas_operacionais, "%": fmt_pct(total_despesas_operacionais)},
+        {"CONTA": "🏆 RESULTADO OPERACIONAL", "VALOR": resultado_operacional, "%": fmt_pct(resultado_operacional)},
+        {"CONTA": "💰 RESULTADO FINAL LÍQUIDO", "VALOR": resultado_final, "%": fmt_pct(resultado_final)}
+    ]
+
+    df_view = pd.DataFrame(linhas_dre)
+    df_view["VALOR"] = df_view["VALOR"].apply(lambda x: f"R$ {x:,.2f}" if pd.notnull(x) else "")
+    st.dataframe(df_view, use_container_width=True, height=750)
+
+# ==============================================================================
+# 2. ABA DE ESCANEAR NOTA & ALIMENTAR DRE AUTOMATICAMENTE
+# ==============================================================================
+elif menu.startswith("📸 Escanear"):
+    st.subheader(f"📸 Escanear Nota Fiscal para o DRE de: {NOMES_MESES[mes_ativo]}")
+    st.info(f"Ao confirmar o salvamento, todos os itens serão classificados e entrarão direto no DRE de **{NOMES_MESES[mes_ativo]}**[cite: 7, 8]!")
+
+    aba_foto, aba_cam, aba_arq = st.tabs([
+        "📸 Fotos Nítidas (Telemóvel / Galeria)",
+        "🖥️ Câmara ao Vivo",
+        "📁 Arquivo (XML / Excel / PDF)"
     ])
 
-    with aba_alta_res:
-        fotos_upload = st.file_uploader(
-            "Selecione uma ou mais fotos do documento (permite fotos múltiplas):", 
-            type=["jpg", "jpeg", "png", "webp"], 
-            accept_multiple_files=True,
-            key="upload_multiplas_fotos"
-        )
-        if fotos_upload:
-            if st.button("➕ Adicionar estas fotos à lista de espera", key="btn_add_upload"):
-                for f in fotos_upload:
-                    st.session_state.fotos_acumuladas.append({
-                        "bytes": f.getvalue(),
-                        "mime": "image/jpeg" if f.name.lower().endswith(('jpg', 'jpeg')) else f"image/{f.name.split('.')[-1].lower()}",
-                        "nome": f.name
-                    })
-                st.success(f"{len(fotos_upload)} foto(s) adicionada(s)!")
-
-    with aba_camera_web:
-        foto_web = st.camera_input("Tire uma foto", key="camera_viva")
-        if foto_web is not None:
-            if st.button("➕ Adicionar esta foto capturada", key="btn_add_camera"):
+    with aba_foto:
+        f_upload = st.file_uploader("Fotos do cupom/nota:", type=["jpg", "jpeg", "png", "webp"], accept_multiple_files=True)
+        if f_upload and st.button("➕ Adicionar fotos à fila"):
+            for f in f_upload:
                 st.session_state.fotos_acumuladas.append({
-                    "bytes": foto_web.getvalue(),
-                    "mime": "image/jpeg",
-                    "nome": f"foto_cam_{len(st.session_state.fotos_acumuladas) + 1}.jpg"
+                    "bytes": f.getvalue(),
+                    "mime": "image/jpeg" if f.name.lower().endswith(('jpg', 'jpeg')) else f"image/{f.name.split('.')[-1].lower()}"
                 })
-                st.success("Foto adicionada à lista de espera!")
+            st.success(f"{len(f_upload)} foto(s) pronta(s)!")
+
+    with aba_cam:
+        f_cam = st.camera_input("Capturar foto")
+        if f_cam and st.button("➕ Adicionar captura à fila"):
+            st.session_state.fotos_acumuladas.append({"bytes": f_cam.getvalue(), "mime": "image/jpeg"})
+            st.success("Foto capturada adicionada!")
 
     if st.session_state.fotos_acumuladas:
-        st.write(f"### 📷 Fotos prontas para leitura: **{len(st.session_state.fotos_acumuladas)} foto(s)**")
-        col_c1, col_c2 = st.columns([2, 1])
-        with col_c1:
-            if st.button("🚀 Processar Fotos Acumuladas com a IA", type="primary", use_container_width=True):
+        st.write(f"**Total acumulado:** {len(st.session_state.fotos_acumuladas)} foto(s)")
+        c1, c2 = st.columns([2, 1])
+        with c1:
+            if st.button("🚀 Processar Fotos com IA & Alimentar DRE", type="primary", use_container_width=True):
                 partes = [types.Part.from_bytes(data=f["bytes"], mime_type=f["mime"]) for f in st.session_state.fotos_acumuladas]
-                with st.spinner("🤖 A IA está a juntar e analisar todas as páginas da nota..."):
+                with st.spinner("🤖 Lendo itens e classificando categorias do Spoleto..."):
                     res = processar_multiplas_imagens_com_ia(partes, api_key)
                     if res and isinstance(res, dict):
                         st.session_state.dados_extraidos = {
-                            "razao_social": res.get('razao_social') or "Fornecedor não identificado",
-                            "cnpj": res.get('cnpj') or "Não informado",
-                            "valor_total": float(res.get('valor_total') or 0.0),
-                            "itens": res.get('itens', [])
+                            "razao_social": res.get("razao_social") or "Fornecedor",
+                            "cnpj": res.get("cnpj") or "Não informado",
+                            "valor_total": float(res.get("valor_total") or 0.0),
+                            "itens": res.get("itens", [])
                         }
                         st.session_state.fotos_acumuladas = []
                         st.rerun()
-        with col_c2:
-            if st.button("🗑️ Limpar Fotos", use_container_width=True):
+        with c2:
+            if st.button("🗑️ Descartar Fotos", use_container_width=True):
                 st.session_state.fotos_acumuladas = []
                 st.rerun()
 
-    with aba_ficheiros:
-        arquivo_doc = st.file_uploader("Envie XML, PDF ou Excel", type=["xml", "xlsx", "xls", "pdf"], key="doc_file")
-        if arquivo_doc is not None and st.button("Processar Ficheiro"):
-            ext = arquivo_doc.name.split('.')[-1].lower()
-            if ext == 'xml':
-                data = xmltodict.parse(arquivo_doc.read())
-                inf_nfe = data.get('nfeProc', data).get('NFe', {}).get('infNFe', {})
-                emitente = inf_nfe.get('emit', {})
-                total = inf_nfe.get('total', {}).get('ICMSTot', {})
-                detalhes = inf_nfe.get('det', [])
-                if not isinstance(detalhes, list):
-                    detalhes = [detalhes]
-                nomes = [i.get('prod', {}).get('xProd', '') for i in detalhes]
-                mapa_cat = categorizar_nomes_xml(nomes, api_key)
-                
-                itens_xml = []
-                for item in detalhes:
-                    prod = item.get('prod', {})
-                    nome = prod.get('xProd', 'Desconhecido')
-                    itens_xml.append({
-                        "Categoria": mapa_cat.get(nome, 'Alimentos'),
-                        "Produto": nome,
-                        "Quantidade": float(prod.get('qCom', 0)),
-                        "Unid": prod.get('uCom', ''),
-                        "PrecoUnitario": float(prod.get('vUnCom', 0)),
-                        "TotalItem": float(prod.get('vProd', 0))
+    with aba_arq:
+        doc = st.file_uploader("Enviar XML, PDF ou Excel:", type=["xml", "xlsx", "xls", "pdf"])
+        if doc and st.button("Processar Arquivo"):
+            ext = doc.name.split(".")[-1].lower()
+            if ext == "xml":
+                data = xmltodict.parse(doc.read())
+                inf = data.get("nfeProc", data).get("NFe", {}).get("infNFe", {})
+                emit = inf.get("emit", {})
+                tot = inf.get("total", {}).get("ICMSTot", {})
+                det = inf.get("det", [])
+                if not isinstance(det, list):
+                    det = [det]
+                nomes = [i.get("prod", {}).get("xProd", "") for i in det]
+                mapa = categorizar_nomes_xml(nomes, api_key)
+                itens_x = []
+                for i in det:
+                    p = i.get("prod", {})
+                    nm = p.get("xProd", "")
+                    itens_x.append({
+                        "Categoria": mapa.get(nm, "Alimentos"),
+                        "Produto": nm,
+                        "Quantidade": float(p.get("qCom", 0)),
+                        "Unid": p.get("uCom", "UN"),
+                        "PrecoUnitario": float(p.get("vUnCom", 0)),
+                        "TotalItem": float(p.get("vProd", 0))
                     })
                 st.session_state.dados_extraidos = {
-                    "razao_social": emitente.get('xNome', 'Não informado'),
-                    "cnpj": emitente.get('CNPJ', 'Não informado'),
-                    "valor_total": float(total.get('vNF', 0.0)),
-                    "itens": itens_xml
+                    "razao_social": emit.get("xNome", "Fornecedor"),
+                    "cnpj": emit.get("CNPJ", "Não informado"),
+                    "valor_total": float(tot.get("vNF", 0.0)),
+                    "itens": itens_x
                 }
                 st.rerun()
-
-            elif ext in ['xlsx', 'xls', 'pdf']:
-                texto = ""
-                if ext == 'pdf':
-                    import pypdf
-                    reader = pypdf.PdfReader(arquivo_doc)
-                    texto = "".join([p.extract_text() or "" for p in reader.pages])
-                else:
-                    texto = pd.read_excel(arquivo_doc).to_string()
-                    
-                res_itens = processar_com_ia(texto, arquivo_doc.name, api_key)
+            else:
+                txt = doc.read().decode("latin1", errors="ignore") if ext == "pdf" else pd.read_excel(doc).to_string()
+                res_it = processar_texto_com_ia(txt, doc.name, api_key)
                 st.session_state.dados_extraidos = {
-                    "razao_social": "Ficheiro importado",
+                    "razao_social": "Importação",
                     "cnpj": "Não informado",
-                    "valor_total": sum(float(i.get('TotalItem', 0)) for i in res_itens),
-                    "itens": res_itens
+                    "valor_total": sum(float(i.get("TotalItem", 0)) for i in res_it),
+                    "itens": res_it
                 }
                 st.rerun()
 
-    # ----------------- RESULTADO & EDIÇÃO INTERATIVA -----------------
+    # Exibição e confirmação
     if st.session_state.dados_extraidos:
         dados = st.session_state.dados_extraidos
         st.markdown("---")
-        st.subheader("📋 Resumo da Compra")
-        
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Fornecedor", dados["razao_social"])
-        col2.metric("CNPJ", dados["cnpj"])
-        col3.metric("Valor Total Registado", f"R$ {dados['valor_total']:,.2f}")
+        st.subheader("📋 Resumo da Compra Identificada")
+        c_a, c_b, c_c = st.columns(3)
+        c_a.metric("Fornecedor", dados["razao_social"])
+        c_b.metric("CNPJ", dados["cnpj"])
+        c_c.metric("Valor Total", f"R$ {dados['valor_total']:,.2f}")
 
-        st.subheader("✏️ Itens Identificados (Ajuste ou Corrija Categorias)")
-        st.write("Edite as categorias se necessário antes de guardar:")
-
-        df_editavel = pd.DataFrame(dados["itens"])
-        if not df_editavel.empty:
-            if "TotalItem" not in df_editavel.columns and "Total do Item (R$)" in df_editavel.columns:
-                df_editavel.rename(columns={"Total do Item (R$)": "TotalItem", "Preço Unitário (R$)": "PrecoUnitario"}, inplace=True)
-
-            df_alterado = st.data_editor(
-                df_editavel,
-                column_config={
-                    "Categoria": st.column_config.SelectboxColumn(
-                        "Categoria",
-                        options=LISTA_CATEGORIAS,
-                        required=True
-                    ),
-                    "Produto": st.column_config.TextColumn("Produto", required=True),
-                    "Quantidade": st.column_config.NumberColumn("Qtd", format="%.2f"),
-                    "Unid": st.column_config.TextColumn("Unid"),
-                    "PrecoUnitario": st.column_config.NumberColumn("Preço Unit. (R$)", format="R$ %.2f"),
-                    "TotalItem": st.column_config.NumberColumn("Total Item (R$)", format="R$ %.2f"),
-                },
+        df_itens = pd.DataFrame(dados["itens"])
+        if not df_itens.empty:
+            df_edit = st.data_editor(
+                df_itens,
+                column_config={"Categoria": st.column_config.SelectboxColumn("Categoria", options=LISTA_CATEGORIAS, required=True)},
                 use_container_width=True,
                 num_rows="dynamic",
-                key="editor_tabela_itens"
+                key="editor_nota_ativa"
             )
 
-            st.subheader("📊 Totais por Categoria Atualizados")
-            df_resumo = df_alterado.groupby("Categoria")["TotalItem"].sum().reset_index()
-            soma_todas_categorias = float(df_resumo["TotalItem"].sum())
-
-            df_resumo_tabela = df_resumo.copy()
-            df_resumo_tabela["TotalItem"] = df_resumo_tabela["TotalItem"].apply(lambda x: f"R$ {x:,.2f}")
-            df_resumo_tabela.rename(columns={"TotalItem": "Total da Categoria (R$)"}, inplace=True)
-            st.dataframe(df_resumo_tabela, use_container_width=True)
-
-            col_tot1, col_tot2 = st.columns([1, 1])
-            with col_tot1:
-                st.metric(
-                    label="💰 Soma Total de Todas as Categorias",
-                    value=f"R$ {soma_todas_categorias:,.2f}"
-                )
-            with col_tot2:
-                diferenca_nota = abs(soma_todas_categorias - dados['valor_total'])
-                if dados['valor_total'] > 0:
-                    if diferenca_nota < 0.1:
-                        st.success("✅ A soma das categorias bate exatamente com o valor total da nota!")
-                    else:
-                        st.warning(f"⚠️ Diferença de R$ {diferenca_nota:,.2f} em relação ao valor da nota (R$ {dados['valor_total']:,.2f}).")
-
-            st.subheader("📦 Itens Detalhados por Categoria Separada")
-            categorias_existentes = sorted(df_alterado["Categoria"].dropna().unique())
-
-            for cat in categorias_existentes:
-                df_cat = df_alterado[df_alterado["Categoria"] == cat].copy()
-                subtotal_cat = df_cat["TotalItem"].sum()
-                qtd_itens_cat = len(df_cat)
-
-                with st.expander(f"🏷️ **{cat.upper()}** — {qtd_itens_cat} item(ns) | Subtotal: **R$ {subtotal_cat:,.2f}**", expanded=True):
-                    df_cat_show = df_cat.copy()
-                    df_cat_show["PrecoUnitario"] = df_cat_show["PrecoUnitario"].apply(lambda x: f"R$ {float(x):,.2f}")
-                    df_cat_show["TotalItem"] = df_cat_show["TotalItem"].apply(lambda x: f"R$ {float(x):,.2f}")
-                    df_cat_show.rename(columns={
-                        "Produto": "Produto",
-                        "Quantidade": "Qtd",
-                        "Unid": "Unid",
-                        "PrecoUnitario": "Preço Unitário (R$)",
-                        "TotalItem": "Total do Item (R$)"
-                    }, inplace=True)
-                    cols_para_exibir = [c for c in ["Produto", "Qtd", "Unid", "Preço Unitário (R$)", "Total do Item (R$)"] if c in df_cat_show.columns]
-                    st.dataframe(df_cat_show[cols_para_exibir], use_container_width=True)
+            # Subtotais
+            somas_cat = df_edit.groupby("Categoria")["TotalItem"].sum().to_dict()
+            st.write("#### 📊 Subtotais por Categoria que alimentarão o DRE:")
+            c_grid = st.columns(len(somas_cat))
+            for idx, (cat_n, val_n) in enumerate(somas_cat.items()):
+                c_grid[idx].metric(cat_n, f"R$ {val_n:,.2f}")
 
             st.markdown("---")
-            col_guardar, col_descartar = st.columns([2, 1])
-            with col_guardar:
-                if st.button("💾 Guardar e Ensinar IA com estas Correções", type="primary", use_container_width=True):
-                    itens_finais = df_alterado.to_dict(orient="records")
-                    salvar_nota(dados["razao_social"], dados["cnpj"], dados["valor_total"] or soma_todas_categorias, itens_finais)
-                    st.success("✅ Nota gravada e a IA memorizou as suas categorias corrigidas!")
+            c_salvar, c_limpar = st.columns([2, 1])
+            with c_salvar:
+                if st.button(f"🚀 Confirmar & Lançar no DRE ({NOMES_MESES[mes_ativo]})", type="primary", use_container_width=True):
+                    salvar_nota_e_lancar_dre(
+                        mes_ref=mes_ativo,
+                        razao_social=dados["razao_social"],
+                        cnpj=dados["cnpj"],
+                        valor_total=dados["valor_total"] or sum(somas_cat.values()),
+                        lista_produtos=df_edit.to_dict(orient="records")
+                    )
+                    st.success(f"✅ Sucesso! Os valores foram incorporados à aba LANÇAMENTOS e o DRE de {NOMES_MESES[mes_ativo]} foi atualizado automaticamente[cite: 7, 8].")
+                    st.session_state.dados_extraidos = None
+                    st.rerun()
+            with c_limpar:
+                if st.button("❌ Cancelar", use_container_width=True):
                     st.session_state.dados_extraidos = None
                     st.rerun()
 
-            with col_descartar:
-                if st.button("❌ Descartar Análise", use_container_width=True):
-                    st.session_state.dados_extraidos = None
-                    st.rerun()
+# ==============================================================================
+# 3. ABA DE LANÇAMENTOS DO MÊS (ESPELHO DA ABA DO EXCEL)
+# ==============================================================================
+elif menu.startswith("📝 Lançamentos"):
+    st.subheader(f"📝 Base de Lançamentos — {NOMES_MESES[mes_ativo]}")
+    st.write("Esta tabela corresponde exatamente à aba **LANÇAMENTOS** da sua planilha Spoleto[cite: 7].")
 
-# ----------------- HISTÓRICO & CONSULTAS -----------------
-elif menu_principal == "🗄️ Histórico & Consultas":
-    st.subheader("🗄️ Histórico de Notas Salvas")
-    df_historico = listar_notas()
-
-    if df_historico.empty:
-        st.info("Ainda não existem notas guardadas na base de dados.")
+    df_lanc = obter_lancamentos_mes(mes_ativo)
+    if df_lanc.empty:
+        st.info(f"Nenhum lançamento registrado ainda para {NOMES_MESES[mes_ativo]}. Use o menu de escanear notas para alimentar.")
     else:
-        df_historico_show = df_historico.copy()
-        df_historico_show["valor_total"] = df_historico_show["valor_total"].apply(lambda x: f"R$ {x:,.2f}")
-        df_historico_show.rename(columns={
-            "id": "ID", 
-            "data_registo": "Data/Hora", 
-            "razao_social": "Fornecedor", 
-            "cnpj": "CNPJ", 
-            "valor_total": "Valor Total"
+        df_show = df_lanc.copy()
+        df_show["valor"] = df_show["valor"].apply(lambda x: f"R$ {x:,.2f}")
+        df_show.rename(columns={
+            "id": "ID", "data": "DATA", "fornecedor": "FORNECEDOR", "descricao": "DESCRIÇÃO",
+            "valor": "VALOR", "dre": "DRE", "classificacao": "CLASSIFICAÇÃO", "detalhamento": "DETALHAMENTO"
         }, inplace=True)
-
-        st.dataframe(df_historico_show, use_container_width=True)
+        st.dataframe(df_show, use_container_width=True)
 
         st.markdown("---")
-        st.subheader("🔍 Consultar Detalhes da Nota")
-
-        col_select, col_del = st.columns([2, 1])
-        with col_select:
-            nota_selecionada = st.selectbox("Selecione o registo pelo ID para abrir a nota completa:", df_historico["id"].tolist())
-
-        with col_del:
+        st.subheader("🗑️ Excluir Lançamento Específico")
+        c_sel, c_del = st.columns([2, 1])
+        with c_sel:
+            id_del = st.selectbox("Selecione o lançamento pelo ID:", df_lanc["id"].tolist())
+        with c_del:
             st.write("&nbsp;")
-            if st.button("🗑️ Eliminar Nota", type="secondary", use_container_width=True):
-                excluir_nota(nota_selecionada)
-                st.warning(f"Nota #{nota_selecionada} eliminada!")
+            if st.button("Eliminar Lançamento", type="secondary", use_container_width=True):
+                conn = sqlite3.connect("notas_fiscais.db")
+                conn.execute("DELETE FROM lancamentos_dre WHERE id = ?", (id_del,))
+                conn.commit()
+                conn.close()
+                st.warning(f"Lançamento #{id_del} removido do DRE.")
                 st.rerun()
 
-        if nota_selecionada:
-            itens_recuperados, valor_tot_bd, fornecedor_bd = obter_detalhes_nota(nota_selecionada)
-            if itens_recuperados:
-                df_itens = pd.DataFrame(itens_recuperados)
-
-                col_map = {}
-                if "TotalItem" in df_itens.columns:
-                    col_map["TotalItem"] = "Total"
-                elif "Total do Item (R$)" in df_itens.columns:
-                    col_map["Total do Item (R$)"] = "Total"
-
-                if "PrecoUnitario" in df_itens.columns:
-                    col_map["PrecoUnitario"] = "PrecoUnit"
-                elif "Preço Unitário (R$)" in df_itens.columns:
-                    col_map["Preço Unitário (R$)"] = "PrecoUnit"
-
-                df_itens.rename(columns=col_map, inplace=True)
-                df_itens["Total"] = pd.to_numeric(df_itens["Total"], errors="coerce").fillna(0.0)
-
-                st.write(f"### 📄 Detalhes da Nota #{nota_selecionada} — {fornecedor_bd}")
-
-                st.write("#### 📊 Subtotais por Categoria")
-                df_cat_subtotais = df_itens.groupby("Categoria")["Total"].sum().reset_index()
-                soma_categorias_hist = float(df_cat_subtotais["Total"].sum())
-
-                df_cat_show = df_cat_subtotais.copy()
-                df_cat_show["Subtotal"] = df_cat_show["Total"].apply(lambda x: f"R$ {x:,.2f}")
-                df_cat_show.drop(columns=["Total"], inplace=True)
-                df_cat_show.rename(columns={"Categoria": "Categoria", "Subtotal": "Subtotal da Categoria (R$)"}, inplace=True)
-
-                st.dataframe(df_cat_show, use_container_width=True)
-
-                st.metric(
-                    label="💰 Total Somado das Categorias",
-                    value=f"R$ {soma_categorias_hist:,.2f}"
-                )
-
-                st.write("#### 📦 Itens Detalhados da Compra (Separados por Categoria)")
-                cats_hist = sorted(df_itens["Categoria"].dropna().unique())
-
-                for cat in cats_hist:
-                    df_sub = df_itens[df_itens["Categoria"] == cat].copy()
-                    subtot_cat = df_sub["Total"].sum()
-                    qtd_sub = len(df_sub)
-
-                    with st.expander(f"🏷️ **{cat.upper()}** — {qtd_sub} item(ns) | Subtotal: **R$ {subtot_cat:,.2f}**", expanded=True):
-                        df_sub_show = df_sub.copy()
-                        df_sub_show["PrecoUnit"] = df_sub_show["PrecoUnit"].apply(lambda x: f"R$ {float(x):,.2f}" if pd.notnull(x) else "R$ 0,00")
-                        df_sub_show["Total"] = df_sub_show["Total"].apply(lambda x: f"R$ {float(x):,.2f}")
-                        df_sub_show.rename(columns={
-                            "Produto": "Produto",
-                            "Quantidade": "Qtd",
-                            "Unid": "Unid",
-                            "PrecoUnit": "Preço Unitário (R$)",
-                            "Total": "Total do Item (R$)"
-                        }, inplace=True)
-
-                        cols_hist = [c for c in ["Produto", "Qtd", "Unid", "Preço Unitário (R$)", "Total do Item (R$)"] if c in df_sub_show.columns]
-                        st.dataframe(df_sub_show[cols_hist], use_container_width=True)
-
-# ----------------- MEMÓRIA DE REGRAS -----------------
-elif menu_principal == "🧠 Dicionário de Classificações":
-    st.subheader("🧠 Classificações Memorizadas pela IA")
-    st.write("Estes são os produtos que corrigiu e que a IA já aprendeu a categorizar automaticamente:")
-    regras_atuais = carregar_regras()
-    if regras_atuais:
-        df_regras = pd.DataFrame(list(regras_atuais.items()), columns=["Produto", "Categoria"]).sort_values("Produto")
-        st.dataframe(df_regras, use_container_width=True)
+# ==============================================================================
+# 4. ABA DE REGRAS INTELIGENTES
+# ==============================================================================
+elif menu.startswith("🧠 Regras"):
+    st.subheader("🧠 Dicionário Inteligente de Classificações")
+    st.write("Produtos memorizados pelas suas correções anteriores:")
+    regras = carregar_regras()
+    if regras:
+        df_r = pd.DataFrame(list(regras.items()), columns=["Produto", "Categoria"]).sort_values("Produto")
+        st.dataframe(df_r, use_container_width=True)
     else:
-        st.info("Ainda não foram memorizadas personalizações. Sempre que guardar uma nota corrigida, os itens aparecem aqui.")
+        st.info("Nenhuma regra personalizada ainda. Sempre que corrigir e salvar uma nota, a IA memoriza aqui.")
