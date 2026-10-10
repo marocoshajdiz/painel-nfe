@@ -53,7 +53,7 @@ div[data-testid="stCameraInput"] button { padding: 0.75rem 1.5rem !important; fo
 </style>
 """, unsafe_allow_html=True)
 
-# ----------------- BASE DE DADOS (SQLite) -----------------
+# ----------------- BASE DE DADOS (SQLite com Migração Automática) -----------------
 def init_db():
     conn = sqlite3.connect("notas_fiscais.db")
     cursor = conn.cursor()
@@ -93,6 +93,12 @@ def init_db():
             ultima_atualizacao TEXT
         )
     """)
+    # Migração garantida: se a tabela já existia sem a coluna, adiciona sem perda de dados
+    try:
+        cursor.execute("ALTER TABLE dados_mensais ADD COLUMN ultima_atualizacao TEXT")
+    except Exception:
+        pass
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS regras_classificacao (
             produto TEXT PRIMARY KEY,
@@ -190,19 +196,24 @@ def obter_lancamentos_mes(mes_ref):
 def obter_dados_mensais(mes_ref):
     conn = sqlite3.connect("notas_fiscais.db")
     c = conn.cursor()
-    c.execute("SELECT fat_balcao, fat_delivery, imposto_estadual, gas, terceiros, bonificacao, ultima_atualizacao FROM dados_mensais WHERE mes_referencia = ?", (mes_ref,))
-    row = c.fetchone()
-    conn.close()
-    if row:
-        return {
-            "balcao": float(row[0] or 0.0),
-            "delivery": float(row[1] or 0.0),
-            "imposto_est": float(row[2] or 0.0),
-            "gas": float(row[3] or 0.0),
-            "terceiros": float(row[4] or 0.0),
-            "bonificacao": float(row[5] or 0.0),
-            "atualizado_em": row[6] or "Nunca"
-        }
+    try:
+        c.execute("SELECT fat_balcao, fat_delivery, imposto_estadual, gas, terceiros, bonificacao, ultima_atualizacao FROM dados_mensais WHERE mes_referencia = ?", (mes_ref,))
+        row = c.fetchone()
+        if row:
+            return {
+                "balcao": float(row[0] or 0.0),
+                "delivery": float(row[1] or 0.0),
+                "imposto_est": float(row[2] or 0.0),
+                "gas": float(row[3] or 0.0),
+                "terceiros": float(row[4] or 0.0),
+                "bonificacao": float(row[5] or 0.0),
+                "atualizado_em": str(row[6]) if len(row) > 6 and row[6] else "Nunca"
+            }
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
     return {
         "balcao": 0.0, "delivery": 0.0, "imposto_est": 0.0,
         "gas": 0.0, "terceiros": 0.0, "bonificacao": 0.0, "atualizado_em": "Nunca"
@@ -225,10 +236,8 @@ def salvar_dados_mensais_seguro(mes_ref, dados):
             ultima_atualizacao=excluded.ultima_atualizacao
     """, (mes_ref, dados["balcao"], dados["delivery"], dados["imposto_est"], dados["gas"], dados["terceiros"], dados["bonificacao"], horario_agora))
     conn.commit()
-    c.execute("SELECT ultima_atualizacao FROM dados_mensais WHERE mes_referencia = ?", (mes_ref,))
-    confirmacao = c.fetchone()
     conn.close()
-    return confirmacao[0] if confirmacao else horario_agora
+    return horario_agora
 
 # ----------------- GERADOR EXCEL -----------------
 def gerar_excel_dre(nome_mes, linhas_dre, df_lancamentos):
@@ -328,11 +337,11 @@ if "dados_extraidos" not in st.session_state:
     st.session_state.dados_extraidos = None
 
 # ==============================================================================
-# 1. ABA DO DRE OFICIAL
+# 1. ABA DO DRE OFICIAL (TEMPO REAL & GRAVAÇÃO SEGURA)
 # ==============================================================================
 if menu.startswith("📊 DRE Spoleto"):
     st.subheader(f"📊 Demonstrativo de Resultados (DRE) — {NOMES_MESES[mes_ativo]}")
-    st.write(f"Todos os custos escaneados neste mês entram automaticamente no cálculo de CMV e despesas operacionais abaixo[cite: 7, 8].")
+    st.write("Todos os custos escaneados neste mês entram automaticamente no cálculo de CMV e despesas operacionais abaixo[cite: 7, 8].")
 
     dados_bd = obter_dados_mensais(mes_ativo)
 
