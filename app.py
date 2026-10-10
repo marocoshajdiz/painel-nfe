@@ -256,7 +256,6 @@ mes_ativo = st.sidebar.selectbox(
 st.sidebar.markdown("---")
 
 def lancar_item_unico_dre(mes_ref, fornecedor, valor_total, classificacao_escolhida):
-    """Insere o lançamento direto e limpa a tabela de ajustes para que o novo valor apareça imediatamente no DRE."""
     conn = sqlite3.connect("notas_fiscais.db")
     cursor = conn.cursor()
     data_hoje = datetime.now().strftime("%Y-%m-%d")
@@ -356,33 +355,35 @@ def gerar_excel_dre(nome_mes, df_dre_completo, df_lancamentos):
     output.seek(0)
     return output.getvalue()
 
-# ----------------- CONFIGURAÇÕES IA -----------------
+# ----------------- CONFIGURAÇÕES IA (EXCLUSIVO GEMINI-3.8-FLASH) -----------------
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
 except Exception:
     st.error("⚠️ Configure a GEMINI_API_KEY no arquivo .streamlit/secrets.toml.")
     st.stop()
 
-MODELOS_IA = ["gemini-3.8-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+# Definido estritamente para o modelo que está ativo e funcional
+MODELO_OFICIAL = "gemini-3.8-flash"
 
-def chamar_gemini_com_fallback(chave, conteudos):
+def chamar_gemini_com_retry(chave, conteudos):
+    """Executa a chamada usando estritamente o modelo gemini-3.8-flash com 3 tentativas para evitar instabilidade."""
     client = genai.Client(api_key=chave)
-    ultimo = None
-    for m in MODELOS_IA:
-        for _ in range(2):
-            try:
-                res = client.models.generate_content(
-                    model=m,
-                    contents=conteudos,
-                    config=types.GenerateContentConfig(response_mime_type="application/json"),
-                )
-                if res.text:
-                    return json.loads(res.text)
-            except Exception as e:
-                ultimo = e
-                time.sleep(2)
-                continue
-    st.error(f"Erro IA: {ultimo}")
+    ultimo_erro = None
+    for tentativa in range(3):
+        try:
+            response = client.models.generate_content(
+                model=MODELO_OFICIAL,
+                contents=conteudos,
+                config=types.GenerateContentConfig(response_mime_type="application/json"),
+            )
+            if response.text:
+                return json.loads(response.text)
+        except Exception as e:
+            ultimo_erro = e
+            time.sleep(2)
+            continue
+            
+    st.error(f"Erro ao conectar com a IA ({MODELO_OFICIAL}): {ultimo_erro}")
     return None
 
 def processar_multiplas_imagens_com_ia(partes_img, chave):
@@ -405,7 +406,7 @@ def processar_multiplas_imagens_com_ia(partes_img, chave):
       "itens": [...]
     }}
     """
-    return chamar_gemini_com_fallback(chave, [prompt] + partes_img)
+    return chamar_gemini_com_retry(chave, [prompt] + partes_img)
 
 def processar_texto_com_ia(texto, nome_arq, chave):
     regras = carregar_regras()
@@ -416,7 +417,7 @@ def processar_texto_com_ia(texto, nome_arq, chave):
     Retorne lista JSON com: Produto, Quantidade, Unid, PrecoUnitario, TotalItem, Classificacao.
     Texto: {texto[:15000]}
     """
-    res = chamar_gemini_com_fallback(chave, prompt)
+    res = chamar_gemini_com_retry(chave, prompt)
     return res if isinstance(res, list) else []
 
 def categorizar_nomes_xml(nomes, chave):
@@ -429,7 +430,7 @@ def categorizar_nomes_xml(nomes, chave):
         {json.dumps(faltam, ensure_ascii=False)}.
         Retorne JSON objeto {{\"nome_do_produto\": \"Classificacao\"}}.
         """
-        res = chamar_gemini_com_fallback(chave, p)
+        res = chamar_gemini_com_retry(chave, p)
         if isinstance(res, dict):
             mapa.update(res)
     return mapa
@@ -778,7 +779,6 @@ elif menu.startswith("📸 Escanear"):
         with tab_rapida:
             st.write("💡 **Ideal para boletos e contas mensais:** o valor vai direto para a conta sem complicação[cite: 7, 8].")
             
-            # Detecta se é Condomínio ou Gás no texto da razão social
             idx_sug = 0
             if "CONDOM" in dados["razao_social"].upper() and "Condomínio" in LISTA_TODAS_CLASSIFICACOES:
                 idx_sug = LISTA_TODAS_CLASSIFICACOES.index("Condomínio")
@@ -794,7 +794,6 @@ elif menu.startswith("📸 Escanear"):
                     key=f"sel_rapido_dre_{ukey}"
                 )
             with c_rap2:
-                # min_value alterado para 0.0 para evitar erro de validação
                 val_inicial = float(dados["valor_total"]) if dados["valor_total"] >= 0 else 0.0
                 valor_rapido = st.number_input(
                     "Valor a Lançar (R$):",
