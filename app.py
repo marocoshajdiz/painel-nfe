@@ -44,7 +44,7 @@ if st.sidebar.button("🚪 Sair do Sistema"):
     st.rerun()
 st.sidebar.markdown("---")
 
-# CSS para visor expandido da câmera
+# CSS para tela expandida
 st.markdown("""
 <style>
 div[data-testid="stCameraInput"] { width: 100% !important; max-width: 900px !important; margin: 0 auto; }
@@ -53,7 +53,7 @@ div[data-testid="stCameraInput"] button { padding: 0.75rem 1.5rem !important; fo
 </style>
 """, unsafe_allow_html=True)
 
-# ----------------- BASE DE DADOS (SQLite com Migração Automática) -----------------
+# ----------------- BASE DE DADOS (SQLite com Ajustes Manuais do DRE) -----------------
 def init_db():
     conn = sqlite3.connect("notas_fiscais.db")
     cursor = conn.cursor()
@@ -82,6 +82,14 @@ def init_db():
         )
     """)
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS ajustes_dre (
+            mes_referencia TEXT,
+            conta TEXT,
+            valor REAL,
+            PRIMARY KEY (mes_referencia, conta)
+        )
+    """)
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS dados_mensais (
             mes_referencia TEXT PRIMARY KEY,
             fat_balcao REAL DEFAULT 0,
@@ -93,12 +101,6 @@ def init_db():
             ultima_atualizacao TEXT
         )
     """)
-    # Migração garantida: se a tabela já existia sem a coluna, adiciona sem perda de dados
-    try:
-        cursor.execute("ALTER TABLE dados_mensais ADD COLUMN ultima_atualizacao TEXT")
-    except Exception:
-        pass
-
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS regras_classificacao (
             produto TEXT PRIMARY KEY,
@@ -193,63 +195,31 @@ def obter_lancamentos_mes(mes_ref):
     conn.close()
     return df
 
-def obter_dados_mensais(mes_ref):
+def obter_ajustes_dre(mes_ref):
     conn = sqlite3.connect("notas_fiscais.db")
     c = conn.cursor()
-    try:
-        c.execute("SELECT fat_balcao, fat_delivery, imposto_estadual, gas, terceiros, bonificacao, ultima_atualizacao FROM dados_mensais WHERE mes_referencia = ?", (mes_ref,))
-        row = c.fetchone()
-        if row:
-            return {
-                "balcao": float(row[0] or 0.0),
-                "delivery": float(row[1] or 0.0),
-                "imposto_est": float(row[2] or 0.0),
-                "gas": float(row[3] or 0.0),
-                "terceiros": float(row[4] or 0.0),
-                "bonificacao": float(row[5] or 0.0),
-                "atualizado_em": str(row[6]) if len(row) > 6 and row[6] else "Nunca"
-            }
-    except Exception:
-        pass
-    finally:
-        conn.close()
+    c.execute("SELECT conta, valor FROM ajustes_dre WHERE mes_referencia = ?", (mes_ref,))
+    res = {row[0]: float(row[1]) for row in c.fetchall()}
+    conn.close()
+    return res
 
-    return {
-        "balcao": 0.0, "delivery": 0.0, "imposto_est": 0.0,
-        "gas": 0.0, "terceiros": 0.0, "bonificacao": 0.0, "atualizado_em": "Nunca"
-    }
-
-def salvar_dados_mensais_seguro(mes_ref, dados):
+def salvar_ajustes_dre(mes_ref, dict_valores):
     conn = sqlite3.connect("notas_fiscais.db")
     c = conn.cursor()
-    horario_agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-    c.execute("""
-        INSERT INTO dados_mensais (mes_referencia, fat_balcao, fat_delivery, imposto_estadual, gas, terceiros, bonificacao, ultima_atualizacao)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(mes_referencia) DO UPDATE SET
-            fat_balcao=excluded.fat_balcao,
-            fat_delivery=excluded.fat_delivery,
-            imposto_estadual=excluded.imposto_estadual,
-            gas=excluded.gas,
-            terceiros=excluded.terceiros,
-            bonificacao=excluded.bonificacao,
-            ultima_atualizacao=excluded.ultima_atualizacao
-    """, (mes_ref, dados["balcao"], dados["delivery"], dados["imposto_est"], dados["gas"], dados["terceiros"], dados["bonificacao"], horario_agora))
+    for conta, val in dict_valores.items():
+        c.execute("""
+            INSERT INTO ajustes_dre (mes_referencia, conta, valor)
+            VALUES (?, ?, ?)
+            ON CONFLICT(mes_referencia, conta) DO UPDATE SET valor=excluded.valor
+        """, (mes_ref, conta, float(val)))
     conn.commit()
     conn.close()
-    return horario_agora
 
-# ----------------- GERADOR EXCEL -----------------
-def gerar_excel_dre(nome_mes, linhas_dre, df_lancamentos):
+def gerar_excel_dre(nome_mes, df_dre_completo, df_lancamentos):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df_export = pd.DataFrame([{
-            "CONTA": item["CONTA"].replace("🔹 ", "").replace("📦 ", "").replace("🏢 ", "").replace("👥 ", "").replace("💡 ", "").replace("🧹 ", "").replace("🔧 ", "").replace("🛵 ", "").replace("📢 ", "").replace("💳 ", "").replace("🔴 ", "").replace("🏆 ", "").replace("💰 ", ""),
-            "VALOR (R$)": item["VALOR"],
-            "% SOBRE VENDA": item["%"]
-        } for item in linhas_dre if "----" not in item["CONTA"]])
+        df_export = df_dre_completo.copy()
         df_export.to_excel(writer, sheet_name="DRE_MENSAL", index=False)
-        
         if not df_lancamentos.empty:
             df_lanc_export = df_lancamentos.copy()
             df_lanc_export.to_excel(writer, sheet_name="LANÇAMENTOS", index=False)
@@ -337,185 +307,218 @@ if "dados_extraidos" not in st.session_state:
     st.session_state.dados_extraidos = None
 
 # ==============================================================================
-# 1. ABA DO DRE OFICIAL (TEMPO REAL & GRAVAÇÃO SEGURA)
+# 1. ABA DO DRE OFICIAL (EDIÇÃO DIRETA NA TABELA & TEMPO REAL)
 # ==============================================================================
 if menu.startswith("📊 DRE Spoleto"):
     st.subheader(f"📊 Demonstrativo de Resultados (DRE) — {NOMES_MESES[mes_ativo]}")
-    st.write("Todos os custos escaneados neste mês entram automaticamente no cálculo de CMV e despesas operacionais abaixo[cite: 7, 8].")
+    st.write("Edite qualquer valor na coluna **VALOR (R$)** da tabela abaixo. Os subtotais, totais e percentuais recalculam na hora[cite: 8, 9]!")
 
-    dados_bd = obter_dados_mensais(mes_ativo)
-
-    prefixo = f"dre_{mes_ativo}_"
-    if f"{prefixo}balcao" not in st.session_state:
-        st.session_state[f"{prefixo}balcao"] = dados_bd["balcao"]
-    if f"{prefixo}delivery" not in st.session_state:
-        st.session_state[f"{prefixo}delivery"] = dados_bd["delivery"]
-    if f"{prefixo}imposto_est" not in st.session_state:
-        st.session_state[f"{prefixo}imposto_est"] = dados_bd["imposto_est"]
-    if f"{prefixo}gas" not in st.session_state:
-        st.session_state[f"{prefixo}gas"] = dados_bd["gas"]
-    if f"{prefixo}terceiros" not in st.session_state:
-        st.session_state[f"{prefixo}terceiros"] = dados_bd["terceiros"]
-    if f"{prefixo}bonificacao" not in st.session_state:
-        st.session_state[f"{prefixo}bonificacao"] = dados_bd["bonificacao"]
-
-    with st.expander("⚙️ Painel de Vendas & Parâmetros do Mês (Atualização em Tempo Real)", expanded=True):
-        st.write("Altere qualquer valor abaixo: **o DRE recalcula na hora**. Clique em salvar para gravar com segurança na base de dados.")
-        
-        c_fb, c_fd, c_ie, c_gas, c_terc, c_bon = st.columns(6)
-        with c_fb:
-            fat_b = st.number_input("Fat. Balcão (R$)", min_value=0.0, step=100.0, key=f"{prefixo}balcao")
-        with c_fd:
-            fat_d = st.number_input("Fat. Delivery (R$)", min_value=0.0, step=100.0, key=f"{prefixo}delivery")
-        with c_ie:
-            imp_e = st.number_input("Imposto Estadual (R$)", min_value=0.0, step=50.0, key=f"{prefixo}imposto_est")
-        with c_gas:
-            val_gas = st.number_input("Gás (R$)", min_value=0.0, step=50.0, key=f"{prefixo}gas")
-        with c_terc:
-            val_terc = st.number_input("Serv. Terceiros (R$)", min_value=0.0, step=100.0, key=f"{prefixo}terceiros")
-        with c_bon:
-            val_bon = st.number_input("Bonificações (R$)", min_value=0.0, step=50.0, key=f"{prefixo}bonificacao")
-
-        col_salvar, col_status = st.columns([2, 3])
-        with col_salvar:
-            if st.button("💾 Salvar Parâmetros do Mês na Base de Dados", type="primary", use_container_width=True):
-                horario_salvo = salvar_dados_mensais_seguro(mes_ativo, {
-                    "balcao": fat_b,
-                    "delivery": fat_d,
-                    "imposto_est": imp_e,
-                    "gas": val_gas,
-                    "terceiros": val_terc,
-                    "bonificacao": val_bon
-                })
-                st.success(f"🔒 **Gravado com Sucesso!** Base de dados atualizada e confirmada às **{horario_salvo}**.")
-        with col_status:
-            st.info(f"🕒 **Última gravação confirmada no banco:** {dados_bd['atualizado_em']}")
-
+    # 1. Obter somas vindas das notas escaneadas na aba LANÇAMENTOS
     df_l = obter_lancamentos_mes(mes_ativo)
-    somas_det = df_l.groupby("detalhamento")["valor"].sum().to_dict() if not df_l.empty else {}
+    somas_escaneadas = df_l.groupby("detalhamento")["valor"].sum().to_dict() if not df_l.empty else {}
 
-    def get_v(det_nome):
-        return float(somas_det.get(det_nome, 0.0))
+    # 2. Obter ajustes manuais salvos anteriormente no banco para este mês
+    ajustes_banco = obter_ajustes_dre(mes_ativo)
 
-    venda_bruta = fat_b + fat_d
-    imposto_fed = get_v("Imposto Federal")
-    imposto_est = imp_e
-    rec_liquida = venda_bruta - (imposto_fed + imposto_est)
+    # Definição das contas analíticas (editáveis) do DRE Spoleto
+    # chave: (Nome exibido na tela, Categoria/Origem do detalhamento se houver)
+    CONTAS_DRE = [
+        # Receitas & Impostos
+        ("Faturamento Balcão", None, 0.0),
+        ("Faturamento Delivery", None, 0.0),
+        ("Imposto Federal", "Imposto Federal", 0.0),
+        ("Imposto Estadual", "Imposto Estadual", 0.0),
+        # CMV
+        ("Alimentos", "Alimentos", 0.0),
+        ("Bebidas", "Bebidas", 0.0),
+        ("Descartáveis", "Descartáveis", 0.0),
+        ("Fretes", "Fretes", 0.0),
+        # Ocupação
+        ("Aluguel", "Aluguel", 0.0),
+        ("Ar condicionado", "Ar Condicionado", 0.0),
+        ("Condomínio", "Condomínio", 0.0),
+        ("Fundo de Promoção", "Fundo De Promoção", 0.0),
+        ("IPTU", "Iptu", 0.0),
+        ("Taxas e Outros", "Taxas E Outros", 0.0),
+        # Pessoal
+        ("Salário", "Salário", 0.0),
+        ("Adiantamento", "Adiantamento", 0.0),
+        ("Benefícios (Alimentação Funcionários)", "Benefícios", 0.0),
+        ("Encargos", "Encargos", 0.0),
+        ("Férias", "Férias", 0.0),
+        ("13 salário", "13 Salário", 0.0),
+        ("Provisões", "Provisões", 0.0),
+        ("Rescisão", "Rescisão", 0.0),
+        ("Outros (pessoal)", "Outros (pessoal)", 0.0),
+        # Utilidades
+        ("Água e Esgoto", "Água E Esgoto", 0.0),
+        ("Energia Elétrica", "Energia Elétrica", 0.0),
+        ("Gás", "Gás", 0.0),
+        ("Internet", "Internet", 0.0),
+        ("Telefone", "Telefone", 0.0),
+        ("Outros (utilidades)", "Outros (utilidades)", 0.0),
+        # Serviços & Terceiros
+        ("Serviços", "Serviços", 0.0),
+        ("Terceiros", "Terceiros", 0.0),
+        # Material de Uso & Consumo
+        ("Material de Escritório", "Material De Escritório", 0.0),
+        ("Material de Limpeza", "Material De Limpeza", 0.0),
+        ("Uniformes", "Uniformes", 0.0),
+        ("Utensílios", "Utensílios", 0.0),
+        ("Outros Materiais de Uso e Consumo", "Outros Materiais De Uso E Consumo", 0.0),
+        # Manutenção
+        ("Serviço - Manutenção e Reparos", "Serviço - Manutenção E Reparos", 0.0),
+        ("Material - Manutenção e Reparos", "Material - Manutenção E Reparos", 0.0),
+        # Delivery & Marketing & Financeiro
+        ("Taxa de entrega arrecadada", None, 0.0),
+        ("Comissão agregadores", "Comissão Agregadores", 0.0),
+        ("Custo com entrega (motoqueiros)", "Custo Com Entrega (Motoqueiros)", 0.0),
+        ("Anúncios/Propagandas", "Anúncios/Propagandas", 0.0),
+        ("Fundo de Marketing", "Fundo De Marketing", 0.0),
+        ("Royalties", "Royalties", 0.0),
+        ("Custo Cartão de Crédito", "Custo Cartão De Crédito", 0.0),
+        ("Custo Cartão de Débito", "Custo Cartão De Débito", 0.0),
+        # Bonificação / Extra
+        ("Total Bonificação", None, 0.0)
+    ]
 
-    cmv_alimentos = get_v("Alimentos")
-    cmv_bebidas = get_v("Bebidas")
-    cmv_descartaveis = get_v("Descartáveis")
-    cmv_fretes = get_v("Fretes")
-    subtotal_cmv = cmv_alimentos + cmv_bebidas + cmv_descartaveis
-    total_cmv = subtotal_cmv + cmv_fretes
+    # Preencher valores: prioridade 1: Ajuste manual no banco; prioridade 2: Escaneado de notas
+    lista_linhas_editaveis = []
+    for nome_conta, chave_det, val_padrao in CONTAS_DRE:
+        if nome_conta in ajustes_banco:
+            val_atual = ajustes_banco[nome_conta]
+        elif chave_det and chave_det in somas_escaneadas:
+            val_atual = float(somas_escaneadas[chave_det])
+        else:
+            val_atual = val_padrao
+
+        lista_linhas_editaveis.append({
+            "CONTA": nome_conta,
+            "VALOR (R$)": float(round(val_atual, 2))
+        })
+
+    df_base_editavel = pd.DataFrame(lista_linhas_editaveis)
+
+    # Tabela com Edição Direta
+    st.write("👇 **Tabela de Lançamentos do DRE (Clique no valor para editar):**")
+    df_dre_editado = st.data_editor(
+        df_base_editavel,
+        column_config={
+            "CONTA": st.column_config.TextColumn("Conta / Rubrica", disabled=True),
+            "VALOR (R$)": st.column_config.NumberColumn("VALOR (R$)", format="R$ %.2f", min_value=0.0, step=10.0, required=True)
+        },
+        use_container_width=True,
+        num_rows="fixed",
+        height=520,
+        key=f"editor_dre_{mes_ativo}"
+    )
+
+    # Botão para persistir qualquer alteração feita no DRE
+    col_save_dre, _ = st.columns([2, 3])
+    with col_save_dre:
+        if st.button("💾 Salvar Alterações do DRE na Base de Dados", type="primary", use_container_width=True):
+            novos_ajustes = dict(zip(df_dre_editado["CONTA"], df_dre_editado["VALOR (R$)"]))
+            salvar_ajustes_dre(mes_ativo, novos_ajustes)
+            st.success("✅ **Alterações salvas com sucesso no banco de dados!**")
+
+    # Mapear valores editados para cálculo em cascata em tempo real
+    v_map = dict(zip(df_dre_editado["CONTA"], df_dre_editado["VALOR (R$)"]))
+
+    def v(k):
+        return float(v_map.get(k, 0.0))
+
+    # CÁLCULOS EXATOS DO DRE SPOLETO EM TEMPO REAL
+    fat_balcao = v("Faturamento Balcão")
+    fat_delivery = v("Faturamento Delivery")
+    venda_bruta = fat_balcao + fat_delivery
+    imp_fed = v("Imposto Federal")
+    imp_est = v("Imposto Estadual")
+    rec_liquida = venda_bruta - (imp_fed + imp_est)
+
+    cmv_alim = v("Alimentos")
+    cmv_beb = v("Bebidas")
+    cmv_desc = v("Descartáveis")
+    cmv_fret = v("Fretes")
+    total_cmv = cmv_alim + cmv_beb + cmv_desc + cmv_fret
     lucro_bruto = rec_liquida - total_cmv
 
-    ocup_aluguel = get_v("Aluguel")
-    ocup_ar = get_v("Ar Condicionado")
-    ocup_condo = get_v("Condomínio")
-    ocup_fundo = get_v("Fundo De Promoção")
-    ocup_iptu = get_v("Iptu")
-    ocup_taxas = get_v("Taxas E Outros")
-    total_ocupacao = ocup_aluguel + ocup_ar + ocup_condo + ocup_fundo + ocup_iptu + ocup_taxas
-
-    pess_salario = get_v("Salário")
-    pess_adiant = get_v("Adiantamento")
-    pess_benef = get_v("Benefícios")
-    pess_encargos = get_v("Encargos")
-    pess_ferias = get_v("Férias")
-    pess_13 = get_v("13 Salário")
-    pess_provis = get_v("Provisões")
-    pess_rescisao = get_v("Rescisão")
-    pess_outros = get_v("Outros (pessoal)")
-    total_pessoal = pess_salario + pess_adiant + pess_benef + pess_encargos + pess_ferias + pess_13 + pess_provis + pess_rescisao + pess_outros
-
-    util_agua = get_v("Água E Esgoto")
-    util_energia = get_v("Energia Elétrica")
-    util_gas = val_gas + get_v("Gás")
-    util_internet = get_v("Internet")
-    util_tel = get_v("Telefone")
-    util_outros = get_v("Outros (utilidades)")
-    total_utilidades = util_agua + util_energia + util_gas + util_internet + util_tel + util_outros
-
-    serv_proprios = get_v("Serviços")
-    serv_terceiros = val_terc + get_v("Terceiros")
-    total_servicos = serv_proprios + serv_terceiros
-
-    mat_escritorio = get_v("Material De Escritório")
-    mat_limpeza = get_v("Material De Limpeza")
-    mat_uniformes = get_v("Uniformes")
-    mat_utensilios = get_v("Utensílios")
-    mat_outros = get_v("Outros Materiais De Uso E Consumo")
-    total_materiais = mat_escritorio + mat_limpeza + mat_uniformes + mat_utensilios + mat_outros
-
-    manut_serv = get_v("Serviço - Manutenção E Reparos")
-    manut_mat = get_v("Material - Manutenção E Reparos")
-    total_manutencao = manut_serv + manut_mat
-
-    total_delivery = get_v("Custo Com Entrega (Motoqueiros)") + get_v("Comissão Agregadores")
-    total_marketing = get_v("Anúncios/Propagandas") + get_v("Fundo De Marketing") + get_v("Royalties")
-    total_financeiro = get_v("Custo Cartão De Crédito") + get_v("Custo Cartão De Débito")
-
-    total_despesas_operacionais = (
-        imposto_fed + imposto_est + total_cmv + total_ocupacao + total_pessoal +
-        total_utilidades + total_servicos + total_materiais + total_manutencao +
-        total_delivery + total_marketing + total_financeiro
+    total_ocup = v("Aluguel") + v("Ar condicionado") + v("Condomínio") + v("Fundo de Promoção") + v("IPTU") + v("Taxas e Outros")
+    total_pess = (
+        v("Salário") + v("Adiantamento") + v("Benefícios (Alimentação Funcionários)") +
+        v("Encargos") + v("Férias") + v("13 salário") + v("Provisões") + v("Rescisão") + v("Outros (pessoal)")
     )
-    resultado_operacional = venda_bruta - total_despesas_operacionais
-    resultado_final = resultado_operacional + val_bon
+    total_util = v("Água e Esgoto") + v("Energia Elétrica") + v("Gás") + v("Internet") + v("Telefone") + v("Outros (utilidades)")
+    total_serv = v("Serviços") + v("Terceiros")
+    total_mat = (
+        v("Material de Escritório") + v("Material de Limpeza") + v("Uniformes") +
+        v("Utensílios") + v("Outros Materiais de Uso e Consumo")
+    )
+    total_manut = v("Serviço - Manutenção e Reparos") + v("Material - Manutenção e Reparos")
+    total_deliv = (v("Comissão agregadores") + v("Custo com entrega (motoqueiros)")) - v("Taxa de entrega arrecadada")
+    total_mkt = v("Anúncios/Propagandas") + v("Fundo de Marketing") + v("Royalties")
+    total_fin = v("Custo Cartão de Crédito") + v("Custo Cartão de Débito")
 
-    def fmt_pct(val):
+    total_despesas = (
+        imp_fed + imp_est + total_cmv + total_ocup + total_pess +
+        total_util + total_serv + total_mat + total_manut +
+        total_deliv + total_mkt + total_fin
+    )
+    res_operacional = venda_bruta - total_despesas
+    res_final = res_operacional + v("Total Bonificação")
+
+    def pct(val):
         if venda_bruta > 0:
             return f"{(val / venda_bruta) * 100:.2f}%"
         return "0.00%"
 
-    col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
-    col_kpi1.metric("🔹 Venda Bruta", f"R$ {venda_bruta:,.2f}")
-    col_kpi2.metric("📦 C M V Total", f"R$ {total_cmv:,.2f}", delta=fmt_pct(total_cmv), delta_color="inverse")
-    col_kpi3.metric("🔹 Lucro Bruto", f"R$ {lucro_bruto:,.2f}", delta=fmt_pct(lucro_bruto))
-    col_kpi4.metric("💰 Resultado Final", f"R$ {resultado_final:,.2f}", delta=fmt_pct(resultado_final))
+    # RESUMO EXECUTIVO COM CARDS
+    st.markdown("---")
+    st.write("### 📈 Visão Consolidada em Tempo Real")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("🔹 Venda Bruta", f"R$ {venda_bruta:,.2f}")
+    c2.metric("📦 CMV Total", f"R$ {total_cmv:,.2f}", delta=pct(total_cmv), delta_color="inverse")
+    c3.metric("🔹 Lucro Bruto", f"R$ {lucro_bruto:,.2f}", delta=pct(lucro_bruto))
+    c4.metric("💰 Resultado Final", f"R$ {res_final:,.2f}", delta=pct(res_final))
 
-    linhas_dre = [
+    # ESTRUTURA OFICIAL SINTÉTICA DO DRE SPOLETO
+    estrutura_dre_spoleto = [
         {"CONTA": "🔹 VENDA BRUTA", "VALOR": venda_bruta, "%": "100.00%"},
-        {"CONTA": "  • Faturamento Balcão", "VALOR": fat_b, "%": fmt_pct(fat_b)},
-        {"CONTA": "  • Faturamento Delivery", "VALOR": fat_d, "%": fmt_pct(fat_d)},
-        {"CONTA": "(-) Imposto Federal", "VALOR": imposto_fed, "%": fmt_pct(imposto_fed)},
-        {"CONTA": "(-) Imposto Estadual", "VALOR": imposto_est, "%": fmt_pct(imposto_est)},
-        {"CONTA": "🔹 RECEITA LÍQUIDA", "VALOR": rec_liquida, "%": fmt_pct(rec_liquida)},
+        {"CONTA": "  • Faturamento Balcão", "VALOR": fat_balcao, "%": pct(fat_balcao)},
+        {"CONTA": "  • Faturamento Delivery", "VALOR": fat_delivery, "%": pct(fat_delivery)},
+        {"CONTA": "(-) Imposto Federal", "VALOR": imp_fed, "%": pct(imp_fed)},
+        {"CONTA": "(-) Imposto Estadual", "VALOR": imp_est, "%": pct(imp_est)},
+        {"CONTA": "🔹 RECEITA LÍQUIDA", "VALOR": rec_liquida, "%": pct(rec_liquida)},
         {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
-        {"CONTA": "📦 C M V (Custo de Mercadoria Vendida)", "VALOR": total_cmv, "%": fmt_pct(total_cmv)},
-        {"CONTA": "  • Alimentos (Escaneado)", "VALOR": cmv_alimentos, "%": fmt_pct(cmv_alimentos)},
-        {"CONTA": "  • Bebidas (Escaneado)", "VALOR": cmv_bebidas, "%": fmt_pct(cmv_bebidas)},
-        {"CONTA": "  • Descartáveis (Escaneado)", "VALOR": cmv_descartaveis, "%": fmt_pct(cmv_descartaveis)},
-        {"CONTA": "  • Fretes", "VALOR": cmv_fretes, "%": fmt_pct(cmv_fretes)},
-        {"CONTA": "🔹 LUCRO BRUTO", "VALOR": lucro_bruto, "%": fmt_pct(lucro_bruto)},
+        {"CONTA": "📦 C M V (Custo de Mercadoria Vendida)", "VALOR": total_cmv, "%": pct(total_cmv)},
+        {"CONTA": "  • Alimentos", "VALOR": cmv_alim, "%": pct(cmv_alim)},
+        {"CONTA": "  • Bebidas", "VALOR": cmv_beb, "%": pct(cmv_beb)},
+        {"CONTA": "  • Descartáveis", "VALOR": cmv_desc, "%": pct(cmv_desc)},
+        {"CONTA": "  • Fretes", "VALOR": cmv_fret, "%": pct(cmv_fret)},
+        {"CONTA": "🔹 LUCRO BRUTO", "VALOR": lucro_bruto, "%": pct(lucro_bruto)},
         {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
-        {"CONTA": "🏢 TOTAL OCUPAÇÃO", "VALOR": total_ocupacao, "%": fmt_pct(total_ocupacao)},
-        {"CONTA": "  • Aluguel / Condomínio / Fundo", "VALOR": ocup_aluguel + ocup_condo + ocup_fundo, "%": fmt_pct(ocup_aluguel + ocup_condo + ocup_fundo)},
-        {"CONTA": "👥 TOTAL PESSOAL", "VALOR": total_pessoal, "%": fmt_pct(total_pessoal)},
-        {"CONTA": "  • Alimentação Funcionários (Escaneado)", "VALOR": pess_benef, "%": fmt_pct(pess_benef)},
-        {"CONTA": "💡 TOTAL UTILIDADES (Água, Energia, Gás)", "VALOR": total_utilidades, "%": fmt_pct(total_utilidades)},
-        {"CONTA": "🧹 MATERIAIS DE USO & LIMPEZA (Escaneado)", "VALOR": total_materiais, "%": fmt_pct(total_materiais)},
-        {"CONTA": "  • Material de Limpeza", "VALOR": mat_limpeza, "%": fmt_pct(mat_limpeza)},
-        {"CONTA": "  • Utensílios de Cozinha", "VALOR": mat_utensilios, "%": fmt_pct(mat_utensilios)},
-        {"CONTA": "🔧 MANUTENÇÃO", "VALOR": total_manutencao, "%": fmt_pct(total_manutencao)},
-        {"CONTA": "🛵 DELIVERY & TAXAS", "VALOR": total_delivery, "%": fmt_pct(total_delivery)},
-        {"CONTA": "📢 MARKETING & FRANQUEADOR", "VALOR": total_marketing, "%": fmt_pct(total_marketing)},
-        {"CONTA": "💳 CUSTO FINANCEIRO (Cartões)", "VALOR": total_financeiro, "%": fmt_pct(total_financeiro)},
+        {"CONTA": "🏢 TOTAL OCUPAÇÃO", "VALOR": total_ocup, "%": pct(total_ocup)},
+        {"CONTA": "👥 TOTAL PESSOAL", "VALOR": total_pess, "%": pct(total_pess)},
+        {"CONTA": "💡 TOTAL UTILIDADES", "VALOR": total_util, "%": pct(total_util)},
+        {"CONTA": "🧹 MATERIAIS DE USO & CONSUMO", "VALOR": total_mat, "%": pct(total_mat)},
+        {"CONTA": "🔧 MANUTENÇÃO", "VALOR": total_manut, "%": pct(total_manut)},
+        {"CONTA": "🛵 DELIVERY", "VALOR": total_deliv, "%": pct(total_deliv)},
+        {"CONTA": "📢 MARKETING & FRANQUEADOR", "VALOR": total_mkt, "%": pct(total_mkt)},
+        {"CONTA": "💳 CUSTO FINANCEIRO", "VALOR": total_fin, "%": pct(total_fin)},
         {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
-        {"CONTA": "🔴 TOTAL DESPESAS GERAIS", "VALOR": total_despesas_operacionais, "%": fmt_pct(total_despesas_operacionais)},
-        {"CONTA": "🏆 RESULTADO OPERACIONAL", "VALOR": resultado_operacional, "%": fmt_pct(resultado_operacional)},
-        {"CONTA": "💰 RESULTADO FINAL LÍQUIDO", "VALOR": resultado_final, "%": fmt_pct(resultado_final)}
+        {"CONTA": "🔴 TOTAL DESPESAS", "VALOR": total_despesas, "%": pct(total_despesas)},
+        {"CONTA": "🏆 RESULTADO OPERACIONAL", "VALOR": res_operacional, "%": pct(res_operacional)},
+        {"CONTA": "💰 RESULTADO FINAL LÍQUIDO", "VALOR": res_final, "%": pct(res_final)}
     ]
 
-    df_view = pd.DataFrame(linhas_dre)
-    df_view["VALOR"] = df_view["VALOR"].apply(lambda x: f"R$ {x:,.2f}" if pd.notnull(x) else "")
-    st.dataframe(df_view, use_container_width=True, height=650)
+    df_spoleto_view = pd.DataFrame(estrutura_dre_spoleto)
+    df_spoleto_view["VALOR"] = df_spoleto_view["VALOR"].apply(lambda x: f"R$ {x:,.2f}" if pd.notnull(x) else "")
+    st.dataframe(df_spoleto_view, use_container_width=True, height=550)
 
-    st.markdown("### 📥 Exportar Relatório Oficial")
-    dados_excel = gerar_excel_dre(NOMES_MESES[mes_ativo], linhas_dre, df_l)
+    # Botão de Exportação Excel
+    st.markdown("### 📥 Baixar Relatório")
+    dados_excel = gerar_excel_dre(NOMES_MESES[mes_ativo], pd.DataFrame(estrutura_dre_spoleto), df_l)
     st.download_button(
-        label="📊 Baixar DRE em Excel (.xlsx)",
+        label="📊 Baixar DRE Atualizado em Excel (.xlsx)",
         data=dados_excel,
         file_name=f"DRE_Spoleto_{mes_ativo}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
