@@ -53,7 +53,7 @@ div[data-testid="stCameraInput"] button { padding: 0.75rem 1.5rem !important; fo
 </style>
 """, unsafe_allow_html=True)
 
-# ----------------- CATÁLOGO OFICIAL DOS 132 INDICADORES DO DRE SPOLETO -----------------
+# ----------------- CATÁLOGO DOS 132 INDICADORES DO DRE SPOLETO -----------------
 CATALOGO_DRE_SPOLETO = {
     # IMPOSTOS
     "Simples": {"dre": "Imposto", "detalhamento": "Imposto Federal"},
@@ -62,7 +62,7 @@ CATALOGO_DRE_SPOLETO = {
     "Cofins": {"dre": "Imposto", "detalhamento": "Imposto Federal"},
     "Iss": {"dre": "Imposto", "detalhamento": "Imposto Federal"},
 
-    # CMV - ALIMENTOS, BEBIDAS, DESCARTÁVEIS E FRETES
+    # CMV
     "Demais Alimentos": {"dre": "Alimentos", "detalhamento": "Alimentos"},
     "Proteínas": {"dre": "Alimentos", "detalhamento": "Alimentos"},
     "Laticínios": {"dre": "Alimentos", "detalhamento": "Alimentos"},
@@ -112,15 +112,15 @@ CATALOGO_DRE_SPOLETO = {
     "Treinamento": {"dre": "Pessoal", "detalhamento": "Outros (pessoal)"},
 
     # UTILIDADES
-    "Água E Esgoto": {"dre": "Utilidades", "detalhamento": "Água E Esgoto"},
-    "Energia Elétrica": {"dre": "Utilidades", "detalhamento": "Energia Elétrica"},
     "Gás": {"dre": "Utilidades", "detalhamento": "Gás"},
+    "Energia Elétrica": {"dre": "Utilidades", "detalhamento": "Energia Elétrica"},
+    "Água E Esgoto": {"dre": "Utilidades", "detalhamento": "Água E Esgoto"},
     "Telefone": {"dre": "Utilidades", "detalhamento": "Telefone"},
     "Celular Loja": {"dre": "Utilidades", "detalhamento": "Telefone"},
     "Internet": {"dre": "Utilidades", "detalhamento": "Internet"},
     "Taxa De Lixo": {"dre": "Utilidades", "detalhamento": "Outros (utilidades)"},
 
-    # SERVIÇOS GERAIS & TERCEIROS
+    # SERVIÇOS & TERCEIROS
     "Advogado": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Terceiros"},
     "Contabilidade": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Terceiros"},
     "Assessoria/Consultoria": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Terceiros"},
@@ -129,14 +129,13 @@ CATALOGO_DRE_SPOLETO = {
     "Dedetização": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Terceiros"},
     "Cartório": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Serviços"},
     "Correio/Malote": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Serviços"},
-    "Aluel Máquinas Das Adquirentes": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Serviços"},
     "Aluguel Pos": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Serviços"},
     "Fee Gcom": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Serviços"},
     "Fee Clastech": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Serviços"},
     "Fee Totem": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Serviços"},
     "Tef": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Serviços"},
 
-    # MATERIAIS DE USO E CONSUMO & LIMPEZA
+    # MATERIAIS DE USO & LIMPEZA
     "Material De Escritório": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Material De Escritório"},
     "Material De Limpeza": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Material De Limpeza"},
     "Pan Clean (Detergente Neutro)": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Material De Limpeza"},
@@ -146,8 +145,6 @@ CATALOGO_DRE_SPOLETO = {
     "Suma Chlor": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Material De Limpeza"},
     "Block Whitener": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Material De Limpeza"},
     "Rolo Bactericida": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Material De Limpeza"},
-    "Suma Mach (Máquina De Lavar)": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Material De Limpeza"},
-    "Suma Rinse (Máquina De Lavar)": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Material De Limpeza"},
     "Uniformes": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Uniformes"},
     "Utensílios De Cozinha": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Utensílios"},
     "Alcool Gel": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
@@ -156,57 +153,22 @@ CATALOGO_DRE_SPOLETO = {
     "Esponja Fibraço": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
     "Esponja Dupla Face": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
     "Bobina Pdv": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
-    "Bobina Balança": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
-    "Bobina Picotada": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
     "Filme Pvc": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
-    "Borrifador": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
-    "Rede De Proteção (Touca Preta)": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
-    "Touca Descartável": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
-    "Rodo De Alumínio": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
-    "Refil Rodo De Alumínio": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
-    "Pedra De Afiar": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
     "Saco De Lixo": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
-    "Fita Ph": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
     "Mop": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
-    "Refil Para Mop": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
-    "Luva Latex": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
 
     # MANUTENÇÃO
     "Serviço - Manutenção E Reparos": {"dre": "Manutenção", "detalhamento": "Serviço - Manutenção E Reparos"},
     "Material - Manutenção E Reparos": {"dre": "Manutenção", "detalhamento": "Material - Manutenção E Reparos"},
 
-    # DELIVERY
+    # DELIVERY, MARKETING, FINANCEIRO E OUTROS
     "Comissão Agregadores": {"dre": "Delivery", "detalhamento": "Comissão Agregadores"},
     "Custo Com Entrega (Motoqueiros)": {"dre": "Delivery", "detalhamento": "Custo Com Entrega (Motoqueiros)"},
-    "Custo Com Taxa Grátis": {"dre": "Delivery", "detalhamento": "Custo Com Taxa Grátis"},
-    "Taxa Transação (Taxa Cartão Ifood)": {"dre": "Delivery", "detalhamento": "Taxa Transação (Taxa Cartão Ifood)"},
-    "Mensalidade": {"dre": "Delivery", "detalhamento": "Mensalidade"},
-    "Voucher/Cupom": {"dre": "Delivery", "detalhamento": "Voucher/Cupom"},
-    "Site Próprio (Pwa)": {"dre": "Delivery", "detalhamento": "Site Próprio (Pwa)"},
-    "Outros (Delivery)": {"dre": "Delivery", "detalhamento": "Outros (Delivery)"},
-
-    # MARKETING & TAXAS FRANQUEADOR
     "Anúncios/Propagandas": {"dre": "Marketing", "detalhamento": "Anúncios/Propagandas"},
-    "Gerenciamento Página Instagram": {"dre": "Marketing", "detalhamento": "Gerenciamento Página Instagram"},
-    "Gráfica (Folhetos, Banners)": {"dre": "Marketing", "detalhamento": "Gráfica (Folhetos, Banners)"},
-    "Programação Visual": {"dre": "Marketing", "detalhamento": "Programação Visual"},
-    "Dólar (Gnocchi Da Fortuna)": {"dre": "Marketing", "detalhamento": "Outros (Marketing)"},
-    "Outros (Marketing)": {"dre": "Marketing", "detalhamento": "Outros (Marketing)"},
     "Royalties": {"dre": "Taxas_Franqueador", "detalhamento": "Royalties"},
     "Fundo De Marketing": {"dre": "Taxas_Franqueador", "detalhamento": "Fundo De Marketing"},
-
-    # FINANCEIRO & NÃO OPERACIONAIS
     "Custo Cartão De Crédito": {"dre": "Financeiro", "detalhamento": "Custo Cartão De Crédito"},
     "Custo Cartão De Débito": {"dre": "Financeiro", "detalhamento": "Custo Cartão De Débito"},
-    "Custo Ticket": {"dre": "Financeiro", "detalhamento": "Custo Ticket"},
-    "Despesas De Viagens": {"dre": "Despesas_Não_Operacionais", "detalhamento": "Despesas De Viagens"},
-    "Despesas De Convenção": {"dre": "Despesas_Não_Operacionais", "detalhamento": "Despesas De Convenção"},
-    "Rateio De Escritório Administrativo": {"dre": "Despesas_Não_Operacionais", "detalhamento": "Rateio De Escritório Administrativo"},
-    "Pessoal - Supervisor E Nutricionista": {"dre": "Despesas_Não_Operacionais", "detalhamento": "Pessoal - Supervisor E Nutricionista"},
-    "Empréstimos Bancário": {"dre": "Despesas_Não_Operacionais", "detalhamento": "Empréstimos Bancário"},
-    "Pronampe": {"dre": "Despesas_Não_Operacionais", "detalhamento": "Pronampe"},
-    "Juros De Empréstimos": {"dre": "Despesas_Não_Operacionais", "detalhamento": "Juros De Empréstimos"},
-    "Empréstimo Folha De Pagamento": {"dre": "Despesas_Não_Operacionais", "detalhamento": "Empréstimo Folha De Pagamento"},
     "Capex": {"dre": "Despesas_Não_Operacionais", "detalhamento": "Capex"},
     "Pro Labore": {"dre": "Despesas_Não_Operacionais", "detalhamento": "Pro Labore"}
 }
@@ -293,6 +255,19 @@ mes_ativo = st.sidebar.selectbox(
 )
 st.sidebar.markdown("---")
 
+def lancar_item_unico_dre(mes_ref, fornecedor, valor_total, classificacao_escolhida):
+    conn = sqlite3.connect("notas_fiscais.db")
+    cursor = conn.cursor()
+    data_hoje = datetime.now().strftime("%Y-%m-%d")
+    cfg = CATALOGO_DRE_SPOLETO.get(classificacao_escolhida, {"dre": "Utilidades", "detalhamento": classificacao_escolhida})
+    
+    cursor.execute("""
+        INSERT INTO lancamentos_dre (mes_referencia, data, fornecedor, descricao, valor, dre, classificacao, detalhamento)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (mes_ref, data_hoje, fornecedor.strip().upper(), classificacao_escolhida.upper(), float(valor_total), cfg["dre"], classificacao_escolhida, cfg["detalhamento"]))
+    conn.commit()
+    conn.close()
+
 def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_produtos):
     conn = sqlite3.connect("notas_fiscais.db")
     cursor = conn.cursor()
@@ -378,7 +353,7 @@ def gerar_excel_dre(nome_mes, df_dre_completo, df_lancamentos):
     output.seek(0)
     return output.getvalue()
 
-# ----------------- CONFIGURAÇÕES IA COM O CATÁLOGO COMPLETO -----------------
+# ----------------- CONFIGURAÇÕES IA -----------------
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
 except Exception:
@@ -386,16 +361,6 @@ except Exception:
     st.stop()
 
 MODELOS_IA = ["gemini-3.8-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
-
-# Amostra resumida das opções mais comuns para orientar o prompt da IA
-AMOSTRA_CLASSIFICACOES = """
-Demais Alimentos, Proteínas, Laticínios, Molhos, Massas, Farinhas E Cereais, Hortaliças, Conservas, Sobremesas,
-Bebidas, Embalagens E Descartáveis, Frete FBD, Aluguel, Condomínio, Fundo De Promoção, IPTU, Ar Condicionado,
-Alimentação Funcionário, Vale Transporte, Salário, Energia Elétrica, Água E Esgoto, Gás, Internet, Telefone,
-Material De Limpeza, Pan Clean (Detergente Neutro), Virex Flv, Break Up (Desengordurante), Suma Grill,
-Material De Escritório, Uniformes, Utensílios De Cozinha, Saco De Lixo, Bobina Pdv, Esponja Fibraço,
-Serviço - Manutenção E Reparos, Material - Manutenção E Reparos, Comissão Agregadores, Anúncios/Propagandas, Capex
-"""
 
 def chamar_gemini_com_fallback(chave, conteudos):
     client = genai.Client(api_key=chave)
@@ -423,15 +388,19 @@ def processar_multiplas_imagens_com_ia(partes_img, chave):
     prompt = f"""
     Você é o assistente financeiro oficial da franquia Spoleto (Capry Comércio Varejista de Alimentos LTDA).
     Analise as imagens anexadas do cupom/nota fiscal.
-    Sua tarefa é extrair os itens e associar a 'Classificacao' com EXATIDÃO entre as 132 opções oficiais do DRE Spoleto.
-    Exemplos de classificações válidas:
-    {AMOSTRA_CLASSIFICACOES}
-
-    Priorize rigorosamente estas regras memorizadas pelo usuário:
-    {ex_regras}
-
-    Extraia: 'razao_social', 'cnpj', 'valor_total' (float) e 'itens' [Produto, Quantidade, Unid, PrecoUnitario, TotalItem, Classificacao].
-    Retorne APENAS um JSON válido.
+    Extraia:
+    1. 'razao_social': Nome do estabelecimento / fornecedor.
+    2. 'cnpj': CNPJ do emitente.
+    3. 'valor_total': Valor total final da nota (float numérico).
+    4. 'itens': Lista detalhada com: "Produto", "Quantidade", "Unid", "PrecoUnitario", "TotalItem", "Classificacao".
+    Regras memorizadas: {ex_regras}
+    Retorne APENAS um JSON no formato:
+    {{
+      "razao_social": "...",
+      "cnpj": "...",
+      "valor_total": 0.0,
+      "itens": [...]
+    }}
     """
     return chamar_gemini_com_fallback(chave, [prompt] + partes_img)
 
@@ -439,8 +408,7 @@ def processar_texto_com_ia(texto, nome_arq, chave):
     regras = carregar_regras()
     ex_regras = json.dumps(regras, ensure_ascii=False) if regras else "Nenhuma."
     prompt = f"""
-    Analise o arquivo '{nome_arq}'. Classifique os itens com as categorias oficiais do DRE Spoleto.
-    Exemplos: {AMOSTRA_CLASSIFICACOES}.
+    Analise o arquivo '{nome_arq}'. Extraia os itens e classifique com as contas do Spoleto.
     Regras conhecidas: {ex_regras}.
     Retorne lista JSON com: Produto, Quantidade, Unid, PrecoUnitario, TotalItem, Classificacao.
     Texto: {texto[:15000]}
@@ -454,7 +422,7 @@ def categorizar_nomes_xml(nomes, chave):
     faltam = [n for n in nomes if n.strip().upper() not in regras]
     if faltam:
         p = f"""
-        Classifique os produtos abaixo nas opções oficiais do DRE Spoleto (ex: Demais Alimentos, Proteínas, Laticínios, Embalagens E Descartáveis, Bebidas, Material De Limpeza, Utensílios De Cozinha, etc):
+        Classifique os produtos abaixo nas opções oficiais do DRE Spoleto:
         {json.dumps(faltam, ensure_ascii=False)}.
         Retorne JSON objeto {{\"nome_do_produto\": \"Classificacao\"}}.
         """
@@ -462,6 +430,20 @@ def categorizar_nomes_xml(nomes, chave):
         if isinstance(res, dict):
             mapa.update(res)
     return mapa
+
+# ----------------- GERENCIAMENTO DE ESTADO E LIMPEZA DE SESSÃO -----------------
+if "fotos_acumuladas" not in st.session_state:
+    st.session_state.fotos_acumuladas = []
+if "dados_extraidos" not in st.session_state:
+    st.session_state.dados_extraidos = None
+if "uploader_key" not in st.session_state:
+    st.session_state.uploader_key = 0
+
+def resetar_processamento_nota():
+    """Limpa completamente os dados da nota atual para evitar duplicação ou mistura com a próxima."""
+    st.session_state.fotos_acumuladas = []
+    st.session_state.dados_extraidos = None
+    st.session_state.uploader_key += 1
 
 # ----------------- NAVEGAÇÃO -----------------
 menu = st.sidebar.radio("Módulo:", [
@@ -471,11 +453,6 @@ menu = st.sidebar.radio("Módulo:", [
     "🧠 Regras Inteligentes"
 ])
 
-if "fotos_acumuladas" not in st.session_state:
-    st.session_state.fotos_acumuladas = []
-if "dados_extraidos" not in st.session_state:
-    st.session_state.dados_extraidos = None
-
 # ==============================================================================
 # 1. ABA DO DRE OFICIAL (EDIÇÃO DIRETA NA TABELA & TEMPO REAL)
 # ==============================================================================
@@ -483,32 +460,25 @@ if menu.startswith("📊 DRE Spoleto"):
     st.subheader(f"📊 Demonstrativo de Resultados (DRE) — {NOMES_MESES[mes_ativo]}")
     st.write("Edite qualquer valor na coluna **VALOR (R$)** da tabela abaixo. Os subtotais, totais e percentuais recalculam na hora[cite: 8, 9]!")
 
-    # 1. Obter somas vindas das notas escaneadas na aba LANÇAMENTOS
     df_l = obter_lancamentos_mes(mes_ativo)
     somas_escaneadas = df_l.groupby("detalhamento")["valor"].sum().to_dict() if not df_l.empty else {}
-
-    # 2. Obter ajustes manuais salvos no banco para este mês
     ajustes_banco = obter_ajustes_dre(mes_ativo)
 
     CONTAS_DRE_PAINEL = [
-        # Receitas & Impostos
         ("Faturamento Balcão", None, 0.0),
         ("Faturamento Delivery", None, 0.0),
         ("Imposto Federal", "Imposto Federal", 0.0),
         ("Imposto Estadual", "Imposto Estadual", 0.0),
-        # CMV
         ("Alimentos", "Alimentos", 0.0),
         ("Bebidas", "Bebidas", 0.0),
         ("Descartáveis", "Descartáveis", 0.0),
         ("Fretes", "Fretes", 0.0),
-        # Ocupação
         ("Aluguel", "Aluguel", 0.0),
         ("Ar condicionado", "Ar Condicionado", 0.0),
         ("Condomínio", "Condomínio", 0.0),
         ("Fundo de Promoção", "Fundo De Promoção", 0.0),
         ("IPTU", "Iptu", 0.0),
         ("Taxas e Outros", "Taxas E Outros", 0.0),
-        # Pessoal
         ("Salário", "Salário", 0.0),
         ("Adiantamento", "Adiantamento", 0.0),
         ("Benefícios (Alimentação Funcionários)", "Benefícios", 0.0),
@@ -518,26 +488,21 @@ if menu.startswith("📊 DRE Spoleto"):
         ("Provisões", "Provisões", 0.0),
         ("Rescisão", "Rescisão", 0.0),
         ("Outros (pessoal)", "Outros (pessoal)", 0.0),
-        # Utilidades
         ("Água e Esgoto", "Água E Esgoto", 0.0),
         ("Energia Elétrica", "Energia Elétrica", 0.0),
         ("Gás", "Gás", 0.0),
         ("Internet", "Internet", 0.0),
         ("Telefone", "Telefone", 0.0),
         ("Outros (utilidades)", "Outros (utilidades)", 0.0),
-        # Serviços & Terceiros
         ("Serviços", "Serviços", 0.0),
         ("Terceiros", "Terceiros", 0.0),
-        # Material de Uso & Consumo
         ("Material de Escritório", "Material De Escritório", 0.0),
         ("Material de Limpeza", "Material De Limpeza", 0.0),
         ("Uniformes", "Uniformes", 0.0),
         ("Utensílios", "Utensílios", 0.0),
         ("Outros Materiais de Uso e Consumo", "Outros Materiais De Uso E Consumo", 0.0),
-        # Manutenção
         ("Serviço - Manutenção e Reparos", "Serviço - Manutenção E Reparos", 0.0),
         ("Material - Manutenção e Reparos", "Material - Manutenção E Reparos", 0.0),
-        # Delivery & Marketing & Financeiro
         ("Taxa de entrega arrecadada", None, 0.0),
         ("Comissão agregadores", "Comissão Agregadores", 0.0),
         ("Custo com entrega (motoqueiros)", "Custo Com Entrega (Motoqueiros)", 0.0),
@@ -546,7 +511,6 @@ if menu.startswith("📊 DRE Spoleto"):
         ("Royalties", "Royalties", 0.0),
         ("Custo Cartão de Crédito", "Custo Cartão De Crédito", 0.0),
         ("Custo Cartão de Débito", "Custo Cartão De Débito", 0.0),
-        # Bonificação / Extra
         ("Total Bonificação", None, 0.0)
     ]
 
@@ -591,7 +555,6 @@ if menu.startswith("📊 DRE Spoleto"):
     def v(k):
         return float(v_map.get(k, 0.0))
 
-    # CÁLCULOS EXATOS DO DRE SPOLETO EM TEMPO REAL
     fat_balcao = v("Faturamento Balcão")
     fat_delivery = v("Faturamento Delivery")
     venda_bruta = fat_balcao + fat_delivery
@@ -688,11 +651,13 @@ if menu.startswith("📊 DRE Spoleto"):
     )
 
 # ==============================================================================
-# 2. ABA DE ESCANEAR NOTA & ALIMENTAR DRE AUTOMATICAMENTE COM 132 INDICADORES
+# 2. ABA DE ESCANEAR NOTA & ALIMENTAR DRE AUTOMATICAMENTE
 # ==============================================================================
 elif menu.startswith("📸 Escanear"):
     st.subheader(f"📸 Escanear Nota Fiscal para o DRE de: {NOMES_MESES[mes_ativo]}")
-    st.info(f"Ao confirmar o salvamento, todos os itens serão classificados nos 132 indicadores oficiais do Spoleto e entrarão direto no DRE de **{NOMES_MESES[mes_ativo]}**[cite: 7, 8]!")
+
+    # Chave única dinâmica para resetar o uploader e a câmera
+    ukey = st.session_state.uploader_key
 
     aba_foto, aba_cam, aba_arq = st.tabs([
         "📸 Fotos Nítidas (Telemóvel / Galeria)",
@@ -701,20 +666,28 @@ elif menu.startswith("📸 Escanear"):
     ])
 
     with aba_foto:
-        f_upload = st.file_uploader("Fotos do cupom/nota:", type=["jpg", "jpeg", "png", "webp"], accept_multiple_files=True)
-        if f_upload and st.button("➕ Adicionar fotos à fila"):
+        f_upload = st.file_uploader(
+            "Fotos do cupom/nota:",
+            type=["jpg", "jpeg", "png", "webp"],
+            accept_multiple_files=True,
+            key=f"file_uploader_{ukey}"
+        )
+        if f_upload and st.button("➕ Adicionar fotos à fila", key=f"btn_add_f_{ukey}"):
+            # Ao adicionar novas fotos, substitui as anteriores para não misturar notas
+            st.session_state.fotos_acumuladas = []
             for f in f_upload:
                 st.session_state.fotos_acumuladas.append({
                     "bytes": f.getvalue(),
                     "mime": "image/jpeg" if f.name.lower().endswith(('jpg', 'jpeg')) else f"image/{f.name.split('.')[-1].lower()}"
                 })
-            st.success(f"{len(f_upload)} foto(s) pronta(s)!")
+            st.success(f"{len(f_upload)} foto(s) da nova nota carregada(s)!")
 
     with aba_cam:
-        f_cam = st.camera_input("Capturar foto")
-        if f_cam and st.button("➕ Adicionar captura à fila"):
-            st.session_state.fotos_acumuladas.append({"bytes": f_cam.getvalue(), "mime": "image/jpeg"})
-            st.success("Foto capturada adicionada!")
+        f_cam = st.camera_input("Capturar foto", key=f"cam_input_{ukey}")
+        if f_cam and st.button("➕ Adicionar captura à fila", key=f"btn_add_cam_{ukey}"):
+            # Substitui capturas anteriores para manter apenas a nota corrente
+            st.session_state.fotos_acumuladas = [{"bytes": f_cam.getvalue(), "mime": "image/jpeg"}]
+            st.success("Foto capturada pronta para leitura!")
 
     if st.session_state.fotos_acumuladas:
         st.write(f"**Total acumulado:** {len(st.session_state.fotos_acumuladas)} foto(s)")
@@ -733,14 +706,18 @@ elif menu.startswith("📸 Escanear"):
                         }
                         st.session_state.fotos_acumuladas = []
                         st.rerun()
+                    else:
+                        st.error("Não foi possível extrair dados legíveis desta imagem. Tente capturar novamente com boa iluminação.")
         with c2:
             if st.button("🗑️ Descartar Fotos", use_container_width=True):
-                st.session_state.fotos_acumuladas = []
+                resetar_processamento_nota()
                 st.rerun()
 
     with aba_arq:
-        doc = st.file_uploader("Enviar XML, PDF ou Excel:", type=["xml", "xlsx", "xls", "pdf"])
-        if doc and st.button("Processar Arquivo"):
+        doc = st.file_uploader("Enviar XML, PDF ou Excel:", type=["xml", "xlsx", "xls", "pdf"], key=f"doc_uploader_{ukey}")
+        if doc and st.button("Processar Arquivo", key=f"btn_doc_{ukey}"):
+            # Limpa qualquer dado residual antes de processar o novo documento
+            st.session_state.dados_extraidos = None
             ext = doc.name.split(".")[-1].lower()
             if ext == "xml":
                 data = xmltodict.parse(doc.read())
@@ -782,6 +759,7 @@ elif menu.startswith("📸 Escanear"):
                 }
                 st.rerun()
 
+    # ----------------- PAINEL DE RESULTADO ISOLADO DA NOTA -----------------
     if st.session_state.dados_extraidos:
         dados = st.session_state.dados_extraidos
         st.markdown("---")
@@ -789,62 +767,100 @@ elif menu.startswith("📸 Escanear"):
         c_a, c_b, c_c = st.columns(3)
         c_a.metric("Fornecedor", dados["razao_social"])
         c_b.metric("CNPJ", dados["cnpj"])
-        c_c.metric("Valor Total", f"R$ {dados['valor_total']:,.2f}")
+        c_c.metric("Valor Total da Nota", f"R$ {dados['valor_total']:,.2f}")
 
-        df_itens = pd.DataFrame(dados["itens"])
-        if not df_itens.empty:
-            if "Classificacao" not in df_itens.columns and "Categoria" in df_itens.columns:
-                df_itens.rename(columns={"Categoria": "Classificacao"}, inplace=True)
+        tab_rapida, tab_detalhada = st.tabs([
+            "⚡ Lançamento Rápido (Item Único: Gás, Energia, Aluguel...)",
+            "📦 Destrinchar Vários Itens (Compras de Mercadoria)"
+        ])
 
-            # Se a IA sugerir algo fora do catálogo, fallback suave para Demais Alimentos
-            df_itens["Classificacao"] = df_itens["Classificacao"].apply(
-                lambda x: x if x in CATALOGO_DRE_SPOLETO else "Demais Alimentos"
-            )
+        with tab_rapida:
+            st.write("💡 **Ideal para contas diretas:** o valor total vai direto para a conta escolhida sem misturar com outras notas[cite: 7, 8].")
+            
+            index_padrao = LISTA_TODAS_CLASSIFICACOES.index("Gás") if "Gás" in LISTA_TODAS_CLASSIFICACOES else 0
+            
+            c_rap1, c_rap2 = st.columns(2)
+            with c_rap1:
+                classificacao_rapida = st.selectbox(
+                    "Selecione o Indicador do DRE:",
+                    LISTA_TODAS_CLASSIFICACOES,
+                    index=index_padrao,
+                    key=f"sel_rapido_dre_{ukey}"
+                )
+            with c_rap2:
+                valor_rapido = st.number_input(
+                    "Valor a Lançar (R$):",
+                    value=float(dados["valor_total"]),
+                    min_value=0.01,
+                    step=10.0,
+                    key=f"val_rapido_dre_{ukey}"
+                )
 
-            st.write("👇 **Revise e altere a Classificação do Spoleto de cada item se necessário:**")
-            df_edit = st.data_editor(
-                df_itens,
-                column_config={
-                    "Classificacao": st.column_config.SelectboxColumn(
-                        "Classificação Spoleto",
-                        options=LISTA_TODAS_CLASSIFICACOES,
-                        required=True
-                    ),
-                    "Produto": st.column_config.TextColumn("Produto", required=True),
-                    "Quantidade": st.column_config.NumberColumn("Qtd", format="%.2f"),
-                    "Unid": st.column_config.TextColumn("Unid"),
-                    "PrecoUnitario": st.column_config.NumberColumn("Preço Unit. (R$)", format="R$ %.2f"),
-                    "TotalItem": st.column_config.NumberColumn("Total Item (R$)", format="R$ %.2f"),
-                },
-                use_container_width=True,
-                num_rows="dynamic",
-                key="editor_nota_ativa"
-            )
+            if st.button(f"⚡ Lançar R$ {valor_rapido:,.2f} direto em '{classificacao_rapida}' no DRE", type="primary", use_container_width=True):
+                lancar_item_unico_dre(
+                    mes_ref=mes_ativo,
+                    fornecedor=dados["razao_social"],
+                    valor_total=valor_rapido,
+                    classificacao_escolhida=classificacao_rapida
+                )
+                st.success(f"✅ Sucesso! R$ {valor_rapido:,.2f} lançado diretamente em **{classificacao_rapida}** no DRE de {NOMES_MESES[mes_ativo]}[cite: 7, 8]!")
+                resetar_processamento_nota()
+                st.rerun()
 
-            somas_class = df_edit.groupby("Classificacao")["TotalItem"].sum().to_dict()
-            st.write("#### 📊 Subtotais que alimentarão a aba LANÇAMENTOS e o DRE:")
-            c_grid = st.columns(min(len(somas_class), 4))
-            for idx, (cl_n, val_n) in enumerate(somas_class.items()):
-                c_grid[idx % 4].metric(cl_n, f"R$ {val_n:,.2f}")
+        with tab_detalhada:
+            df_itens = pd.DataFrame(dados["itens"])
+            if not df_itens.empty:
+                if "Classificacao" not in df_itens.columns and "Categoria" in df_itens.columns:
+                    df_itens.rename(columns={"Categoria": "Classificacao"}, inplace=True)
 
-            st.markdown("---")
-            c_salvar, c_limpar = st.columns([2, 1])
-            with c_salvar:
-                if st.button(f"🚀 Confirmar & Lançar no DRE ({NOMES_MESES[mes_ativo]})", type="primary", use_container_width=True):
-                    salvar_nota_e_lancar_dre(
-                        mes_ref=mes_ativo,
-                        razao_social=dados["razao_social"],
-                        cnpj=dados["cnpj"],
-                        valor_total=dados["valor_total"] or sum(somas_class.values()),
-                        lista_produtos=df_edit.to_dict(orient="records")
-                    )
-                    st.success(f"✅ Sucesso! Os valores foram incorporados à aba LANÇAMENTOS e o DRE de {NOMES_MESES[mes_ativo]} foi atualizado automaticamente[cite: 7, 8].")
-                    st.session_state.dados_extraidos = None
-                    st.rerun()
-            with c_limpar:
-                if st.button("❌ Cancelar", use_container_width=True):
-                    st.session_state.dados_extraidos = None
-                    st.rerun()
+                df_itens["Classificacao"] = df_itens["Classificacao"].apply(
+                    lambda x: x if x in CATALOGO_DRE_SPOLETO else "Demais Alimentos"
+                )
+
+                st.write("👇 **Revise cada item individual desta nota:**")
+                df_edit = st.data_editor(
+                    df_itens,
+                    column_config={
+                        "Classificacao": st.column_config.SelectboxColumn(
+                            "Classificação Spoleto",
+                            options=LISTA_TODAS_CLASSIFICACOES,
+                            required=True
+                        ),
+                        "Produto": st.column_config.TextColumn("Produto", required=True),
+                        "Quantidade": st.column_config.NumberColumn("Qtd", format="%.2f"),
+                        "Unid": st.column_config.TextColumn("Unid"),
+                        "PrecoUnitario": st.column_config.NumberColumn("Preço Unit. (R$)", format="R$ %.2f"),
+                        "TotalItem": st.column_config.NumberColumn("Total Item (R$)", format="R$ %.2f"),
+                    },
+                    use_container_width=True,
+                    num_rows="dynamic",
+                    key=f"editor_nota_ativa_{ukey}"
+                )
+
+                somas_class = df_edit.groupby("Classificacao")["TotalItem"].sum().to_dict()
+                st.write("#### 📊 Subtotais por Categoria:")
+                c_grid = st.columns(min(len(somas_class), 4))
+                for idx, (cl_n, val_n) in enumerate(somas_class.items()):
+                    c_grid[idx % 4].metric(cl_n, f"R$ {val_n:,.2f}")
+
+                st.markdown("---")
+                col_save_det, col_canc = st.columns([2, 1])
+                with col_save_det:
+                    if st.button(f"🚀 Confirmar Itens Detalhados no DRE ({NOMES_MESES[mes_ativo]})", type="primary", use_container_width=True):
+                        salvar_nota_e_lancar_dre(
+                            mes_ref=mes_ativo,
+                            razao_social=dados["razao_social"],
+                            cnpj=dados["cnpj"],
+                            valor_total=dados["valor_total"] or sum(somas_class.values()),
+                            lista_produtos=df_edit.to_dict(orient="records")
+                        )
+                        st.success(f"✅ Sucesso! Itens detalhados incorporados à aba LANÇAMENTOS do DRE[cite: 7, 8]!")
+                        resetar_processamento_nota()
+                        st.rerun()
+                with col_canc:
+                    if st.button("❌ Descartar Nota", use_container_width=True):
+                        resetar_processamento_nota()
+                        st.rerun()
 
 # ==============================================================================
 # 3. ABA DE LANÇAMENTOS DO MÊS
