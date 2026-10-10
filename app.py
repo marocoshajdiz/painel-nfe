@@ -10,19 +10,19 @@ from datetime import datetime
 
 st.set_page_config(page_title="Painel Inteligente de Custos - Capry", layout="wide")
 
-# CSS para ampliar a área da câmara no ecrã (computador e telemóvel)
+# CSS para ampliar o visor da câmera no celular e no computador
 st.markdown("""
-    <style>
-    [data-testid="stCameraInput"] video {
-        width: 100% !important;
-        max-height: 550px !important;
-        border-radius: 12px;
-        object-fit: cover;
-    }
-    [data-testid="stCameraInput"] {
-        width: 100% !important;
-    }
-    </style>
+<style>
+[data-testid="stCameraInput"] video {
+    width: 100% !important;
+    max-height: 550px !important;
+    border-radius: 12px;
+    object-fit: cover;
+}
+[data-testid="stCameraInput"] {
+    width: 100% !important;
+}
+</style>
 """, unsafe_allow_html=True)
 
 # ----------------- BANCO DE DADOS (SQLite) -----------------
@@ -85,7 +85,7 @@ st.title("🛒 Painel Inteligente de Custos - Capry Comércio")
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
 except Exception:
-    st.error("⚠️ Chave de API não encontrada! Certifique-se de configurar o ficheiro .streamlit/secrets.toml.")
+    st.error("⚠️ Chave de API não encontrada! Certifique-se de configurar o arquivo .streamlit/secrets.toml.")
     st.stop()
 
 CATEGORIAS_VALIDAS = "Alimentos, Descartáveis, Limpeza, Funcionários, Utensílios, Bebidas"
@@ -155,16 +155,16 @@ def categorizar_nomes_xml(lista_nomes, chave):
     return res if isinstance(res, dict) else {}
 
 # ----------------- NAVEGAÇÃO PRINCIPAL -----------------
-menu_principal = st.sidebar.radio("Selecione a secção:", ["📄 Leitor de Notas & Cupões", "🗄️ Histórico & Consultas"])
+menu_principal = st.sidebar.radio("Selecione a seção:", ["📄 Leitor de Notas & Cupons", "🗄️ Histórico & Consultas"])
 
-if menu_principal == "📄 Leitor de Notas & Cupões":
-    aba_camera, aba_upload = st.tabs(["📸 Tirar Foto com a Câmera", "📁 Enviar Ficheiro ou Foto"])
+if menu_principal == "📄 Leitor de Notas & Cupons":
+    aba_camera, aba_upload = st.tabs(["📸 Tirar Foto com a Câmera", "📁 Enviar Arquivo ou Foto"])
 
     arquivo_ativo = None
     origem_camera = False
 
     with aba_camera:
-        st.write("Aponte a câmara para a nota fiscal:")
+        st.write("Aponte a câmera para a nota fiscal:")
         foto_camera = st.camera_input("Capturar Nota Fiscal")
         if foto_camera is not None:
             arquivo_ativo = foto_camera
@@ -189,7 +189,7 @@ if menu_principal == "📄 Leitor de Notas & Cupões":
         try:
             if origem_camera or file_extension in ['jpg', 'jpeg', 'png', 'webp']:
                 mime = "image/jpeg" if file_extension in ['jpg', 'jpeg'] else f"image/{file_extension}"
-                with st.spinner("🤖 A IA está a ler a imagem da nota..."):
+                with st.spinner("🤖 A IA está analisando a imagem da nota..."):
                     resultado_foto = processar_imagem_com_ia(arquivo_ativo.getvalue(), mime, api_key)
                 
                 if resultado_foto and isinstance(resultado_foto, dict):
@@ -237,7 +237,7 @@ if menu_principal == "📄 Leitor de Notas & Cupões":
 
             elif file_extension in ['xlsx', 'xls']:
                 df_excel = pd.read_excel(arquivo_ativo)
-                with st.spinner("🤖 Processando folha de cálculo..."):
+                with st.spinner("🤖 Processando planilha..."):
                     resultado_ia = processar_com_ia(df_excel.to_string(), arquivo_ativo.name, api_key)
                 for item in resultado_ia:
                     v_tot = float(item.get('TotalItem', 0))
@@ -296,19 +296,54 @@ if menu_principal == "📄 Leitor de Notas & Cupões":
                 st.markdown("---")
                 col_save, _ = st.columns([1, 4])
                 with col_save:
-                    if st.button("💾 Guardar Nota na Base de Dados", type="primary", use_container_width=True):
+                    if st.button("💾 Salvar Nota no Banco de Dados", type="primary", use_container_width=True):
                         salvar_nota(razao_social, cnpj_emitente, valor_total_nota, lista_produtos)
-                        st.success("✅ Nota fiscal guardada com sucesso! Já pode consultá-la no menu lateral.")
+                        st.success("✅ Nota fiscal salva com sucesso! Consulte no menu lateral em Histórico & Consultas.")
             else:
-                st.warning("Nenhum item detetado. Tente posicionar a câmara com boa iluminação.")
+                st.warning("Nenhum item detectado. Tente posicionar a câmera mais perto e com boa iluminação.")
 
         except Exception as e:
             st.error(f"Erro no processamento: {e}")
 
 # ----------------- ABA DE HISTÓRICO & EXCLUSÃO -----------------
 elif menu_principal == "🗄️ Histórico & Consultas":
-    st.subheader("🗄️ Histórico de Notas Guardadas")
+    st.subheader("🗄️ Histórico de Notas Salvas")
     df_historico = listar_notas()
 
     if df_historico.empty:
-        st.info("Ainda não há notas guardadas
+        st.info("Ainda não há notas salvas no banco de dados.")
+    else:
+        df_historico_show = df_historico.copy()
+        df_historico_show["valor_total"] = df_historico_show["valor_total"].apply(lambda x: f"R$ {x:,.2f}")
+        df_historico_show.rename(columns={
+            "id": "ID", 
+            "data_registo": "Data/Hora", 
+            "razao_social": "Fornecedor", 
+            "cnpj": "CNPJ", 
+            "valor_total": "Valor Total"
+        }, inplace=True)
+
+        st.dataframe(df_historico_show, use_container_width=True)
+
+        st.markdown("---")
+        st.subheader("🔍 Consultar Detalhes ou Excluir Registro")
+
+        col_select, col_del = st.columns([2, 1])
+        with col_select:
+            nota_selecionada = st.selectbox("Selecione a nota pelo ID:", df_historico["id"].tolist())
+
+        with col_del:
+            st.write("&nbsp;")
+            if st.button("🗑️ Excluir Nota", type="secondary", use_container_width=True):
+                excluir_nota(nota_selecionada)
+                st.warning(f"Nota #{nota_selecionada} excluída do banco de dados!")
+                st.rerun()
+
+        if nota_selecionada:
+            itens_recuperados = obter_detalhes_nota(nota_selecionada)
+            if itens_recuperados:
+                st.write(f"**Itens da Nota #{nota_selecionada}:**")
+                df_itens = pd.DataFrame(itens_recuperados)
+                df_itens["Preço Unitário (R$)"] = df_itens["Preço Unitário (R$)"].apply(lambda x: f"R$ {x:,.2f}")
+                df_itens["Total do Item (R$)"] = df_itens["Total do Item (R$)"].apply(lambda x: f"R$ {x:,.2f}")
+                st.dataframe(df_itens, use_container_width=True)
