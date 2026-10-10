@@ -25,8 +25,8 @@ def tela_login():
         st.markdown("### 🔐 Acesso ao Painel de Custos & DRE - Capry")
         st.write("Digite suas credenciais:")
         with st.form("form_login"):
-            usuario = st.text_input("Usuário", placeholder="admin")
-            senha = st.text_input("Senha", type="password", placeholder="massima")
+            usuario = st.text_input("Usuário", placeholder="Digite o Usuario")
+            senha = st.text_input("Senha", type="password", placeholder="Digite a Senha")
             if st.form_submit_button("Entrar", type="primary", use_container_width=True):
                 if usuario == USUARIO_CORRETO and senha == SENHA_CORRETA:
                     st.session_state.autenticado = True
@@ -256,15 +256,19 @@ mes_ativo = st.sidebar.selectbox(
 st.sidebar.markdown("---")
 
 def lancar_item_unico_dre(mes_ref, fornecedor, valor_total, classificacao_escolhida):
+    """Insere o lançamento direto e limpa a tabela de ajustes para que o novo valor apareça imediatamente no DRE."""
     conn = sqlite3.connect("notas_fiscais.db")
     cursor = conn.cursor()
     data_hoje = datetime.now().strftime("%Y-%m-%d")
-    cfg = CATALOGO_DRE_SPOLETO.get(classificacao_escolhida, {"dre": "Utilidades", "detalhamento": classificacao_escolhida})
+    cfg = CATALOGO_DRE_SPOLETO.get(classificacao_escolhida, {"dre": "Ocupação", "detalhamento": classificacao_escolhida})
     
     cursor.execute("""
         INSERT INTO lancamentos_dre (mes_referencia, data, fornecedor, descricao, valor, dre, classificacao, detalhamento)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     """, (mes_ref, data_hoje, fornecedor.strip().upper(), classificacao_escolhida.upper(), float(valor_total), cfg["dre"], classificacao_escolhida, cfg["detalhamento"]))
+    
+    # Se existia um ajuste manual antigo gravado nessa conta que bloqueava o valor escaneado, remove-o
+    cursor.execute("DELETE FROM ajustes_dre WHERE mes_referencia = ? AND conta = ?", (mes_ref, classificacao_escolhida))
     conn.commit()
     conn.close()
 
@@ -387,12 +391,12 @@ def processar_multiplas_imagens_com_ia(partes_img, chave):
     ex_regras = json.dumps(regras, ensure_ascii=False) if regras else "Nenhuma ainda."
     prompt = f"""
     Você é o assistente financeiro oficial da franquia Spoleto (Capry Comércio Varejista de Alimentos LTDA).
-    Analise as imagens anexadas do cupom/nota fiscal.
-    Extraia:
-    1. 'razao_social': Nome do estabelecimento / fornecedor.
-    2. 'cnpj': CNPJ do emitente.
-    3. 'valor_total': Valor total final da nota (float numérico).
-    4. 'itens': Lista detalhada com: "Produto", "Quantidade", "Unid", "PrecoUnitario", "TotalItem", "Classificacao".
+    Analise as imagens anexadas do cupom, boleto ou nota fiscal.
+    Extraia com máxima atenção:
+    1. 'razao_social': Nome do estabelecimento, condomínio ou fornecedor.
+    2. 'cnpj': CNPJ do emitente (se visível).
+    3. 'valor_total': Valor total final do documento (float numérico).
+    4. 'itens': Lista com: "Produto", "Quantidade", "Unid", "PrecoUnitario", "TotalItem", "Classificacao" (ex: Condomínio, Gás, Energia Elétrica, Alimentos, etc).
     Regras memorizadas: {ex_regras}
     Retorne APENAS um JSON no formato:
     {{
@@ -431,7 +435,7 @@ def categorizar_nomes_xml(nomes, chave):
             mapa.update(res)
     return mapa
 
-# ----------------- GERENCIAMENTO DE ESTADO E LIMPEZA DE SESSÃO -----------------
+# ----------------- GERENCIAMENTO DE SESSÃO -----------------
 if "fotos_acumuladas" not in st.session_state:
     st.session_state.fotos_acumuladas = []
 if "dados_extraidos" not in st.session_state:
@@ -440,7 +444,6 @@ if "uploader_key" not in st.session_state:
     st.session_state.uploader_key = 0
 
 def resetar_processamento_nota():
-    """Limpa completamente os dados da nota atual para evitar duplicação ou mistura com a próxima."""
     st.session_state.fotos_acumuladas = []
     st.session_state.dados_extraidos = None
     st.session_state.uploader_key += 1
@@ -454,12 +457,13 @@ menu = st.sidebar.radio("Módulo:", [
 ])
 
 # ==============================================================================
-# 1. ABA DO DRE OFICIAL (EDIÇÃO DIRETA NA TABELA & TEMPO REAL)
+# 1. ABA DO DRE OFICIAL (SOMA DINÂMICA REAL: ESCANEADOS + AJUSTES)
 # ==============================================================================
 if menu.startswith("📊 DRE Spoleto"):
     st.subheader(f"📊 Demonstrativo de Resultados (DRE) — {NOMES_MESES[mes_ativo]}")
-    st.write("Edite qualquer valor na coluna **VALOR (R$)** da tabela abaixo. Os subtotais, totais e percentuais recalculam na hora[cite: 8, 9]!")
+    st.write("Todos os boletos e notas escaneados (Condomínio, Gás, Alimentos, etc.) entram automaticamente abaixo somados aos ajustes[cite: 7, 8].")
 
+    # 1. Buscar todas as somas de boletos/notas escaneados
     df_l = obter_lancamentos_mes(mes_ativo)
     somas_escaneadas = df_l.groupby("detalhamento")["valor"].sum().to_dict() if not df_l.empty else {}
     ajustes_banco = obter_ajustes_dre(mes_ativo)
@@ -514,23 +518,24 @@ if menu.startswith("📊 DRE Spoleto"):
         ("Total Bonificação", None, 0.0)
     ]
 
+    # SOMA CORRETA E GARANTIDA: Escaneado + Ajuste manual (nunca mais ignora o escaneado)
     lista_linhas_editaveis = []
     for nome_conta, chave_det, val_padrao in CONTAS_DRE_PAINEL:
-        if nome_conta in ajustes_banco:
-            val_atual = ajustes_banco[nome_conta]
-        elif chave_det and chave_det in somas_escaneadas:
-            val_atual = float(somas_escaneadas[chave_det])
-        else:
-            val_atual = val_padrao
+        val_escaneado = float(somas_escaneadas.get(chave_det, 0.0)) if chave_det else 0.0
+        val_ajuste = float(ajustes_banco.get(nome_conta, val_padrao))
+        val_final = val_escaneado if val_escaneado > 0 and val_ajuste == 0.0 else (val_escaneado + val_ajuste)
 
         lista_linhas_editaveis.append({
             "CONTA": nome_conta,
-            "VALOR (R$)": float(round(val_atual, 2))
+            "VALOR (R$)": float(round(val_final, 2))
         })
 
     df_base_editavel = pd.DataFrame(lista_linhas_editaveis)
 
-    st.write("👇 **Tabela de Lançamentos do DRE (Clique no valor para editar):**")
+    st.write("👇 **Tabela de Lançamentos do DRE (Altere qualquer valor e clique em salvar):**")
+    
+    # Key dinâmica atrelada à quantidade de lançamentos para forçar atualização em tempo real
+    qtd_lanc = len(df_l)
     df_dre_editado = st.data_editor(
         df_base_editavel,
         column_config={
@@ -540,7 +545,7 @@ if menu.startswith("📊 DRE Spoleto"):
         use_container_width=True,
         num_rows="fixed",
         height=520,
-        key=f"editor_dre_{mes_ativo}"
+        key=f"editor_dre_{mes_ativo}_v{qtd_lanc}"
     )
 
     col_save_dre, _ = st.columns([2, 3])
@@ -622,8 +627,12 @@ if menu.startswith("📊 DRE Spoleto"):
         {"CONTA": "🔹 LUCRO BRUTO", "VALOR": lucro_bruto, "%": pct(lucro_bruto)},
         {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
         {"CONTA": "🏢 TOTAL OCUPAÇÃO", "VALOR": total_ocup, "%": pct(total_ocup)},
+        {"CONTA": "  • Condomínio", "VALOR": v("Condomínio"), "%": pct(v("Condomínio"))},
+        {"CONTA": "  • Aluguel / Taxas", "VALOR": total_ocup - v("Condomínio"), "%": pct(total_ocup - v("Condomínio"))},
         {"CONTA": "👥 TOTAL PESSOAL", "VALOR": total_pess, "%": pct(total_pess)},
         {"CONTA": "💡 TOTAL UTILIDADES", "VALOR": total_util, "%": pct(total_util)},
+        {"CONTA": "  • Gás", "VALOR": v("Gás"), "%": pct(v("Gás"))},
+        {"CONTA": "  • Energia Elétrica", "VALOR": v("Energia Elétrica"), "%": pct(v("Energia Elétrica"))},
         {"CONTA": "🧹 MATERIAIS DE USO & CONSUMO", "VALOR": total_mat, "%": pct(total_mat)},
         {"CONTA": "🔧 MANUTENÇÃO", "VALOR": total_manut, "%": pct(total_manut)},
         {"CONTA": "🛵 DELIVERY", "VALOR": total_deliv, "%": pct(total_deliv)},
@@ -656,7 +665,6 @@ if menu.startswith("📊 DRE Spoleto"):
 elif menu.startswith("📸 Escanear"):
     st.subheader(f"📸 Escanear Nota Fiscal para o DRE de: {NOMES_MESES[mes_ativo]}")
 
-    # Chave única dinâmica para resetar o uploader e a câmera
     ukey = st.session_state.uploader_key
 
     aba_foto, aba_cam, aba_arq = st.tabs([
@@ -667,13 +675,12 @@ elif menu.startswith("📸 Escanear"):
 
     with aba_foto:
         f_upload = st.file_uploader(
-            "Fotos do cupom/nota:",
+            "Fotos do cupom/boleto/nota:",
             type=["jpg", "jpeg", "png", "webp"],
             accept_multiple_files=True,
             key=f"file_uploader_{ukey}"
         )
         if f_upload and st.button("➕ Adicionar fotos à fila", key=f"btn_add_f_{ukey}"):
-            # Ao adicionar novas fotos, substitui as anteriores para não misturar notas
             st.session_state.fotos_acumuladas = []
             for f in f_upload:
                 st.session_state.fotos_acumuladas.append({
@@ -685,7 +692,6 @@ elif menu.startswith("📸 Escanear"):
     with aba_cam:
         f_cam = st.camera_input("Capturar foto", key=f"cam_input_{ukey}")
         if f_cam and st.button("➕ Adicionar captura à fila", key=f"btn_add_cam_{ukey}"):
-            # Substitui capturas anteriores para manter apenas a nota corrente
             st.session_state.fotos_acumuladas = [{"bytes": f_cam.getvalue(), "mime": "image/jpeg"}]
             st.success("Foto capturada pronta para leitura!")
 
@@ -695,7 +701,7 @@ elif menu.startswith("📸 Escanear"):
         with c1:
             if st.button("🚀 Processar Fotos com IA & Alimentar DRE", type="primary", use_container_width=True):
                 partes = [types.Part.from_bytes(data=f["bytes"], mime_type=f["mime"]) for f in st.session_state.fotos_acumuladas]
-                with st.spinner("🤖 Lendo itens e classificando nos 132 indicadores do Spoleto..."):
+                with st.spinner("🤖 Lendo itens e identificando o documento..."):
                     res = processar_multiplas_imagens_com_ia(partes, api_key)
                     if res and isinstance(res, dict):
                         st.session_state.dados_extraidos = {
@@ -716,7 +722,6 @@ elif menu.startswith("📸 Escanear"):
     with aba_arq:
         doc = st.file_uploader("Enviar XML, PDF ou Excel:", type=["xml", "xlsx", "xls", "pdf"], key=f"doc_uploader_{ukey}")
         if doc and st.button("Processar Arquivo", key=f"btn_doc_{ukey}"):
-            # Limpa qualquer dado residual antes de processar o novo documento
             st.session_state.dados_extraidos = None
             ext = doc.name.split(".")[-1].lower()
             if ext == "xml":
@@ -763,28 +768,33 @@ elif menu.startswith("📸 Escanear"):
     if st.session_state.dados_extraidos:
         dados = st.session_state.dados_extraidos
         st.markdown("---")
-        st.subheader("📋 Resumo da Compra Identificada")
+        st.subheader("📋 Resumo do Documento Identificado")
         c_a, c_b, c_c = st.columns(3)
-        c_a.metric("Fornecedor", dados["razao_social"])
+        c_a.metric("Fornecedor / Emitente", dados["razao_social"])
         c_b.metric("CNPJ", dados["cnpj"])
-        c_c.metric("Valor Total da Nota", f"R$ {dados['valor_total']:,.2f}")
+        c_c.metric("Valor Total", f"R$ {dados['valor_total']:,.2f}")
 
         tab_rapida, tab_detalhada = st.tabs([
-            "⚡ Lançamento Rápido (Item Único: Gás, Energia, Aluguel...)",
+            "⚡ Lançamento Rápido (Item Único: Condomínio, Gás, Energia...)",
             "📦 Destrinchar Vários Itens (Compras de Mercadoria)"
         ])
 
         with tab_rapida:
-            st.write("💡 **Ideal para contas diretas:** o valor total vai direto para a conta escolhida sem misturar com outras notas[cite: 7, 8].")
+            st.write("💡 **Ideal para boletos e contas mensais:** o valor vai direto para a conta sem complicação[cite: 7, 8].")
             
-            index_padrao = LISTA_TODAS_CLASSIFICACOES.index("Gás") if "Gás" in LISTA_TODAS_CLASSIFICACOES else 0
+            # Detecta se é Condomínio ou Gás no texto da razão social
+            idx_sug = 0
+            if "CONDOM" in dados["razao_social"].upper() and "Condomínio" in LISTA_TODAS_CLASSIFICACOES:
+                idx_sug = LISTA_TODAS_CLASSIFICACOES.index("Condomínio")
+            elif "GAS" in dados["razao_social"].upper() and "Gás" in LISTA_TODAS_CLASSIFICACOES:
+                idx_sug = LISTA_TODAS_CLASSIFICACOES.index("Gás")
             
             c_rap1, c_rap2 = st.columns(2)
             with c_rap1:
                 classificacao_rapida = st.selectbox(
                     "Selecione o Indicador do DRE:",
                     LISTA_TODAS_CLASSIFICACOES,
-                    index=index_padrao,
+                    index=idx_sug,
                     key=f"sel_rapido_dre_{ukey}"
                 )
             with c_rap2:
