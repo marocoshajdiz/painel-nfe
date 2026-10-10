@@ -25,8 +25,8 @@ def tela_login():
         st.markdown("### 🔐 Acesso ao Painel de Custos & DRE - Capry")
         st.write("Digite suas credenciais:")
         with st.form("form_login"):
-            usuario = st.text_input("Usuário", placeholder="Digite o Usuario")
-            senha = st.text_input("Senha", type="password", placeholder="Digite a Senha")
+            usuario = st.text_input("Usuário", placeholder="admin")
+            senha = st.text_input("Senha", type="password", placeholder="massima")
             if st.form_submit_button("Entrar", type="primary", use_container_width=True):
                 if usuario == USUARIO_CORRETO and senha == SENHA_CORRETA:
                     st.session_state.autenticado = True
@@ -267,7 +267,6 @@ def lancar_item_unico_dre(mes_ref, fornecedor, valor_total, classificacao_escolh
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     """, (mes_ref, data_hoje, fornecedor.strip().upper(), classificacao_escolhida.upper(), float(valor_total), cfg["dre"], classificacao_escolhida, cfg["detalhamento"]))
     
-    # Se existia um ajuste manual antigo gravado nessa conta que bloqueava o valor escaneado, remove-o
     cursor.execute("DELETE FROM ajustes_dre WHERE mes_referencia = ? AND conta = ?", (mes_ref, classificacao_escolhida))
     conn.commit()
     conn.close()
@@ -463,7 +462,6 @@ if menu.startswith("📊 DRE Spoleto"):
     st.subheader(f"📊 Demonstrativo de Resultados (DRE) — {NOMES_MESES[mes_ativo]}")
     st.write("Todos os boletos e notas escaneados (Condomínio, Gás, Alimentos, etc.) entram automaticamente abaixo somados aos ajustes[cite: 7, 8].")
 
-    # 1. Buscar todas as somas de boletos/notas escaneados
     df_l = obter_lancamentos_mes(mes_ativo)
     somas_escaneadas = df_l.groupby("detalhamento")["valor"].sum().to_dict() if not df_l.empty else {}
     ajustes_banco = obter_ajustes_dre(mes_ativo)
@@ -518,7 +516,6 @@ if menu.startswith("📊 DRE Spoleto"):
         ("Total Bonificação", None, 0.0)
     ]
 
-    # SOMA CORRETA E GARANTIDA: Escaneado + Ajuste manual (nunca mais ignora o escaneado)
     lista_linhas_editaveis = []
     for nome_conta, chave_det, val_padrao in CONTAS_DRE_PAINEL:
         val_escaneado = float(somas_escaneadas.get(chave_det, 0.0)) if chave_det else 0.0
@@ -534,7 +531,6 @@ if menu.startswith("📊 DRE Spoleto"):
 
     st.write("👇 **Tabela de Lançamentos do DRE (Altere qualquer valor e clique em salvar):**")
     
-    # Key dinâmica atrelada à quantidade de lançamentos para forçar atualização em tempo real
     qtd_lanc = len(df_l)
     df_dre_editado = st.data_editor(
         df_base_editavel,
@@ -798,24 +794,29 @@ elif menu.startswith("📸 Escanear"):
                     key=f"sel_rapido_dre_{ukey}"
                 )
             with c_rap2:
+                # min_value alterado para 0.0 para evitar erro de validação
+                val_inicial = float(dados["valor_total"]) if dados["valor_total"] >= 0 else 0.0
                 valor_rapido = st.number_input(
                     "Valor a Lançar (R$):",
-                    value=float(dados["valor_total"]),
-                    min_value=0.01,
+                    value=val_inicial,
+                    min_value=0.0,
                     step=10.0,
                     key=f"val_rapido_dre_{ukey}"
                 )
 
             if st.button(f"⚡ Lançar R$ {valor_rapido:,.2f} direto em '{classificacao_rapida}' no DRE", type="primary", use_container_width=True):
-                lancar_item_unico_dre(
-                    mes_ref=mes_ativo,
-                    fornecedor=dados["razao_social"],
-                    valor_total=valor_rapido,
-                    classificacao_escolhida=classificacao_rapida
-                )
-                st.success(f"✅ Sucesso! R$ {valor_rapido:,.2f} lançado diretamente em **{classificacao_rapida}** no DRE de {NOMES_MESES[mes_ativo]}[cite: 7, 8]!")
-                resetar_processamento_nota()
-                st.rerun()
+                if valor_rapido <= 0.0:
+                    st.warning("⚠️ Digite um valor maior que zero para lançar no DRE.")
+                else:
+                    lancar_item_unico_dre(
+                        mes_ref=mes_ativo,
+                        fornecedor=dados["razao_social"],
+                        valor_total=valor_rapido,
+                        classificacao_escolhida=classificacao_rapida
+                    )
+                    st.success(f"✅ Sucesso! R$ {valor_rapido:,.2f} lançado diretamente em **{classificacao_rapida}** no DRE de {NOMES_MESES[mes_ativo]}[cite: 7, 8]!")
+                    resetar_processamento_nota()
+                    st.rerun()
 
         with tab_detalhada:
             df_itens = pd.DataFrame(dados["itens"])
