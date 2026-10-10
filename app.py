@@ -11,7 +11,7 @@ from datetime import datetime
 st.set_page_config(page_title="Painel Inteligente de Custos - Capry", layout="wide")
 
 # ----------------- CONTROLE DE LOGIN -----------------
-USUARIO_CORRETO = "admin"
+USUARIO_CORRETO = "Admin"
 SENHA_CORRETA = "massima"
 
 if "autenticado" not in st.session_state:
