@@ -17,6 +17,7 @@ except:
     st.stop()
 
 CATEGORIAS_VALIDAS = "Alimentos, Descartáveis, Limpeza, Funcionários, Utensílios, Bebidas"
+MODELO_GEMINI = "gemini-3.8-flash"  # Atualizado para o modelo suportado
 
 def processar_com_ia(conteudo_texto, nome_arquivo, chave):
     try:
@@ -38,7 +39,7 @@ def processar_com_ia(conteudo_texto, nome_arquivo, chave):
         {conteudo_texto[:15000]}
         """
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model=MODELO_GEMINI,
             contents=prompt,
             config=types.GenerateContentConfig(response_mime_type="application/json"),
         )
@@ -53,10 +54,10 @@ def processar_imagem_com_ia(bytes_imagem, mime_type, chave):
         client = genai.Client(api_key=chave)
         prompt = f"""
         Você é o assistente financeiro da empresa Capry Comércio Varejista de Alimentos LTDA.
-        Analise a imagem desta nota fiscal ou cupom fiscal.
+        Analise a imagem desta nota fiscal, cupom fiscal ou espelho de compras.
         
         Extraia:
-        1. 'razao_social': Nome do estabelecimento / emitente.
+        1. 'razao_social': Nome do estabelecimento / emitente / fornecedor.
         2. 'cnpj': CNPJ do emitente (se visível).
         3. 'valor_total': Valor total final da nota (numérico float).
         4. 'itens': Lista com cada item comprado, contendo:
@@ -79,7 +80,7 @@ def processar_imagem_com_ia(bytes_imagem, mime_type, chave):
         """
         part_imagem = types.Part.from_bytes(data=bytes_imagem, mime_type=mime_type)
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model=MODELO_GEMINI,
             contents=[prompt, part_imagem],
             config=types.GenerateContentConfig(response_mime_type="application/json"),
         )
@@ -98,7 +99,7 @@ def categorizar_nomes_xml(lista_nomes, chave):
         Produtos: {json.dumps(lista_nomes, ensure_ascii=False)}
         """
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model=MODELO_GEMINI,
             contents=prompt,
             config=types.GenerateContentConfig(response_mime_type="application/json"),
         )
@@ -138,12 +139,12 @@ if arquivo_ativo is not None:
     valor_total_nota = 0.0
 
     try:
-        # 1. Foto tirada pela câmera ou arquivo de imagem enviado
+        # 1. Foto tirada pela câmera ou imagem enviada
         if origem_camera or file_extension in ['jpg', 'jpeg', 'png', 'webp']:
             mime = "image/jpeg" if file_extension in ['jpg', 'jpeg'] else f"image/{file_extension}"
             bytes_img = arquivo_ativo.getvalue()
             
-            with st.spinner("🤖 Analisando a foto do cupom com visão computacional..."):
+            with st.spinner("🤖 Analisando a foto da nota com o Gemini 3.8 Flash..."):
                 resultado_foto = processar_imagem_com_ia(bytes_img, mime, api_key)
             
             if resultado_foto:
@@ -247,11 +248,9 @@ if arquivo_ativo is not None:
             df_produtos = pd.DataFrame(lista_produtos)
             soma_produtos = df_produtos["Total do Item (R$)"].sum()
             
-            # Se não tínhamos valor total declarado (ex: em imagens antigas), usamos a soma dos itens
             if valor_total_nota == 0.0:
                 valor_total_nota = soma_produtos
 
-            # Ajuste de frete ou taxas se houver divergência
             if abs(soma_produtos - valor_total_nota) > 0.1 and valor_total_nota > soma_produtos:
                 diferenca = valor_total_nota - soma_produtos
                 df_produtos = pd.concat([df_produtos, pd.DataFrame([{
@@ -290,7 +289,7 @@ if arquivo_ativo is not None:
             st.subheader("📦 Produtos Detalhados")
             st.dataframe(df_produtos_formatado, use_container_width=True)
         else:
-            st.warning("Nenhum item pôde ser identificado. Tente capturar a imagem mais de perto ou com melhor iluminação.")
+            st.warning("Nenhum item pôde ser identificado. Tente capturar a imagem mais de perto ou com iluminação uniforme.")
             
     except Exception as e:
         st.error(f"Erro ao processar: {e}")
