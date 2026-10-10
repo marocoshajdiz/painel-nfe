@@ -4,110 +4,107 @@ import pandas as pd
 from google import genai
 from google.genai import types
 import json
+import time
 
 st.set_page_config(page_title="Painel Inteligente de Custos - Capry", layout="wide")
 
 st.title("🛒 Painel Inteligente de Custos - Capry Comércio")
-st.write("Envie o arquivo (**XML, Excel, PDF ou Foto**) ou tire uma foto direta do cupom fiscal com o celular.")
+st.write("Envie o arquivo (**XML, Excel, PDF ou Foto**) ou tire uma foto direta do cupom/nota fiscal.")
 
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
-except:
-    st.error("⚠️ Chave de API não encontrada! Certifique-se de configurar o arquivo .streamlit/secrets.toml com a sua chave.")
+except Exception:
+    st.error("⚠️ Chave de API não encontrada! Certifique-se de configurar o arquivo .streamlit/secrets.toml com GEMINI_API_KEY.")
     st.stop()
 
 CATEGORIAS_VALIDAS = "Alimentos, Descartáveis, Limpeza, Funcionários, Utensílios, Bebidas"
-MODELO_GEMINI = "gemini-3.8-flash"  # Atualizado para o modelo suportado
+MODELOS_IA = ["gemini-3.8-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+
+def chamar_gemini_com_fallback(chave, conteudos):
+    """Executa a requisição alternando entre modelos disponíveis se houver sobrecarga (503/429)."""
+    client = genai.Client(api_key=chave)
+    ultimo_erro = None
+
+    for modelo in MODELOS_IA:
+        for tentativa in range(2):
+            try:
+                response = client.models.generate_content(
+                    model=modelo,
+                    contents=conteudos,
+                    config=types.GenerateContentConfig(response_mime_type="application/json"),
+                )
+                if response.text:
+                    return json.loads(response.text)
+            except Exception as e:
+                ultimo_erro = e
+                time.sleep(2)  # Pausa antes da próxima tentativa
+                continue
+    
+    st.error(f"Erro ao processar com a IA após tentativas: {ultimo_erro}")
+    return None
 
 def processar_com_ia(conteudo_texto, nome_arquivo, chave):
-    try:
-        client = genai.Client(api_key=chave)
-        prompt = f"""
-        Você é o assistente financeiro da empresa Capry Comércio Varejista de Alimentos LTDA.
-        Analise o seguinte conteúdo extraído do arquivo '{nome_arquivo}' (nota fiscal, XML ou extrato de compras).
-        Sua tarefa é extrair ou associar cada item à sua respectiva categoria rigorosamente entre estas opções:
-        {CATEGORIAS_VALIDAS}
+    prompt = f"""
+    Você é o assistente financeiro da empresa Capry Comércio Varejista de Alimentos LTDA.
+    Analise o seguinte conteúdo extraído do arquivo '{nome_arquivo}' (nota fiscal, XML ou extrato de compras).
+    Sua tarefa é extrair ou associar cada item à sua respectiva categoria rigorosamente entre estas opções:
+    {CATEGORIAS_VALIDAS}
 
-        Retorne APENAS um objeto JSON válido no formato de lista de dicionários, contendo exatamente as chaves:
-        "Produto", "Quantidade", "Unid", "PrecoUnitario", "TotalItem", "Categoria".
-        Exemplo:
-        [
-          {{"Produto": "CANUDO PLASTICO", "Quantidade": 10.0, "Unid": "CX", "PrecoUnitario": 15.00, "TotalItem": 150.00, "Categoria": "Descartáveis"}}
-        ]
+    Retorne APENAS um objeto JSON válido no formato de lista de dicionários, contendo exatamente as chaves:
+    "Produto", "Quantidade", "Unid", "PrecoUnitario", "TotalItem", "Categoria".
+    Exemplo:
+    [
+      {{"Produto": "CANUDO PLASTICO", "Quantidade": 10.0, "Unid": "CX", "PrecoUnitario": 15.00, "TotalItem": 150.00, "Categoria": "Descartáveis"}}
+    ]
 
-        Conteúdo a analisar:
-        {conteudo_texto[:15000]}
-        """
-        response = client.models.generate_content(
-            model=MODELO_GEMINI,
-            contents=prompt,
-            config=types.GenerateContentConfig(response_mime_type="application/json"),
-        )
-        return json.loads(response.text)
-    except Exception as e:
-        st.error(f"Erro ao processar com a IA: {e}")
-        return []
+    Conteúdo a analisar:
+    {conteudo_texto[:15000]}
+    """
+    res = chamar_gemini_com_fallback(chave, prompt)
+    return res if isinstance(res, list) else []
 
 def processar_imagem_com_ia(bytes_imagem, mime_type, chave):
-    """Lê diretamente a foto da nota ou cupom fiscal usando visão computacional do Gemini."""
-    try:
-        client = genai.Client(api_key=chave)
-        prompt = f"""
-        Você é o assistente financeiro da empresa Capry Comércio Varejista de Alimentos LTDA.
-        Analise a imagem desta nota fiscal, cupom fiscal ou espelho de compras.
-        
-        Extraia:
-        1. 'razao_social': Nome do estabelecimento / emitente / fornecedor.
-        2. 'cnpj': CNPJ do emitente (se visível).
-        3. 'valor_total': Valor total final da nota (numérico float).
-        4. 'itens': Lista com cada item comprado, contendo:
-           - "Produto": nome ou descrição do item
-           - "Quantidade": float
-           - "Unid": unidade (ex: UN, KG, CX)
-           - "PrecoUnitario": float
-           - "TotalItem": float
-           - "Categoria": classifique obrigatoriamente em: {CATEGORIAS_VALIDAS}
+    """Extrai informações diretamente da foto da nota ou cupom fiscal."""
+    prompt = f"""
+    Você é o assistente financeiro da empresa Capry Comércio Varejista de Alimentos LTDA.
+    Analise a imagem desta nota fiscal, cupom fiscal ou espelho de compras.
+    
+    Extraia com máxima atenção:
+    1. 'razao_social': Nome do estabelecimento / emitente / fornecedor.
+    2. 'cnpj': CNPJ do emitente (se visível).
+    3. 'valor_total': Valor total final da nota (numérico float).
+    4. 'itens': Lista com cada item comprado, contendo:
+       - "Produto": nome ou descrição do item
+       - "Quantidade": float
+       - "Unid": unidade (ex: UN, KG, CX)
+       - "PrecoUnitario": float
+       - "TotalItem": float
+       - "Categoria": classifique obrigatoriamente em uma de: {CATEGORIAS_VALIDAS}
 
-        Retorne APENAS um JSON no formato:
-        {{
-          "razao_social": "...",
-          "cnpj": "...",
-          "valor_total": 0.0,
-          "itens": [
-            {{"Produto": "...", "Quantidade": 1.0, "Unid": "UN", "PrecoUnitario": 10.0, "TotalItem": 10.0, "Categoria": "Alimentos"}}
-          ]
-        }}
-        """
-        part_imagem = types.Part.from_bytes(data=bytes_imagem, mime_type=mime_type)
-        response = client.models.generate_content(
-            model=MODELO_GEMINI,
-            contents=[prompt, part_imagem],
-            config=types.GenerateContentConfig(response_mime_type="application/json"),
-        )
-        return json.loads(response.text)
-    except Exception as e:
-        st.error(f"Erro ao analisar a imagem da nota com IA: {e}")
-        return None
+    Retorne APENAS um JSON no formato:
+    {{
+      "razao_social": "...",
+      "cnpj": "...",
+      "valor_total": 0.0,
+      "itens": [
+        {{"Produto": "...", "Quantidade": 1.0, "Unid": "UN", "PrecoUnitario": 10.0, "TotalItem": 10.0, "Categoria": "Alimentos"}}
+      ]
+    }}
+    """
+    part_imagem = types.Part.from_bytes(data=bytes_imagem, mime_type=mime_type)
+    return chamar_gemini_com_fallback(chave, [prompt, part_imagem])
 
 def categorizar_nomes_xml(lista_nomes, chave):
-    try:
-        client = genai.Client(api_key=chave)
-        prompt = f"""
-        Classifique cada produto da lista abaixo estritamente em **uma** das categorias:
-        {CATEGORIAS_VALIDAS}.
-        Retorne APENAS um JSON onde a chave é o nome exato do produto e o valor é a categoria.
-        Produtos: {json.dumps(lista_nomes, ensure_ascii=False)}
-        """
-        response = client.models.generate_content(
-            model=MODELO_GEMINI,
-            contents=prompt,
-            config=types.GenerateContentConfig(response_mime_type="application/json"),
-        )
-        return json.loads(response.text)
-    except:
-        return {}
+    prompt = f"""
+    Classifique cada produto da lista abaixo estritamente em uma das categorias:
+    {CATEGORIAS_VALIDAS}.
+    Retorne APENAS um JSON onde a chave é o nome exato do produto e o valor é a categoria.
+    Produtos: {json.dumps(lista_nomes, ensure_ascii=False)}
+    """
+    res = chamar_gemini_com_fallback(chave, prompt)
+    return res if isinstance(res, dict) else {}
 
-# Seleção do modo de entrada
+# Abas de seleção de entrada
 aba_upload, aba_camera = st.tabs(["📁 Enviar Arquivo ou Foto", "📸 Tirar Foto com a Câmera"])
 
 arquivo_ativo = None
@@ -139,31 +136,31 @@ if arquivo_ativo is not None:
     valor_total_nota = 0.0
 
     try:
-        # 1. Foto tirada pela câmera ou imagem enviada
+        # 1. Processamento de imagem (Câmera ou Upload de Foto)
         if origem_camera or file_extension in ['jpg', 'jpeg', 'png', 'webp']:
             mime = "image/jpeg" if file_extension in ['jpg', 'jpeg'] else f"image/{file_extension}"
             bytes_img = arquivo_ativo.getvalue()
             
-            with st.spinner("🤖 Analisando a foto da nota com o Gemini 3.8 Flash..."):
+            with st.spinner("🤖 Analisando imagem da nota com IA..."):
                 resultado_foto = processar_imagem_com_ia(bytes_img, mime, api_key)
             
-            if resultado_foto:
-                razao_social = resultado_foto.get('razao_social', 'Fornecedor não identificado')
-                cnpj_emitente = resultado_foto.get('cnpj', 'Não informado')
-                valor_total_nota = float(resultado_foto.get('valor_total', 0.0))
+            if resultado_foto and isinstance(resultado_foto, dict):
+                razao_social = resultado_foto.get('razao_social') or "Fornecedor não identificado"
+                cnpj_emitente = resultado_foto.get('cnpj') or "Não informado"
+                valor_total_nota = float(resultado_foto.get('valor_total') or 0.0)
                 
                 for item in resultado_foto.get('itens', []):
-                    v_tot = float(item.get('TotalItem', 0))
+                    v_tot = float(item.get('TotalItem') or 0.0)
                     lista_produtos.append({
                         "Categoria": item.get('Categoria', 'Alimentos'),
                         "Produto": item.get('Produto', 'Desconhecido'),
-                        "Quantidade": float(item.get('Quantidade', 1)),
+                        "Quantidade": float(item.get('Quantidade') or 1.0),
                         "Unid": item.get('Unid', 'UN'),
-                        "Preço Unitário (R$)": float(item.get('PrecoUnitario', 0)),
+                        "Preço Unitário (R$)": float(item.get('PrecoUnitario') or 0.0),
                         "Total do Item (R$)": v_tot
                     })
 
-        # 2. Arquivo XML
+        # 2. Processamento de XML
         elif file_extension == 'xml':
             file_content = arquivo_ativo.read()
             data = xmltodict.parse(file_content)
@@ -204,11 +201,11 @@ if arquivo_ativo is not None:
                     "Total do Item (R$)": v_prod
                 })
 
-        # 3. Planilhas Excel
+        # 3. Processamento de Planilhas Excel
         elif file_extension in ['xlsx', 'xls']:
             df_excel = pd.read_excel(arquivo_ativo)
             texto_excel = df_excel.to_string()
-            with st.spinner("🤖 Estruturando dados da planilha com a IA..."):
+            with st.spinner("🤖 Estruturando dados da planilha com IA..."):
                 resultado_ia = processar_com_ia(texto_excel, arquivo_ativo.name, api_key)
                 for item in resultado_ia:
                     v_tot = float(item.get('TotalItem', 0))
@@ -222,7 +219,7 @@ if arquivo_ativo is not None:
                         "Total do Item (R$)": v_tot
                     })
 
-        # 4. Arquivos PDF
+        # 4. Processamento de PDF
         elif file_extension == 'pdf':
             import pypdf
             reader = pypdf.PdfReader(arquivo_ativo)
@@ -230,7 +227,7 @@ if arquivo_ativo is not None:
             for page in reader.pages:
                 texto_pdf += page.extract_text() or ""
                 
-            with st.spinner("🤖 Extraindo dados do PDF com a IA..."):
+            with st.spinner("🤖 Extraindo dados do PDF com IA..."):
                 resultado_ia = processar_com_ia(texto_pdf, arquivo_ativo.name, api_key)
                 for item in resultado_ia:
                     v_tot = float(item.get('TotalItem', 0))
@@ -244,6 +241,7 @@ if arquivo_ativo is not None:
                         "Total do Item (R$)": v_tot
                     })
 
+        # Renderização dos resultados
         if lista_produtos:
             df_produtos = pd.DataFrame(lista_produtos)
             soma_produtos = df_produtos["Total do Item (R$)"].sum()
@@ -279,19 +277,19 @@ if arquivo_ativo is not None:
             df_resumo_formatado["Total do Item (R$)"] = df_resumo_formatado["Total do Item (R$)"].apply(lambda x: f"R$ {x:,.2f}")
             st.dataframe(df_resumo_formatado, use_container_width=True)
             
-            st.info(f"🔍 **Conferência de Fechamento:** A soma das categorias totaliza **R$ {soma_categorias:,.2f}** (Valor da nota: R$ {valor_total_nota:,.2f}).")
-            st.success("✅ **Validação Concluída!**")
+            st.info(f"🔍 **Conferência:** A soma das categorias totaliza **R$ {soma_categorias:,.2f}** (Valor registrado da nota: R$ {valor_total_nota:,.2f}).")
+            st.success("✅ **Processamento concluído com sucesso!**")
 
             df_produtos_formatado = df_produtos.copy()
             df_produtos_formatado["Preço Unitário (R$)"] = df_produtos_formatado["Preço Unitário (R$)"].apply(lambda x: f"R$ {x:,.2f}")
             df_produtos_formatado["Total do Item (R$)"] = df_produtos_formatado["Total do Item (R$)"].apply(lambda x: f"R$ {x:,.2f}")
             
-            st.subheader("📦 Produtos Detalhados")
+            st.subheader("📦 Itens Identificados")
             st.dataframe(df_produtos_formatado, use_container_width=True)
         else:
-            st.warning("Nenhum item pôde ser identificado. Tente capturar a imagem mais de perto ou com iluminação uniforme.")
+            st.warning("Nenhum item pôde ser identificado. Dica: tire a foto mais de perto e com boa iluminação.")
             
     except Exception as e:
         st.error(f"Erro ao processar: {e}")
 else:
-    st.info("Aguardando upload de arquivo ou captura de foto pela câmera...")
+    st.info("Aguardando envio do arquivo ou captura da foto...")
