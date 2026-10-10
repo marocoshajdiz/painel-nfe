@@ -10,22 +10,33 @@ from datetime import datetime
 
 st.set_page_config(page_title="Painel Inteligente de Custos - Capry", layout="wide")
 
-# CSS para ampliar a área da câmara no ecrã (computador e telemóvel)
+# CSS para expandir o tamanho da câmara no telemóvel e monitor
 st.markdown("""
-    <style>
-    [data-testid="stCameraInput"] video {
-        width: 100% !important;
-        max-height: 550px !important;
-        border-radius: 12px;
-        object-fit: cover;
-    }
-    [data-testid="stCameraInput"] {
-        width: 100% !important;
-    }
-    </style>
+<style>
+/* Expande a área de visualização e o vídeo da câmara */
+div[data-testid="stCameraInput"] {
+    width: 100% !important;
+    max-width: 900px !important;
+    margin: 0 auto;
+}
+div[data-testid="stCameraInput"] video {
+    width: 100% !important;
+    height: 70vh !important;
+    min-height: 480px !important;
+    border-radius: 14px;
+    object-fit: cover !important;
+    border: 2px solid #ff4b4b;
+}
+/* Aumenta o botão de captura */
+div[data-testid="stCameraInput"] button {
+    padding: 0.75rem 1.5rem !important;
+    font-size: 1.1rem !important;
+    border-radius: 10px !important;
+}
+</style>
 """, unsafe_allow_html=True)
 
-# ----------------- BANCO DE DADOS (SQLite) -----------------
+# ----------------- BASE DE DADOS (SQLite) -----------------
 def init_db():
     conn = sqlite3.connect("notas_fiscais.db")
     cursor = conn.cursor()
@@ -85,7 +96,7 @@ st.title("🛒 Painel Inteligente de Custos - Capry Comércio")
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
 except Exception:
-    st.error("⚠️ Chave de API não encontrada! Certifique-se de configurar o ficheiro .streamlit/secrets.toml.")
+    st.error("⚠️ Chave de API não encontrada! Configure o secrets.toml com GEMINI_API_KEY.")
     st.stop()
 
 CATEGORIAS_VALIDAS = "Alimentos, Descartáveis, Limpeza, Funcionários, Utensílios, Bebidas"
@@ -127,7 +138,9 @@ def processar_com_ia(conteudo_texto, nome_arquivo, chave):
 def processar_imagem_com_ia(bytes_imagem, mime_type, chave):
     prompt = f"""
     Você é o assistente financeiro da empresa Capry Comércio Varejista de Alimentos LTDA.
-    Analise a imagem desta nota ou cupom fiscal.
+    Analise a imagem desta nota fiscal, cupom fiscal ou espelho de compras.
+    Mesmo que a foto tenha sombras ou letras pequenas, leia todos os itens com atenção.
+    
     Extraia:
     1. 'razao_social': Nome do estabelecimento / fornecedor.
     2. 'cnpj': CNPJ do emitente.
@@ -154,42 +167,49 @@ def categorizar_nomes_xml(lista_nomes, chave):
     res = chamar_gemini_com_fallback(chave, prompt)
     return res if isinstance(res, dict) else {}
 
-# ----------------- NAVEGAÇÃO PRINCIPAL -----------------
-menu_principal = st.sidebar.radio("Selecione a secção:", ["📄 Leitor de Notas & Cupões", "🗄️ Histórico & Consultas"])
+# ----------------- NAVEGAÇÃO -----------------
+menu_principal = st.sidebar.radio("Navegação:", ["📄 Capturar / Enviar Nota", "🗄️ Histórico & Consultas"])
 
-if menu_principal == "📄 Leitor de Notas & Cupões":
-    aba_camera, aba_upload = st.tabs(["📸 Tirar Foto com a Câmera", "📁 Enviar Ficheiro ou Foto"])
+if menu_principal == "📄 Capturar / Enviar Nota":
+    st.info("💡 **Dica de Nitidez no Telemóvel:** Se a câmara da web ficar embaçada, use a aba **'📸 Foto Nítida (Câmara do Telemóvel)'**. Ao clicar nela no telemóvel, abre a app oficial da câmara com foco automático e alta definição!")
+    
+    aba_alta_res, aba_camera_web, aba_ficheiros = st.tabs([
+        "📸 Foto Nítida (Câmara do Telemóvel)", 
+        "🖥️ Câmara ao Vivo", 
+        "📁 Ficheiro (XML / Excel / PDF)"
+    ])
 
     arquivo_ativo = None
-    origem_camera = False
 
-    with aba_camera:
-        st.write("Aponte a câmara para a nota fiscal:")
-        foto_camera = st.camera_input("Capturar Nota Fiscal")
-        if foto_camera is not None:
-            arquivo_ativo = foto_camera
-            origem_camera = True
+    with aba_alta_res:
+        st.write("**Tire uma foto focada ou escolha da galeria com máxima resolução:**")
+        foto_hd = st.file_uploader("Toque aqui para abrir a câmara com autofoco", type=["jpg", "jpeg", "png", "webp"], key="foto_hd")
+        if foto_hd is not None:
+            arquivo_ativo = foto_hd
 
-    with aba_upload:
-        uploaded_file = st.file_uploader(
-            "Carregue XML, Excel, PDF ou Foto", 
-            type=["xml", "xlsx", "xls", "pdf", "jpg", "jpeg", "png", "webp"]
-        )
-        if uploaded_file is not None:
-            arquivo_ativo = uploaded_file
-            origem_camera = False
+    with aba_camera_web:
+        st.write("**Visualizador direto (ecrã expandido):**")
+        foto_web = st.camera_input("Capturar Agora", key="foto_web")
+        if foto_web is not None:
+            arquivo_ativo = foto_web
+
+    with aba_ficheiros:
+        arquivo_doc = st.file_uploader("Envie XML, PDF ou Excel", type=["xml", "xlsx", "xls", "pdf"], key="doc")
+        if arquivo_doc is not None:
+            arquivo_ativo = arquivo_doc
 
     if arquivo_ativo is not None:
-        file_extension = "jpg" if origem_camera else arquivo_ativo.name.split('.')[-1].lower()
+        file_extension = arquivo_ativo.name.split('.')[-1].lower() if hasattr(arquivo_ativo, 'name') and '.' in arquivo_ativo.name else "jpg"
         lista_produtos = []
         razao_social = "Fornecedor não identificado"
         cnpj_emitente = "Não informado"
         valor_total_nota = 0.0
 
         try:
-            if origem_camera or file_extension in ['jpg', 'jpeg', 'png', 'webp']:
+            # 1. Foto / Imagem
+            if file_extension in ['jpg', 'jpeg', 'png', 'webp']:
                 mime = "image/jpeg" if file_extension in ['jpg', 'jpeg'] else f"image/{file_extension}"
-                with st.spinner("🤖 A IA está a ler a imagem da nota..."):
+                with st.spinner("🤖 A IA está a ler a imagem com alta resolução..."):
                     resultado_foto = processar_imagem_com_ia(arquivo_ativo.getvalue(), mime, api_key)
                 
                 if resultado_foto and isinstance(resultado_foto, dict):
@@ -206,6 +226,7 @@ if menu_principal == "📄 Leitor de Notas & Cupões":
                             "Total do Item (R$)": float(item.get('TotalItem') or 0.0)
                         })
 
+            # 2. XML
             elif file_extension == 'xml':
                 data = xmltodict.parse(arquivo_ativo.read())
                 nfe_proc = data.get('nfeProc', data)
@@ -235,6 +256,7 @@ if menu_principal == "📄 Leitor de Notas & Cupões":
                         "Total do Item (R$)": float(prod.get('vProd', 0))
                     })
 
+            # 3. Excel
             elif file_extension in ['xlsx', 'xls']:
                 df_excel = pd.read_excel(arquivo_ativo)
                 with st.spinner("🤖 Processando folha de cálculo..."):
@@ -251,6 +273,7 @@ if menu_principal == "📄 Leitor de Notas & Cupões":
                         "Total do Item (R$)": v_tot
                     })
 
+            # 4. PDF
             elif file_extension == 'pdf':
                 import pypdf
                 reader = pypdf.PdfReader(arquivo_ativo)
@@ -294,24 +317,24 @@ if menu_principal == "📄 Leitor de Notas & Cupões":
                 st.dataframe(df_prod_format, use_container_width=True)
 
                 st.markdown("---")
-                col_save, _ = st.columns([1, 4])
+                col_save, _ = st.columns([1, 3])
                 with col_save:
-                    if st.button("💾 Guardar Nota na Base de Dados", type="primary", use_container_width=True):
+                    if st.button("💾 Guardar Nota no Banco de Dados", type="primary", use_container_width=True):
                         salvar_nota(razao_social, cnpj_emitente, valor_total_nota, lista_produtos)
-                        st.success("✅ Nota fiscal guardada com sucesso! Já pode consultá-la no menu lateral.")
+                        st.success("✅ Guardado com sucesso! Vá ao menu 'Histórico & Consultas' para visualizar.")
             else:
-                st.warning("Nenhum item detetado. Tente posicionar a câmara com boa iluminação.")
+                st.warning("⚠️ Nenhum item identificado. Na aba 'Foto Nítida', tire a foto segurando o telemóvel firme e com boa luz.")
 
         except Exception as e:
             st.error(f"Erro no processamento: {e}")
 
-# ----------------- ABA DE HISTÓRICO & EXCLUSÃO -----------------
+# ----------------- HISTÓRICO & EXCLUSÃO -----------------
 elif menu_principal == "🗄️ Histórico & Consultas":
-    st.subheader("🗄️ Histórico de Notas Guardadas")
+    st.subheader("🗄️ Histórico de Notas Salvas")
     df_historico = listar_notas()
 
     if df_historico.empty:
-        st.info("Ainda não há notas guardadas na base de dados.")
+        st.info("Ainda não existem notas guardadas na base de dados.")
     else:
         df_historico_show = df_historico.copy()
         df_historico_show["valor_total"] = df_historico_show["valor_total"].apply(lambda x: f"R$ {x:,.2f}")
@@ -326,17 +349,17 @@ elif menu_principal == "🗄️ Histórico & Consultas":
         st.dataframe(df_historico_show, use_container_width=True)
 
         st.markdown("---")
-        st.subheader("🔍 Consultar Detalhes ou Eliminar Registo")
+        st.subheader("🔍 Consultar Detalhes ou Excluir Registro")
 
         col_select, col_del = st.columns([2, 1])
         with col_select:
-            nota_selecionada = st.selectbox("Selecione a nota pelo ID:", df_historico["id"].tolist())
+            nota_selecionada = st.selectbox("Selecione o registo pelo ID:", df_historico["id"].tolist())
 
         with col_del:
             st.write("&nbsp;")
             if st.button("🗑️ Eliminar Nota", type="secondary", use_container_width=True):
                 excluir_nota(nota_selecionada)
-                st.warning(f"Nota #{nota_selecionada} eliminada da base de dados!")
+                st.warning(f"Nota #{nota_selecionada} eliminada!")
                 st.rerun()
 
         if nota_selecionada:
