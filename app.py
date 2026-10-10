@@ -10,7 +10,7 @@ from datetime import datetime
 
 st.set_page_config(page_title="Painel Inteligente de Custos - Capry", layout="wide")
 
-# CSS para expandir o visor da câmara
+# CSS para expandir o visor da câmera
 st.markdown("""
 <style>
 div[data-testid="stCameraInput"] {
@@ -358,7 +358,6 @@ if menu_principal == "📄 Capturar / Enviar Nota":
         # Tabela editável
         df_editavel = pd.DataFrame(dados["itens"])
         if not df_editavel.empty:
-            # Garantir tipos corretos
             if "TotalItem" not in df_editavel.columns and "Total do Item (R$)" in df_editavel.columns:
                 df_editavel.rename(columns={"Total do Item (R$)": "TotalItem", "Preço Unitário (R$)": "PrecoUnitario"}, inplace=True)
 
@@ -382,20 +381,37 @@ if menu_principal == "📄 Capturar / Enviar Nota":
             )
 
             # Recálculo automático dos totais pós-edição
-            soma_atual = df_alterado["TotalItem"].sum()
             st.subheader("📊 Totais por Categoria Atualizados")
             df_resumo = df_alterado.groupby("Categoria")["TotalItem"].sum().reset_index()
-            df_resumo["TotalItem"] = df_resumo["TotalItem"].apply(lambda x: f"R$ {x:,.2f}")
-            df_resumo.rename(columns={"TotalItem": "Total Categoria (R$)"}, inplace=True)
-            st.dataframe(df_resumo, use_container_width=True)
+            soma_todas_categorias = float(df_resumo["TotalItem"].sum())
 
-            st.info(f"Soma dos itens corrigidos: **R$ {soma_atual:,.2f}** | Valor da nota: **R$ {dados['valor_total']:,.2f}**")
+            # Tabela com as categorias e seus valores
+            df_resumo_tabela = df_resumo.copy()
+            df_resumo_tabela["TotalItem"] = df_resumo_tabela["TotalItem"].apply(lambda x: f"R$ {x:,.2f}")
+            df_resumo_tabela.rename(columns={"TotalItem": "Total da Categoria (R$)"}, inplace=True)
+            st.dataframe(df_resumo_tabela, use_container_width=True)
 
+            # Soma total exibida em destaque logo abaixo da tabela
+            col_tot1, col_tot2 = st.columns([1, 1])
+            with col_tot1:
+                st.metric(
+                    label="💰 Soma Total de Todas as Categorias",
+                    value=f"R$ {soma_todas_categorias:,.2f}"
+                )
+            with col_tot2:
+                diferenca_nota = abs(soma_todas_categorias - dados['valor_total'])
+                if dados['valor_total'] > 0:
+                    if diferenca_nota < 0.1:
+                        st.success("✅ A soma das categorias bate exatamente com o valor total da nota!")
+                    else:
+                        st.warning(f"⚠️ Diferença de R$ {diferenca_nota:,.2f} em relação ao valor da nota (R$ {dados['valor_total']:,.2f}).")
+
+            st.markdown("---")
             col_guardar, col_descartar = st.columns([2, 1])
             with col_guardar:
                 if st.button("💾 Guardar e Ensinar IA com estas Correções", type="primary", use_container_width=True):
                     itens_finais = df_alterado.to_dict(orient="records")
-                    salvar_nota(dados["razao_social"], dados["cnpj"], dados["valor_total"] or soma_atual, itens_finais)
+                    salvar_nota(dados["razao_social"], dados["cnpj"], dados["valor_total"] or soma_todas_categorias, itens_finais)
                     st.success("✅ Nota gravada e a IA memorizou as suas categorias corrigidas!")
                     st.session_state.dados_extraidos = None
                     st.rerun()
