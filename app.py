@@ -10,10 +10,9 @@ from datetime import datetime
 
 st.set_page_config(page_title="Painel Inteligente de Custos - Capry", layout="wide")
 
-# CSS para expandir o tamanho da câmara no telemóvel e monitor
+# CSS para expandir o visor da câmara
 st.markdown("""
 <style>
-/* Expande a área de visualização e o vídeo da câmara */
 div[data-testid="stCameraInput"] {
     width: 100% !important;
     max-width: 900px !important;
@@ -27,7 +26,6 @@ div[data-testid="stCameraInput"] video {
     object-fit: cover !important;
     border: 2px solid #ff4b4b;
 }
-/* Aumenta o botão de captura */
 div[data-testid="stCameraInput"] button {
     padding: 0.75rem 1.5rem !important;
     font-size: 1.1rem !important;
@@ -50,6 +48,13 @@ def init_db():
             itens_json TEXT
         )
     """)
+    # Tabela de memória de regras/classificações corrigidas
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS regras_classificacao (
+            produto TEXT PRIMARY KEY,
+            categoria TEXT
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -64,8 +69,28 @@ def salvar_nota(razao_social, cnpj, valor_total, lista_produtos):
         INSERT INTO notas (data_registo, razao_social, cnpj, valor_total, itens_json)
         VALUES (?, ?, ?, ?, ?)
     """, (data_registo, razao_social, cnpj, valor_total, itens_json))
+    
+    # Memorizar as categorias corrigidas pelo utilizador para futuras notas
+    for item in lista_produtos:
+        prod = str(item.get("Produto", "")).strip().upper()
+        cat = str(item.get("Categoria", "")).strip()
+        if prod:
+            cursor.execute("""
+                INSERT INTO regras_classificacao (produto, categoria)
+                VALUES (?, ?)
+                ON CONFLICT(produto) DO UPDATE SET categoria=excluded.categoria
+            """, (prod, cat))
+            
     conn.commit()
     conn.close()
+
+def carregar_regras():
+    conn = sqlite3.connect("notas_fiscais.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT produto, categoria FROM regras_classificacao")
+    regras = {row[0]: row[1] for row in cursor.fetchall()}
+    conn.close()
+    return regras
 
 def listar_notas():
     conn = sqlite3.connect("notas_fiscais.db")
@@ -99,7 +124,8 @@ except Exception:
     st.error("⚠️ Chave de API não encontrada! Configure o secrets.toml com GEMINI_API_KEY.")
     st.stop()
 
-CATEGORIAS_VALIDAS = "Alimentos, Descartáveis, Limpeza, Funcionários, Utensílios, Bebidas"
+LISTA_CATEGORIAS = ["Alimentos", "Descartáveis", "Limpeza", "Funcionários", "Utensílios", "Bebidas"]
+CATEGORIAS_VALIDAS = ", ".join(LISTA_CATEGORIAS)
 MODELOS_IA = ["gemini-3.8-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
 
 def chamar_gemini_com_fallback(chave, conteudos):
@@ -123,10 +149,17 @@ def chamar_gemini_com_fallback(chave, conteudos):
     return None
 
 def processar_com_ia(conteudo_texto, nome_arquivo, chave):
+    regras = carregar_regras()
+    exemplo_regras = json.dumps(regras, ensure_ascii=False) if regras else "Nenhuma ainda."
+    
     prompt = f"""
     Você é o assistente financeiro da empresa Capry Comércio Varejista de Alimentos LTDA.
-    Analise o seguinte conteúdo extraído do arquivo '{nome_arquivo}'.
+    Analise o seguinte conteúdo extraído do ficheiro '{nome_arquivo}'.
     Classifique cada item obrigatoriamente entre: {CATEGORIAS_VALIDAS}.
+    
+    IMPORTANTE: Dê prioridade a estas classificações memorizadas anteriormente pelo utilizador:
+    {exemplo_regras}
+
     Retorne APENAS um JSON no formato de lista de dicionários com:
     "Produto", "Quantidade", "Unid", "PrecoUnitario", "TotalItem", "Categoria".
     Conteúdo:
@@ -135,17 +168,24 @@ def processar_com_ia(conteudo_texto, nome_arquivo, chave):
     res = chamar_gemini_com_fallback(chave, prompt)
     return res if isinstance(res, list) else []
 
-def processar_imagem_com_ia(bytes_imagem, mime_type, chave):
+def processar_multiplas_imagens_com_ia(lista_partes_imagem, chave):
+    regras = carregar_regras()
+    exemplo_regras = json.dumps(regras, ensure_ascii=False) if regras else "Nenhuma ainda."
+    
     prompt = f"""
     Você é o assistente financeiro da empresa Capry Comércio Varejista de Alimentos LTDA.
-    Analise a imagem desta nota fiscal, cupom fiscal ou espelho de compras.
-    Mesmo que a foto tenha sombras ou letras pequenas, leia todos os itens com atenção.
+    Analise as imagens anexadas que compõem uma ou mais páginas da mesma nota/cupão fiscal.
+    Junte todos os itens de todas as fotos sem duplicar, totalizando a compra completa.
     
+    Categorias válidas: {CATEGORIAS_VALIDAS}.
+    IMPORTANTE: Respeite rigorosamente as preferências já ensinadas pelo utilizador:
+    {exemplo_regras}
+
     Extraia:
     1. 'razao_social': Nome do estabelecimento / fornecedor.
     2. 'cnpj': CNPJ do emitente.
     3. 'valor_total': Valor total final da nota (float).
-    4. 'itens': Lista com cada item comprado ("Produto", "Quantidade", "Unid", "PrecoUnitario", "TotalItem", "Categoria" entre {CATEGORIAS_VALIDAS}).
+    4. 'itens': Lista com cada item comprado ("Produto", "Quantidade", "Unid", "PrecoUnitario", "TotalItem", "Categoria").
 
     Retorne APENAS um JSON:
     {{
@@ -155,180 +195,217 @@ def processar_imagem_com_ia(bytes_imagem, mime_type, chave):
       "itens": [{{"Produto": "...", "Quantidade": 1.0, "Unid": "UN", "PrecoUnitario": 10.0, "TotalItem": 10.0, "Categoria": "Alimentos"}}]
     }}
     """
-    part_imagem = types.Part.from_bytes(data=bytes_imagem, mime_type=mime_type)
-    return chamar_gemini_com_fallback(chave, [prompt, part_imagem])
+    conteudos = [prompt] + lista_partes_imagem
+    return chamar_gemini_com_fallback(chave, conteudos)
 
 def categorizar_nomes_xml(lista_nomes, chave):
-    prompt = f"""
-    Classifique cada produto da lista abaixo estritamente em uma das categorias: {CATEGORIAS_VALIDAS}.
-    Retorne APENAS um JSON com o par produto: categoria.
-    Produtos: {json.dumps(lista_nomes, ensure_ascii=False)}
-    """
-    res = chamar_gemini_com_fallback(chave, prompt)
-    return res if isinstance(res, dict) else {}
+    regras = carregar_regras()
+    mapa = {}
+    pendentes = []
+    for nome in lista_nomes:
+        if nome.strip().upper() in regras:
+            mapa[nome] = regras[nome.strip().upper()]
+        else:
+            pendentes.append(nome)
+            
+    if pendentes:
+        prompt = f"""
+        Classifique cada produto da lista abaixo estritamente em uma das categorias: {CATEGORIAS_VALIDAS}.
+        Retorne APENAS um JSON com o par produto: categoria.
+        Produtos: {json.dumps(pendentes, ensure_ascii=False)}
+        """
+        res = chamar_gemini_com_fallback(chave, prompt)
+        if isinstance(res, dict):
+            mapa.update(res)
+    return mapa
+
+# Inicialização de variáveis de sessão
+if "fotos_acumuladas" not in st.session_state:
+    st.session_state.fotos_acumuladas = []
+if "dados_extraidos" not in st.session_state:
+    st.session_state.dados_extraidos = None
 
 # ----------------- NAVEGAÇÃO -----------------
-menu_principal = st.sidebar.radio("Navegação:", ["📄 Capturar / Enviar Nota", "🗄️ Histórico & Consultas"])
+menu_principal = st.sidebar.radio("Navegação:", ["📄 Capturar / Enviar Nota", "🗄️ Histórico & Consultas", "🧠 Dicionário de Classificações"])
 
 if menu_principal == "📄 Capturar / Enviar Nota":
-    st.info("💡 **Dica de Nitidez no Telemóvel:** Se a câmara da web ficar embaçada, use a aba **'📸 Foto Nítida (Câmara do Telemóvel)'**. Ao clicar nela no telemóvel, abre a app oficial da câmara com foco automático e alta definição!")
+    st.info("💡 **Dica:** Pode capturar ou anexar várias fotos da mesma nota. Elas ficam acumuladas até clicar no botão verde de processar!")
     
     aba_alta_res, aba_camera_web, aba_ficheiros = st.tabs([
-        "📸 Foto Nítida (Câmara do Telemóvel)", 
+        "📸 Fotos Nítidas (Telemóvel / Galeria)", 
         "🖥️ Câmara ao Vivo", 
         "📁 Ficheiro (XML / Excel / PDF)"
     ])
 
-    arquivo_ativo = None
-
     with aba_alta_res:
-        st.write("**Tire uma foto focada ou escolha da galeria com máxima resolução:**")
-        foto_hd = st.file_uploader("Toque aqui para abrir a câmara com autofoco", type=["jpg", "jpeg", "png", "webp"], key="foto_hd")
-        if foto_hd is not None:
-            arquivo_ativo = foto_hd
+        fotos_upload = st.file_uploader(
+            "Selecione uma ou mais fotos do documento (permite fotos múltiplas):", 
+            type=["jpg", "jpeg", "png", "webp"], 
+            accept_multiple_files=True,
+            key="upload_multiplas_fotos"
+        )
+        if fotos_upload:
+            if st.button("➕ Adicionar estas fotos à lista de espera", key="btn_add_upload"):
+                for f in fotos_upload:
+                    st.session_state.fotos_acumuladas.append({
+                        "bytes": f.getvalue(),
+                        "mime": "image/jpeg" if f.name.lower().endswith(('jpg', 'jpeg')) else f"image/{f.name.split('.')[-1].lower()}",
+                        "nome": f.name
+                    })
+                st.success(f"{len(fotos_upload)} foto(s) adicionada(s)!")
 
     with aba_camera_web:
-        st.write("**Visualizador direto (ecrã expandido):**")
-        foto_web = st.camera_input("Capturar Agora", key="foto_web")
+        foto_web = st.camera_input("Tire uma foto", key="camera_viva")
         if foto_web is not None:
-            arquivo_ativo = foto_web
+            if st.button("➕ Adicionar esta foto capturada", key="btn_add_camera"):
+                st.session_state.fotos_acumuladas.append({
+                    "bytes": foto_web.getvalue(),
+                    "mime": "image/jpeg",
+                    "nome": f"foto_cam_{len(st.session_state.fotos_acumuladas) + 1}.jpg"
+                })
+                st.success("Foto adicionada à lista de espera!")
+
+    # Painel de gestão de fotos acumuladas
+    if st.session_state.fotos_acumuladas:
+        st.write(f"### 📷 Fotos prontas para leitura: **{len(st.session_state.fotos_acumuladas)} foto(s)**")
+        col_c1, col_c2 = st.columns([2, 1])
+        with col_c1:
+            if st.button("🚀 Processar Fotos Acumuladas com a IA", type="primary", use_container_width=True):
+                partes = [types.Part.from_bytes(data=f["bytes"], mime_type=f["mime"]) for f in st.session_state.fotos_acumuladas]
+                with st.spinner("🤖 A IA está a juntar e analisar todas as páginas da nota..."):
+                    res = processar_multiplas_imagens_com_ia(partes, api_key)
+                    if res and isinstance(res, dict):
+                        st.session_state.dados_extraidos = {
+                            "razao_social": res.get('razao_social') or "Fornecedor não identificado",
+                            "cnpj": res.get('cnpj') or "Não informado",
+                            "valor_total": float(res.get('valor_total') or 0.0),
+                            "itens": res.get('itens', [])
+                        }
+                        st.session_state.fotos_acumuladas = []
+                        st.rerun()
+        with col_c2:
+            if st.button("🗑️ Limpar Fotos", use_container_width=True):
+                st.session_state.fotos_acumuladas = []
+                st.rerun()
 
     with aba_ficheiros:
-        arquivo_doc = st.file_uploader("Envie XML, PDF ou Excel", type=["xml", "xlsx", "xls", "pdf"], key="doc")
-        if arquivo_doc is not None:
-            arquivo_ativo = arquivo_doc
-
-    if arquivo_ativo is not None:
-        file_extension = arquivo_ativo.name.split('.')[-1].lower() if hasattr(arquivo_ativo, 'name') and '.' in arquivo_ativo.name else "jpg"
-        lista_produtos = []
-        razao_social = "Fornecedor não identificado"
-        cnpj_emitente = "Não informado"
-        valor_total_nota = 0.0
-
-        try:
-            # 1. Foto / Imagem
-            if file_extension in ['jpg', 'jpeg', 'png', 'webp']:
-                mime = "image/jpeg" if file_extension in ['jpg', 'jpeg'] else f"image/{file_extension}"
-                with st.spinner("🤖 A IA está a ler a imagem com alta resolução..."):
-                    resultado_foto = processar_imagem_com_ia(arquivo_ativo.getvalue(), mime, api_key)
-                
-                if resultado_foto and isinstance(resultado_foto, dict):
-                    razao_social = resultado_foto.get('razao_social') or "Fornecedor não identificado"
-                    cnpj_emitente = resultado_foto.get('cnpj') or "Não informado"
-                    valor_total_nota = float(resultado_foto.get('valor_total') or 0.0)
-                    for item in resultado_foto.get('itens', []):
-                        lista_produtos.append({
-                            "Categoria": item.get('Categoria', 'Alimentos'),
-                            "Produto": item.get('Produto', 'Desconhecido'),
-                            "Quantidade": float(item.get('Quantidade') or 1.0),
-                            "Unid": item.get('Unid', 'UN'),
-                            "Preço Unitário (R$)": float(item.get('PrecoUnitario') or 0.0),
-                            "Total do Item (R$)": float(item.get('TotalItem') or 0.0)
-                        })
-
-            # 2. XML
-            elif file_extension == 'xml':
-                data = xmltodict.parse(arquivo_ativo.read())
-                nfe_proc = data.get('nfeProc', data)
-                inf_nfe = nfe_proc.get('NFe', {}).get('infNFe', {})
+        arquivo_doc = st.file_uploader("Envie XML, PDF ou Excel", type=["xml", "xlsx", "xls", "pdf"], key="doc_file")
+        if arquivo_doc is not None and st.button("Processar Ficheiro"):
+            ext = arquivo_doc.name.split('.')[-1].lower()
+            if ext == 'xml':
+                data = xmltodict.parse(arquivo_doc.read())
+                inf_nfe = data.get('nfeProc', data).get('NFe', {}).get('infNFe', {})
                 emitente = inf_nfe.get('emit', {})
                 total = inf_nfe.get('total', {}).get('ICMSTot', {})
-                razao_social = emitente.get('xNome', 'Não informado')
-                cnpj_emitente = emitente.get('CNPJ', 'Não informado')
-                valor_total_nota = float(total.get('vNF', 0.0))
-                
                 detalhes = inf_nfe.get('det', [])
                 if not isinstance(detalhes, list):
                     detalhes = [detalhes]
                 nomes = [i.get('prod', {}).get('xProd', '') for i in detalhes]
+                mapa_cat = categorizar_nomes_xml(nomes, api_key)
                 
-                with st.spinner("🤖 Categorizando itens com IA..."):
-                    mapa_cat = categorizar_nomes_xml(nomes, api_key)
+                itens_xml = []
                 for item in detalhes:
                     prod = item.get('prod', {})
                     nome = prod.get('xProd', 'Desconhecido')
-                    lista_produtos.append({
+                    itens_xml.append({
                         "Categoria": mapa_cat.get(nome, 'Alimentos'),
                         "Produto": nome,
                         "Quantidade": float(prod.get('qCom', 0)),
                         "Unid": prod.get('uCom', ''),
-                        "Preço Unitário (R$)": float(prod.get('vUnCom', 0)),
-                        "Total do Item (R$)": float(prod.get('vProd', 0))
+                        "PrecoUnitario": float(prod.get('vUnCom', 0)),
+                        "TotalItem": float(prod.get('vProd', 0))
                     })
+                st.session_state.dados_extraidos = {
+                    "razao_social": emitente.get('xNome', 'Não informado'),
+                    "cnpj": emitente.get('CNPJ', 'Não informado'),
+                    "valor_total": float(total.get('vNF', 0.0)),
+                    "itens": itens_xml
+                }
+                st.rerun()
 
-            # 3. Excel
-            elif file_extension in ['xlsx', 'xls']:
-                df_excel = pd.read_excel(arquivo_ativo)
-                with st.spinner("🤖 Processando folha de cálculo..."):
-                    resultado_ia = processar_com_ia(df_excel.to_string(), arquivo_ativo.name, api_key)
-                for item in resultado_ia:
-                    v_tot = float(item.get('TotalItem', 0))
-                    valor_total_nota += v_tot
-                    lista_produtos.append({
-                        "Categoria": item.get('Categoria', 'Alimentos'),
-                        "Produto": item.get('Produto', 'Desconhecido'),
-                        "Quantidade": float(item.get('Quantidade', 1)),
-                        "Unid": item.get('Unid', 'UN'),
-                        "Preço Unitário (R$)": float(item.get('PrecoUnitario', 0)),
-                        "Total do Item (R$)": v_tot
-                    })
+            elif ext in ['xlsx', 'xls', 'pdf']:
+                texto = ""
+                if ext == 'pdf':
+                    import pypdf
+                    reader = pypdf.PdfReader(arquivo_doc)
+                    texto = "".join([p.extract_text() or "" for p in reader.pages])
+                else:
+                    texto = pd.read_excel(arquivo_doc).to_string()
+                    
+                res_itens = processar_com_ia(texto, arquivo_doc.name, api_key)
+                st.session_state.dados_extraidos = {
+                    "razao_social": "Ficheiro importado",
+                    "cnpj": "Não informado",
+                    "valor_total": sum(float(i.get('TotalItem', 0)) for i in res_itens),
+                    "itens": res_itens
+                }
+                st.rerun()
 
-            # 4. PDF
-            elif file_extension == 'pdf':
-                import pypdf
-                reader = pypdf.PdfReader(arquivo_ativo)
-                texto = "".join([p.extract_text() or "" for p in reader.pages])
-                with st.spinner("🤖 Processando PDF..."):
-                    resultado_ia = processar_com_ia(texto, arquivo_ativo.name, api_key)
-                for item in resultado_ia:
-                    v_tot = float(item.get('TotalItem', 0))
-                    valor_total_nota += v_tot
-                    lista_produtos.append({
-                        "Categoria": item.get('Categoria', 'Alimentos'),
-                        "Produto": item.get('Produto', 'Desconhecido'),
-                        "Quantidade": float(item.get('Quantidade', 1)),
-                        "Unid": item.get('Unid', 'UN'),
-                        "Preço Unitário (R$)": float(item.get('PrecoUnitario', 0)),
-                        "Total do Item (R$)": v_tot
-                    })
+    # ----------------- RESULTADO & EDIÇÃO INTERATIVA -----------------
+    if st.session_state.dados_extraidos:
+        dados = st.session_state.dados_extraidos
+        st.markdown("---")
+        st.subheader("📋 Resumo da Compra")
+        
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Fornecedor", dados["razao_social"])
+        col2.metric("CNPJ", dados["cnpj"])
+        col3.metric("Valor Total Registado", f"R$ {dados['valor_total']:,.2f}")
 
-            if lista_produtos:
-                df_produtos = pd.DataFrame(lista_produtos)
-                soma_produtos = df_produtos["Total do Item (R$)"].sum()
-                if valor_total_nota == 0.0:
-                    valor_total_nota = soma_produtos
+        st.subheader("✏️ Itens Identificados (Pode alterar diretamente na tabela)")
+        st.write("Clique na coluna **Categoria** para mudar a classificação se a IA tiver errado. Pode também ajustar nomes e valores:")
 
-                st.subheader("📋 Resumo da Compra")
-                col1, col2, col3 = st.columns(3)
-                col1.metric("Fornecedor", razao_social)
-                col2.metric("CNPJ", cnpj_emitente)
-                col3.metric("Valor Total", f"R$ {valor_total_nota:,.2f}")
+        # Tabela editável
+        df_editavel = pd.DataFrame(dados["itens"])
+        if not df_editavel.empty:
+            # Garantir tipos corretos
+            if "TotalItem" not in df_editavel.columns and "Total do Item (R$)" in df_editavel.columns:
+                df_editavel.rename(columns={"Total do Item (R$)": "TotalItem", "Preço Unitário (R$)": "PrecoUnitario"}, inplace=True)
 
-                st.subheader("📊 Totais por Categoria")
-                df_resumo = df_produtos.groupby("Categoria")["Total do Item (R$)"].sum().reset_index()
-                df_resumo_format = df_resumo.copy()
-                df_resumo_format["Total do Item (R$)"] = df_resumo_format["Total do Item (R$)"].apply(lambda x: f"R$ {x:,.2f}")
-                st.dataframe(df_resumo_format, use_container_width=True)
+            df_alterado = st.data_editor(
+                df_editavel,
+                column_config={
+                    "Categoria": st.column_config.SelectboxColumn(
+                        "Categoria",
+                        options=LISTA_CATEGORIAS,
+                        required=True
+                    ),
+                    "Produto": st.column_config.TextColumn("Produto", required=True),
+                    "Quantidade": st.column_config.NumberColumn("Qtd", format="%.2f"),
+                    "Unid": st.column_config.TextColumn("Unid"),
+                    "PrecoUnitario": st.column_config.NumberColumn("Preço Unit. (R$)", format="R$ %.2f"),
+                    "TotalItem": st.column_config.NumberColumn("Total Item (R$)", format="R$ %.2f"),
+                },
+                use_container_width=True,
+                num_rows="dynamic",
+                key="editor_tabela_itens"
+            )
 
-                st.subheader("📦 Produtos Identificados")
-                df_prod_format = df_produtos.copy()
-                df_prod_format["Preço Unitário (R$)"] = df_prod_format["Preço Unitário (R$)"].apply(lambda x: f"R$ {x:,.2f}")
-                df_prod_format["Total do Item (R$)"] = df_prod_format["Total do Item (R$)"].apply(lambda x: f"R$ {x:,.2f}")
-                st.dataframe(df_prod_format, use_container_width=True)
+            # Recálculo automático dos totais pós-edição
+            soma_atual = df_alterado["TotalItem"].sum()
+            st.subheader("📊 Totais por Categoria Atualizados")
+            df_resumo = df_alterado.groupby("Categoria")["TotalItem"].sum().reset_index()
+            df_resumo["TotalItem"] = df_resumo["TotalItem"].apply(lambda x: f"R$ {x:,.2f}")
+            df_resumo.rename(columns={"TotalItem": "Total Categoria (R$)"}, inplace=True)
+            st.dataframe(df_resumo, use_container_width=True)
 
-                st.markdown("---")
-                col_save, _ = st.columns([1, 3])
-                with col_save:
-                    if st.button("💾 Guardar Nota no Banco de Dados", type="primary", use_container_width=True):
-                        salvar_nota(razao_social, cnpj_emitente, valor_total_nota, lista_produtos)
-                        st.success("✅ Guardado com sucesso! Vá ao menu 'Histórico & Consultas' para visualizar.")
-            else:
-                st.warning("⚠️ Nenhum item identificado. Na aba 'Foto Nítida', tire a foto segurando o telemóvel firme e com boa luz.")
+            st.info(f"Soma dos itens corrigidos: **R$ {soma_atual:,.2f}** | Valor da nota: **R$ {dados['valor_total']:,.2f}**")
 
-        except Exception as e:
-            st.error(f"Erro no processamento: {e}")
+            col_guardar, col_descartar = st.columns([2, 1])
+            with col_guardar:
+                if st.button("💾 Guardar e Ensinar IA com estas Correções", type="primary", use_container_width=True):
+                    itens_finais = df_alterado.to_dict(orient="records")
+                    salvar_nota(dados["razao_social"], dados["cnpj"], dados["valor_total"] or soma_atual, itens_finais)
+                    st.success("✅ Nota gravada e a IA memorizou as suas categorias corrigidas!")
+                    st.session_state.dados_extraidos = None
+                    st.rerun()
 
-# ----------------- HISTÓRICO & EXCLUSÃO -----------------
+            with col_descartar:
+                if st.button("❌ Descartar Análise", use_container_width=True):
+                    st.session_state.dados_extraidos = None
+                    st.rerun()
+
+# ----------------- HISTÓRICO -----------------
 elif menu_principal == "🗄️ Histórico & Consultas":
     st.subheader("🗄️ Histórico de Notas Salvas")
     df_historico = listar_notas()
@@ -367,6 +444,15 @@ elif menu_principal == "🗄️ Histórico & Consultas":
             if itens_recuperados:
                 st.write(f"**Itens da Nota #{nota_selecionada}:**")
                 df_itens = pd.DataFrame(itens_recuperados)
-                df_itens["Preço Unitário (R$)"] = df_itens["Preço Unitário (R$)"].apply(lambda x: f"R$ {x:,.2f}")
-                df_itens["Total do Item (R$)"] = df_itens["Total do Item (R$)"].apply(lambda x: f"R$ {x:,.2f}")
                 st.dataframe(df_itens, use_container_width=True)
+
+# ----------------- MEMÓRIA DE REGRAS -----------------
+elif menu_principal == "🧠 Dicionário de Classificações":
+    st.subheader("🧠 Classificações Memorizadas pela IA")
+    st.write("Estes são os produtos que corrigiu e que a IA já aprendeu a categorizar automaticamente:")
+    regras_atuais = carregar_regras()
+    if regras_atuais:
+        df_regras = pd.DataFrame(list(regras_atuais.items()), columns=["Produto", "Categoria"]).sort_values("Produto")
+        st.dataframe(df_regras, use_container_width=True)
+    else:
+        st.info("Ainda não foram memorizadas personalizações. Sempre que guardar uma nota corrigida, os itens aparecem aqui.")
