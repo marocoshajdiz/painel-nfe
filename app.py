@@ -353,15 +353,15 @@ if menu_principal == "📄 Capturar / Enviar Nota":
         col2.metric("CNPJ", dados["cnpj"])
         col3.metric("Valor Total Registado", f"R$ {dados['valor_total']:,.2f}")
 
-        st.subheader("✏️ Itens Identificados (Pode alterar diretamente na tabela)")
-        st.write("Clique na coluna **Categoria** para mudar a classificação se a IA tiver errado. Pode também ajustar nomes e valores:")
+        st.subheader("✏️ Itens Identificados (Ajuste ou Corrija Categorias)")
+        st.write("Edite as categorias se necessário antes de guardar:")
 
-        # Tabela editável
         df_editavel = pd.DataFrame(dados["itens"])
         if not df_editavel.empty:
             if "TotalItem" not in df_editavel.columns and "Total do Item (R$)" in df_editavel.columns:
                 df_editavel.rename(columns={"Total do Item (R$)": "TotalItem", "Preço Unitário (R$)": "PrecoUnitario"}, inplace=True)
 
+            # Tabela global editável
             df_alterado = st.data_editor(
                 df_editavel,
                 column_config={
@@ -381,7 +381,7 @@ if menu_principal == "📄 Capturar / Enviar Nota":
                 key="editor_tabela_itens"
             )
 
-            # Recálculo automático dos totais pós-edição
+            # Totais por Categoria
             st.subheader("📊 Totais por Categoria Atualizados")
             df_resumo = df_alterado.groupby("Categoria")["TotalItem"].sum().reset_index()
             soma_todas_categorias = float(df_resumo["TotalItem"].sum())
@@ -405,6 +405,30 @@ if menu_principal == "📄 Capturar / Enviar Nota":
                     else:
                         st.warning(f"⚠️ Diferença de R$ {diferenca_nota:,.2f} em relação ao valor da nota (R$ {dados['valor_total']:,.2f}).")
 
+            # ----------------- ITENS SEPARADOS POR CATEGORIA -----------------
+            st.subheader("📦 Itens Detalhados por Categoria Separada")
+            categorias_existentes = sorted(df_alterado["Categoria"].dropna().unique())
+
+            for cat in categorias_existentes:
+                df_cat = df_alterado[df_alterado["Categoria"] == cat].copy()
+                subtotal_cat = df_cat["TotalItem"].sum()
+                qtd_itens_cat = len(df_cat)
+
+                with st.expander(f"🏷️ **{cat.upper()}** — {qtd_itens_cat} item(ns) | Subtotal: **R$ {subtotal_cat:,.2f}**", expanded=True):
+                    df_cat_show = df_cat.copy()
+                    df_cat_show["PrecoUnitario"] = df_cat_show["PrecoUnitario"].apply(lambda x: f"R$ {float(x):,.2f}")
+                    df_cat_show["TotalItem"] = df_cat_show["TotalItem"].apply(lambda x: f"R$ {float(x):,.2f}")
+                    df_cat_show.rename(columns={
+                        "Produto": "Produto",
+                        "Quantidade": "Qtd",
+                        "Unid": "Unid",
+                        "PrecoUnitario": "Preço Unitário (R$)",
+                        "TotalItem": "Total do Item (R$)"
+                    }, inplace=True)
+                    # Não precisa exibir a coluna Categoria aqui pois já está agrupada
+                    cols_para_exibir = [c for c in ["Produto", "Qtd", "Unid", "Preço Unitário (R$)", "Total do Item (R$)"] if c in df_cat_show.columns]
+                    st.dataframe(df_cat_show[cols_para_exibir], use_container_width=True)
+
             st.markdown("---")
             col_guardar, col_descartar = st.columns([2, 1])
             with col_guardar:
@@ -420,7 +444,7 @@ if menu_principal == "📄 Capturar / Enviar Nota":
                     st.session_state.dados_extraidos = None
                     st.rerun()
 
-# ----------------- HISTÓRICO & CONSULTAS COM SUBTOTAL POR CATEGORIA -----------------
+# ----------------- HISTÓRICO COM ITENS SEPARADOS POR CATEGORIA -----------------
 elif menu_principal == "🗄️ Histórico & Consultas":
     st.subheader("🗄️ Histórico de Notas Salvas")
     df_historico = listar_notas()
@@ -488,27 +512,34 @@ elif menu_principal == "🗄️ Histórico & Consultas":
 
                 st.dataframe(df_cat_show, use_container_width=True)
 
-                # Métrica com o total somado das categorias
                 st.metric(
                     label="💰 Total Somado das Categorias",
                     value=f"R$ {soma_categorias_hist:,.2f}"
                 )
 
-                # 2. Tabela detalhada de itens
-                st.write("#### 📦 Itens Detalhados da Compra")
-                df_itens_show = df_itens.copy()
-                df_itens_show["PrecoUnit"] = df_itens_show["PrecoUnit"].apply(lambda x: f"R$ {float(x):,.2f}" if pd.notnull(x) else "R$ 0,00")
-                df_itens_show["Total"] = df_itens_show["Total"].apply(lambda x: f"R$ {float(x):,.2f}")
-                df_itens_show.rename(columns={
-                    "Produto": "Produto",
-                    "Categoria": "Categoria",
-                    "Quantidade": "Qtd",
-                    "Unid": "Unid",
-                    "PrecoUnit": "Preço Unitário (R$)",
-                    "Total": "Total do Item (R$)"
-                }, inplace=True)
+                # 2. Itens separados por categoria
+                st.write("#### 📦 Itens Detalhados da Compra (Separados por Categoria)")
+                cats_hist = sorted(df_itens["Categoria"].dropna().unique())
 
-                st.dataframe(df_itens_show, use_container_width=True)
+                for cat in cats_hist:
+                    df_sub = df_itens[df_itens["Categoria"] == cat].copy()
+                    subtot_cat = df_sub["Total"].sum()
+                    qtd_sub = len(df_sub)
+
+                    with st.expander(f"🏷️ **{cat.upper()}** — {qtd_sub} item(ns) | Subtotal: **R$ {subtot_cat:,.2f}**", expanded=True):
+                        df_sub_show = df_sub.copy()
+                        df_sub_show["PrecoUnit"] = df_sub_show["PrecoUnit"].apply(lambda x: f"R$ {float(x):,.2f}" if pd.notnull(x) else "R$ 0,00")
+                        df_sub_show["Total"] = df_sub_show["Total"].apply(lambda x: f"R$ {float(x):,.2f}")
+                        df_sub_show.rename(columns={
+                            "Produto": "Produto",
+                            "Quantidade": "Qtd",
+                            "Unid": "Unid",
+                            "PrecoUnit": "Preço Unitário (R$)",
+                            "Total": "Total do Item (R$)"
+                        }, inplace=True)
+
+                        cols_hist = [c for c in ["Produto", "Qtd", "Unid", "Preço Unitário (R$)", "Total do Item (R$)"] if c in df_sub_show.columns]
+                        st.dataframe(df_sub_show[cols_hist], use_container_width=True)
 
 # ----------------- MEMÓRIA DE REGRAS -----------------
 elif menu_principal == "🧠 Dicionário de Classificações":
