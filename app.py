@@ -9,11 +9,10 @@ import sqlite3
 import io
 import re
 from datetime import datetime
-from PIL import Image
 
 st.set_page_config(page_title="Painel de Custos & DRE Spoleto - Capry", layout="wide")
 
-# ----------------- CONTROLO DE ACESSO -----------------
+# ----------------- CONTROLE DE ACESSO -----------------
 USUARIO_CORRETO = "admin"
 SENHA_CORRETA = "massima"
 
@@ -25,7 +24,7 @@ def tela_login():
     with col2:
         st.markdown("<br><br>", unsafe_allow_html=True)
         st.markdown("### 🔐 Acesso ao Painel de Custos & DRE - Capry")
-        st.write("Digite as suas credenciais:")
+        st.write("Digite suas credenciais:")
         with st.form("form_login"):
             usuario = st.text_input("Usuário", placeholder="admin")
             senha = st.text_input("Senha", type="password", placeholder="massima")
@@ -40,13 +39,13 @@ if not st.session_state.autenticado:
     tela_login()
     st.stop()
 
-st.sidebar.write(f"👤 Sessão iniciada: **{USUARIO_CORRETO}**")
+st.sidebar.write(f"👤 Logado como: **{USUARIO_CORRETO}**")
 if st.sidebar.button("🚪 Sair do Sistema"):
     st.session_state.autenticado = False
     st.rerun()
 st.sidebar.markdown("---")
 
-# CSS para interface adaptada ao telemóvel
+# CSS para tela expandida
 st.markdown("""
 <style>
 div[data-testid="stCameraInput"] { width: 100% !important; max-width: 900px !important; margin: 0 auto; }
@@ -55,7 +54,7 @@ div[data-testid="stCameraInput"] button { padding: 0.75rem 1.5rem !important; fo
 </style>
 """, unsafe_allow_html=True)
 
-# ----------------- CATÁLOGO DOS 132 INDICADORES DO DRE SPOLETO -----------------
+# ----------------- CATÁLOGO DOS INDICADORES DO DRE SPOLETO -----------------
 CATALOGO_DRE_SPOLETO = {
     # IMPOSTOS
     "Simples": {"dre": "Imposto", "detalhamento": "Imposto Federal"},
@@ -357,139 +356,128 @@ def gerar_excel_dre(nome_mes, df_dre_completo, df_lancamentos):
     output.seek(0)
     return output.getvalue()
 
-# ----------------- CONFIGURAÇÕES IA MULTIMODAL RESILIENTE -----------------
+# ----------------- CONFIGURAÇÕES IA (MOTOR DIRETO E ESTÁVEL) -----------------
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
 except Exception:
-    st.error("⚠️ Configure a GEMINI_API_KEY no ficheiro .streamlit/secrets.toml.")
+    st.error("⚠️ Configure a GEMINI_API_KEY no arquivo .streamlit/secrets.toml.")
     st.stop()
 
-# Lista de modelos ordenada por probabilidade de suporte visual
-MODELOS_TENTATIVA = [
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-1.5-flash-latest",
-    "gemini-3.8-flash"
-]
-
-def extrair_json_seguro(texto_ia):
-    """Extrai JSON válido mesmo que a resposta venha com blocos de markdown ```json."""
-    if not texto_ia:
+def parse_json_resposta(texto):
+    """Garante a leitura do JSON mesmo que a IA envie blocos markdown ```json."""
+    if not texto:
         return None
     try:
-        return json.loads(texto_ia)
+        return json.loads(texto)
     except Exception:
         pass
     
-    padrao = r"\{[\s\S]*\}|\[[\s\S]*\]"
-    busca = re.search(padrao, texto_ia)
-    if busca:
+    match = re.search(r"\{[\s\S]*\}|\[[\s\S]*\]", texto)
+    if match:
         try:
-            return json.loads(busca.group(0))
+            return json.loads(match.group(0))
         except Exception:
             pass
     return None
 
-def otimizar_imagem_bytes(bytes_brutos):
-    """Garante que a imagem fique em JPEG leve e focada para a API processar sem erro de timeout ou tamanho."""
-    try:
-        img = Image.open(io.BytesIO(bytes_brutos))
-        if img.mode in ("RGBA", "P"):
-            img = img.convert("RGB")
-        # Reduzir apenas se for gigante
-        if max(img.size) > 2200:
-            img.thumbnail((2200, 2200), Image.Resampling.LANCZOS)
-        out = io.BytesIO()
-        img.save(out, format="JPEG", quality=85, optimize=True)
-        return out.getvalue(), "image/jpeg"
-    except Exception:
-        return bytes_brutos, "image/jpeg"
-
-def chamar_gemini_robusto(chave, conteudos):
-    """Testa os modelos visuais da Google sequencialmente até obter resposta válida sem 404."""
-    client = genai.Client(api_key=chave)
-    erros = []
-
-    for mod in MODELOS_TENTATIVA:
-        for tentativa in range(2):
-            try:
-                response = client.models.generate_content(
-                    model=mod,
-                    contents=conteudos,
-                    config=types.GenerateContentConfig(response_mime_type="application/json"),
-                )
-                if response and response.text:
-                    dados = extrair_json_seguro(response.text)
-                    if dados is not None:
-                        return dados
-            except Exception as e:
-                erros.append(f"{mod} (tentativa {tentativa+1}): {str(e)}")
-                time.sleep(1.5)
-                continue
-
-    st.error(f"⚠️ Falha na leitura do documento pela IA. Diagnóstico dos servidores: {'; '.join(erros[-2:])}")
-    return None
-
 def processar_multiplas_imagens_com_ia(lista_fotos_bytes, chave):
+    """Lê diretamente as fotos e destrincha os itens com a IA."""
+    client = genai.Client(api_key=chave)
     regras = carregar_regras()
-    ex_regras = json.dumps(regras, ensure_ascii=False) if regras else "Nenhuma ainda."
-    
+    ex_regras = json.dumps(regras, ensure_ascii=False) if regras else "Nenhuma."
+
     prompt = f"""
-    Você é o assistente financeiro oficial da franquia Spoleto (Capry Comércio Varejista de Alimentos LTDA).
-    Analise as imagens do documento anexado (cupom fiscal, boleto, conta de condomínio, gás ou despesa).
-    Extraia obrigatoriamente:
-    1. 'razao_social': Nome do fornecedor, condomínio ou emitente.
-    2. 'cnpj': CNPJ do emitente se constar no papel.
-    3. 'valor_total': Valor total final da conta/nota (numérico float).
-    4. 'itens': Lista de produtos/serviços com:
-       - "Produto": nome do item
+    Você é o assistente financeiro da empresa Capry Comércio (franquia Spoleto).
+    Analise o documento anexado (nota fiscal, cupom fiscal ou boleto de despesa).
+    
+    Sua tarefa é extrair e destrinchar com máxima atenção:
+    1. 'razao_social': Nome do fornecedor ou emitente.
+    2. 'cnpj': CNPJ do emitente (se visível).
+    3. 'valor_total': Valor total final da nota (numérico float).
+    4. 'itens': Lista detalhada de cada item/produto comprado:
+       - "Produto": nome do produto ou descrição
        - "Quantidade": float
-       - "Unid": unidade (UN, KG, etc)
+       - "Unid": unidade (UN, KG, CX, etc)
        - "PrecoUnitario": float
        - "TotalItem": float
-       - "Classificacao": escolha a conta mais adequada do Spoleto (ex: Condomínio, Gás, Energia Elétrica, Alimentos, Bebidas, Embalagens E Descartáveis, Material De Limpeza, etc).
-    Regras memorizadas: {ex_regras}
-    Retorne estritamente um JSON no formato:
+       - "Classificacao": atribua uma classificação entre estas opções principais:
+         [Demais Alimentos, Proteínas, Laticínios, Molhos, Massas, Farinhas E Cereais, Hortaliças, Conservas, Bebidas, Embalagens E Descartáveis, Material De Limpeza, Utensílios De Cozinha, Material De Escritório, Uniformes, Condomínio, Gás, Energia Elétrica, Água E Esgoto, Aluguel, Alimentação Funcionário]
+
+    Regras já ensinadas: {ex_regras}
+
+    Retorne APENAS um objeto JSON no formato exato:
     {{
       "razao_social": "...",
       "cnpj": "...",
       "valor_total": 0.0,
-      "itens": [...]
+      "itens": [
+        {{"Produto": "...", "Quantidade": 1.0, "Unid": "UN", "PrecoUnitario": 10.0, "TotalItem": 10.0, "Classificacao": "Demais Alimentos"}}
+      ]
     }}
     """
     
-    partes = [prompt]
+    conteudos = [prompt]
     for b in lista_fotos_bytes:
-        bytes_opt, mime_opt = otimizar_imagem_bytes(b)
-        partes.append(types.Part.from_bytes(data=bytes_opt, mime_type=mime_opt))
+        conteudos.append(types.Part.from_bytes(data=b, mime_type="image/jpeg"))
 
-    return chamar_gemini_robusto(chave, partes)
+    for tentativa in range(3):
+        try:
+            response = client.models.generate_content(
+                model='gemini-3.8-flash',
+                contents=conteudos,
+                config=types.GenerateContentConfig(response_mime_type="application/json"),
+            )
+            if response and response.text:
+                res_json = parse_json_resposta(response.text)
+                if res_json:
+                    return res_json
+        except Exception as e:
+            time.sleep(2)
+            if tentativa == 2:
+                st.error(f"Erro ao processar imagem com a IA: {e}")
+    return None
 
 def processar_texto_com_ia(texto, nome_arq, chave):
-    regras = carregar_regras()
-    ex_regras = json.dumps(regras, ensure_ascii=False) if regras else "Nenhuma."
+    client = genai.Client(api_key=chave)
     prompt = f"""
-    Analise o arquivo '{nome_arq}'. Extraia os itens e classifique com as contas do Spoleto.
-    Regras conhecidas: {ex_regras}.
-    Retorne lista JSON com: Produto, Quantidade, Unid, PrecoUnitario, TotalItem, Classificacao.
+    Analise o texto do arquivo '{nome_arq}'.
+    Extraia os itens com Produto, Quantidade, Unid, PrecoUnitario, TotalItem, Classificacao.
+    Retorne apenas JSON lista de dicionários.
     Texto: {texto[:15000]}
     """
-    res = chamar_gemini_robusto(chave, [prompt])
-    return res if isinstance(res, list) else []
+    try:
+        response = client.models.generate_content(
+            model='gemini-3.8-flash',
+            contents=prompt,
+            config=types.GenerateContentConfig(response_mime_type="application/json"),
+        )
+        return parse_json_resposta(response.text) or []
+    except Exception as e:
+        st.error(f"Erro ao processar arquivo: {e}")
+        return []
 
 def categorizar_nomes_xml(nomes, chave):
     regras = carregar_regras()
     mapa = {n: regras[n.strip().upper()] for n in nomes if n.strip().upper() in regras}
     faltam = [n for n in nomes if n.strip().upper() not in regras]
     if faltam:
+        client = genai.Client(api_key=chave)
         p = f"""
-        Classifique os produtos abaixo nas opções oficiais do DRE Spoleto:
+        Classifique os produtos abaixo nas opções oficiais do DRE Spoleto (Demais Alimentos, Proteínas, Laticínios, Bebidas, Embalagens E Descartáveis, Material De Limpeza, etc):
         {json.dumps(faltam, ensure_ascii=False)}.
-        Retorne JSON objeto {{\"nome_do_produto\": \"Classificacao\"}}.
+        Retorne JSON objeto {{\"nome\": \"Classificacao\"}}.
         """
-        res = chamar_gemini_robusto(chave, [p])
-        if isinstance(res, dict):
-            mapa.update(res)
+        try:
+            response = client.models.generate_content(
+                model='gemini-3.8-flash',
+                contents=p,
+                config=types.GenerateContentConfig(response_mime_type="application/json"),
+            )
+            res = parse_json_resposta(response.text)
+            if isinstance(res, dict):
+                mapa.update(res)
+        except Exception:
+            pass
     return mapa
 
 # ----------------- GERENCIAMENTO DE SESSÃO -----------------
@@ -738,7 +726,7 @@ elif menu.startswith("📸 Escanear"):
             st.session_state.fotos_acumuladas = []
             for f in f_upload:
                 st.session_state.fotos_acumuladas.append(f.getvalue())
-            st.success(f"{len(f_upload)} foto(s) carregada(s) com sucesso!")
+            st.success(f"{len(f_upload)} foto(s) da nova nota carregada(s)!")
 
     with aba_cam:
         f_cam = st.camera_input("Capturar foto", key=f"cam_input_{ukey}")
@@ -751,7 +739,7 @@ elif menu.startswith("📸 Escanear"):
         c1, c2 = st.columns([2, 1])
         with c1:
             if st.button("🚀 Processar Fotos com IA & Alimentar DRE", type="primary", use_container_width=True):
-                with st.spinner("🤖 A IA está a ler e estruturar o documento..."):
+                with st.spinner("🤖 A IA está lendo o documento e destrinchando cada item..."):
                     res = processar_multiplas_imagens_com_ia(st.session_state.fotos_acumuladas, api_key)
                     if res and isinstance(res, dict):
                         st.session_state.dados_extraidos = {
@@ -763,7 +751,7 @@ elif menu.startswith("📸 Escanear"):
                         st.session_state.fotos_acumuladas = []
                         st.rerun()
                     else:
-                        st.error("Não foi possível extrair dados legíveis da imagem. Tente capturar mais de perto ou com melhor luz.")
+                        st.error("Não foi possível extrair dados legíveis da imagem. Tire a foto mais de perto e com boa iluminação.")
         with c2:
             if st.button("🗑️ Descartar Fotos", use_container_width=True):
                 resetar_processamento_nota()
