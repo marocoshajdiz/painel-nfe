@@ -6,11 +6,18 @@ from google.genai import types
 import json
 import time
 import sqlite3
+import io
 from datetime import datetime
+
+# Importações para geração de PDF
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 st.set_page_config(page_title="Painel de Custos & DRE Spoleto - Capry", layout="wide")
 
-# ----------------- CONTROLE DE LOGIN -----------------
+# ----------------- CONTROLO DE ACESSO -----------------
 USUARIO_CORRETO = "admin"
 SENHA_CORRETA = "massima"
 
@@ -88,7 +95,8 @@ def init_db():
             imposto_estadual REAL DEFAULT 0,
             gas REAL DEFAULT 0,
             terceiros REAL DEFAULT 0,
-            bonificacao REAL DEFAULT 0
+            bonificacao REAL DEFAULT 0,
+            ultima_atualizacao TEXT
         )
     """)
     cursor.execute("""
@@ -102,7 +110,6 @@ def init_db():
 
 init_db()
 
-# Meses de Out/2026 até Dez/2027
 MESES_DISPONIVEIS = [
     "2026-10", "2026-11", "2026-12",
     "2027-01", "2027-02", "2027-03", "2027-04", "2027-05", "2027-06",
@@ -116,7 +123,6 @@ NOMES_MESES = {
     "2027-10": "Outubro / 2027", "2027-11": "Novembro / 2027", "2027-12": "Dezembro / 2027"
 }
 
-# Seletor global do mês no topo da barra lateral
 mes_ativo = st.sidebar.selectbox(
     "📅 Mês de Trabalho (DRE):",
     MESES_DISPONIVEIS,
@@ -144,7 +150,6 @@ def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_pro
         VALUES (?, ?, ?, ?, ?, ?)
     """, (mes_ref, data_registo, razao_social, cnpj, valor_total, itens_json))
 
-    # Agrupar itens por categoria e lançar na tabela de DRE
     df_temp = pd.DataFrame(lista_produtos)
     if not df_temp.empty:
         col_tot = "TotalItem" if "TotalItem" in df_temp.columns else "Total do Item (R$)"
@@ -161,7 +166,6 @@ def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_pro
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """, (mes_ref, data_hoje, razao_social.upper(), cfg["desc"], float(v), cfg["dre"], cfg["class"], cfg["det"]))
 
-        # Memorizar regras
         for item in lista_produtos:
             prod = str(item.get("Produto", "")).strip().upper()
             c = str(item.get("Categoria", "")).strip()
@@ -192,29 +196,122 @@ def obter_lancamentos_mes(mes_ref):
 def obter_dados_mensais(mes_ref):
     conn = sqlite3.connect("notas_fiscais.db")
     c = conn.cursor()
-    c.execute("SELECT fat_balcao, fat_delivery, imposto_estadual, gas, terceiros, bonificacao FROM dados_mensais WHERE mes_referencia = ?", (mes_ref,))
+    c.execute("SELECT fat_balcao, fat_delivery, imposto_estadual, gas, terceiros, bonificacao, ultima_atualizacao FROM dados_mensais WHERE mes_referencia = ?", (mes_ref,))
     row = c.fetchone()
     conn.close()
     if row:
-        return {"balcao": row[0], "delivery": row[1], "imposto_est": row[2], "gas": row[3], "terceiros": row[4], "bonificacao": row[5]}
-    return {"balcao": 0.0, "delivery": 0.0, "imposto_est": 0.0, "gas": 0.0, "terceiros": 0.0, "bonificacao": 0.0}
+        return {
+            "balcao": float(row[0] or 0.0),
+            "delivery": float(row[1] or 0.0),
+            "imposto_est": float(row[2] or 0.0),
+            "gas": float(row[3] or 0.0),
+            "terceiros": float(row[4] or 0.0),
+            "bonificacao": float(row[5] or 0.0),
+            "atualizado_em": row[6] or "Nunca"
+        }
+    return {
+        "balcao": 0.0, "delivery": 0.0, "imposto_est": 0.0,
+        "gas": 0.0, "terceiros": 0.0, "bonificacao": 0.0, "atualizado_em": "Nunca"
+    }
 
-def salvar_dados_mensais(mes_ref, dados):
+def salvar_dados_mensais_seguro(mes_ref, dados):
     conn = sqlite3.connect("notas_fiscais.db")
     c = conn.cursor()
+    horario_agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
     c.execute("""
-        INSERT INTO dados_mensais (mes_referencia, fat_balcao, fat_delivery, imposto_estadual, gas, terceiros, bonificacao)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO dados_mensais (mes_referencia, fat_balcao, fat_delivery, imposto_estadual, gas, terceiros, bonificacao, ultima_atualizacao)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(mes_referencia) DO UPDATE SET
             fat_balcao=excluded.fat_balcao,
             fat_delivery=excluded.fat_delivery,
             imposto_estadual=excluded.imposto_estadual,
             gas=excluded.gas,
             terceiros=excluded.terceiros,
-            bonificacao=excluded.bonificacao
-    """, (mes_ref, dados["balcao"], dados["delivery"], dados["imposto_est"], dados["gas"], dados["terceiros"], dados["bonificacao"]))
+            bonificacao=excluded.bonificacao,
+            ultima_atualizacao=excluded.ultima_atualizacao
+    """, (mes_ref, dados["balcao"], dados["delivery"], dados["imposto_est"], dados["gas"], dados["terceiros"], dados["bonificacao"], horario_agora))
     conn.commit()
+    
+    # Verificação de segurança pós-gravação
+    c.execute("SELECT ultima_atualizacao FROM dados_mensais WHERE mes_referencia = ?", (mes_ref,))
+    confirmacao = c.fetchone()
     conn.close()
+    return confirmacao[0] if confirmacao else horario_agora
+
+# ----------------- GERADORES EXCEL & PDF -----------------
+def gerar_excel_dre(nome_mes, linhas_dre, df_lancamentos):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df_export = pd.DataFrame([{
+            "CONTA": item["CONTA"].replace("🔹 ", "").replace("📦 ", "").replace("🏢 ", "").replace("👥 ", "").replace("💡 ", "").replace("🧹 ", "").replace("🔧 ", "").replace("🛵 ", "").replace("📢 ", "").replace("💳 ", "").replace("🔴 ", "").replace("🏆 ", "").replace("💰 ", ""),
+            "VALOR (R$)": item["VALOR"],
+            "% SOBRE VENDA": item["%"]
+        } for item in linhas_dre if "----" not in item["CONTA"]])
+        df_export.to_excel(writer, sheet_name="DRE_MENSAL", index=False)
+        
+        if not df_lancamentos.empty:
+            df_lanc_export = df_lancamentos.copy()
+            df_lanc_export.to_excel(writer, sheet_name="LANÇAMENTOS", index=False)
+    output.seek(0)
+    return output.getvalue()
+
+def gerar_pdf_dre(nome_mes, linhas_dre):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=24, leftMargin=24, topMargin=24, bottomMargin=24)
+    story = []
+    styles = getSampleStyleSheet()
+
+    title_style = ParagraphStyle(
+        'TitleStyle',
+        parent=styles['Heading1'],
+        fontSize=13,
+        textColor=colors.HexColor('#8B0000'),
+        alignment=1,
+        spaceAfter=4
+    )
+    story.append(Paragraph("<b>DEMONSTRATIVO DE RESULTADOS (DRE) - SPOLETO</b>", title_style))
+    story.append(Paragraph(f"<b>Capry Comércio Varejista de Alimentos LTDA | Competência: {nome_mes}</b>", ParagraphStyle('Sub', parent=styles['Normal'], alignment=1, fontSize=9, spaceAfter=12)))
+
+    table_data = [["CONTA / RUBRICA", "VALOR (R$)", "% AV"]]
+    destaques = []
+
+    for item in linhas_dre:
+        conta = item["CONTA"]
+        val = item["VALOR"]
+        pct = item["%"]
+        if "----" in conta:
+            continue
+        
+        conta_limpa = conta.replace("🔹 ", "").replace("📦 ", "").replace("🏢 ", "").replace("👥 ", "").replace("💡 ", "").replace("🧹 ", "").replace("🔧 ", "").replace("🛵 ", "").replace("📢 ", "").replace("💳 ", "").replace("🔴 ", "").replace("🏆 ", "").replace("💰 ", "")
+        val_str = f"R$ {val:,.2f}" if isinstance(val, (int, float)) and val is not None else ""
+        table_data.append([conta_limpa, val_str, pct])
+        
+        if any(mark in conta for mark in ["🔹", "📦", "🏢", "👥", "💡", "🧹", "🔧", "🛵", "📢", "💳", "🔴", "🏆", "💰"]):
+            destaques.append(len(table_data) - 1)
+
+    t = Table(table_data, colWidths=[330, 140, 70])
+    t_style = [
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#8B0000')),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0,0), (-1,0), 9),
+        ('BOTTOMPADDING', (0,0), (-1,0), 4),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#E0E0E0')),
+        ('FONTNAME', (0,1), (-1,-1), 'Helvetica'),
+        ('FONTSIZE', (0,1), (-1,-1), 8),
+        ('ALIGN', (1,0), (-1,-1), 'RIGHT'),
+        ('ALIGN', (0,0), (0,-1), 'LEFT'),
+    ]
+
+    for idx in destaques:
+        t_style.append(('BACKGROUND', (0, idx), (-1, idx), colors.HexColor('#F2F2F2')))
+        t_style.append(('FONTNAME', (0, idx), (-1, idx), 'Helvetica-Bold'))
+
+    t.setStyle(TableStyle(t_style))
+    story.append(t)
+    doc.build(story)
+    buffer.seek(0)
+    return buffer.getvalue()
 
 # ----------------- CONFIGURAÇÕES IA -----------------
 try:
@@ -297,51 +394,75 @@ if "dados_extraidos" not in st.session_state:
     st.session_state.dados_extraidos = None
 
 # ==============================================================================
-# 1. ABA DO DRE OFICIAL (WEB INTERATIVO)
+# 1. ABA DO DRE OFICIAL (TEMPO REAL & GRAVAÇÃO SEGURA)
 # ==============================================================================
 if menu.startswith("📊 DRE Spoleto"):
     st.subheader(f"📊 Demonstrativo de Resultados (DRE) — {NOMES_MESES[mes_ativo]}")
     st.write(f"Todos os custos escaneados neste mês entram automaticamente no cálculo de CMV e despesas operacionais abaixo[cite: 7, 8].")
 
-    # Obter parâmetros mensais
-    dm = obter_dados_mensais(mes_ativo)
-    
-    with st.expander("⚙️ Informar Faturamento & Dados de Venda do Mês", expanded=(dm["balcao"] == 0 and dm["delivery"] == 0)):
+    # Carregar dados gravados na base de dados
+    dados_bd = obter_dados_mensais(mes_ativo)
+
+    # Inicializar variáveis da sessão reativa para tempo real
+    prefixo = f"dre_{mes_ativo}_"
+    if f"{prefixo}balcao" not in st.session_state:
+        st.session_state[f"{prefixo}balcao"] = dados_bd["balcao"]
+    if f"{prefixo}delivery" not in st.session_state:
+        st.session_state[f"{prefixo}delivery"] = dados_bd["delivery"]
+    if f"{prefixo}imposto_est" not in st.session_state:
+        st.session_state[f"{prefixo}imposto_est"] = dados_bd["imposto_est"]
+    if f"{prefixo}gas" not in st.session_state:
+        st.session_state[f"{prefixo}gas"] = dados_bd["gas"]
+    if f"{prefixo}terceiros" not in st.session_state:
+        st.session_state[f"{prefixo}terceiros"] = dados_bd["terceiros"]
+    if f"{prefixo}bonificacao" not in st.session_state:
+        st.session_state[f"{prefixo}bonificacao"] = dados_bd["bonificacao"]
+
+    with st.expander("⚙️ Painel de Vendas & Parâmetros do Mês (Atualização em Tempo Real)", expanded=True):
+        st.write("Altere qualquer valor abaixo: **o DRE recalcula na hora**. Clique em salvar para gravar com segurança na base de dados.")
+        
         c_fb, c_fd, c_ie, c_gas, c_terc, c_bon = st.columns(6)
         with c_fb:
-            fat_b = st.number_input("Fat. Balcão (R$)", value=float(dm["balcao"]), step=100.0)
+            fat_b = st.number_input("Fat. Balcão (R$)", min_value=0.0, step=100.0, key=f"{prefixo}balcao")
         with c_fd:
-            fat_d = st.number_input("Fat. Delivery (R$)", value=float(dm["delivery"]), step=100.0)
+            fat_d = st.number_input("Fat. Delivery (R$)", min_value=0.0, step=100.0, key=f"{prefixo}delivery")
         with c_ie:
-            imp_e = st.number_input("Imposto Estadual (R$)", value=float(dm["imposto_est"]), step=50.0)
+            imp_e = st.number_input("Imposto Estadual (R$)", min_value=0.0, step=50.0, key=f"{prefixo}imposto_est")
         with c_gas:
-            val_gas = st.number_input("Gás (R$)", value=float(dm["gas"]), step=50.0)
+            val_gas = st.number_input("Gás (R$)", min_value=0.0, step=50.0, key=f"{prefixo}gas")
         with c_terc:
-            val_terc = st.number_input("Serv. Terceiros (R$)", value=float(dm["terceiros"]), step=100.0)
+            val_terc = st.number_input("Serv. Terceiros (R$)", min_value=0.0, step=100.0, key=f"{prefixo}terceiros")
         with c_bon:
-            val_bon = st.number_input("Bonificações (R$)", value=float(dm["bonificacao"]), step=50.0)
-            
-        if st.button("💾 Salvar Parâmetros de Venda do Mês"):
-            salvar_dados_mensais(mes_ativo, {
-                "balcao": fat_b, "delivery": fat_d, "imposto_est": imp_e,
-                "gas": val_gas, "terceiros": val_terc, "bonificacao": val_bon
-            })
-            st.success("Dados salvos e DRE atualizado!")
-            st.rerun()
+            val_bon = st.number_input("Bonificações (R$)", min_value=0.0, step=50.0, key=f"{prefixo}bonificacao")
 
-    # Cálculos exatos das fórmulas do DRE Spoleto
+        col_salvar, col_status = st.columns([2, 3])
+        with col_salvar:
+            if st.button("💾 Salvar Parâmetros do Mês na Base de Dados", type="primary", use_container_width=True):
+                horario_salvo = salvar_dados_mensais_seguro(mes_ativo, {
+                    "balcao": fat_b,
+                    "delivery": fat_d,
+                    "imposto_est": imp_e,
+                    "gas": val_gas,
+                    "terceiros": val_terc,
+                    "bonificacao": val_bon
+                })
+                st.success(f"🔒 **Gravado com Sucesso!** Base de dados atualizada e confirmada às **{horario_salvo}**.")
+        with col_status:
+            st.info(f"🕒 **Última gravação confirmada no banco:** {dados_bd['atualizado_em']}")
+
+    # Leitura dos lançamentos escaneados
     df_l = obter_lancamentos_mes(mes_ativo)
     somas_det = df_l.groupby("detalhamento")["valor"].sum().to_dict() if not df_l.empty else {}
 
     def get_v(det_nome):
         return float(somas_det.get(det_nome, 0.0))
 
-    venda_bruta = dm["balcao"] + dm["delivery"]
+    # CÁLCULOS EM TEMPO REAL COM BASE NOS VALORES ATIVOS NA TELA
+    venda_bruta = fat_b + fat_d
     imposto_fed = get_v("Imposto Federal")
-    imposto_est = dm["imposto_est"]
+    imposto_est = imp_e
     rec_liquida = venda_bruta - (imposto_fed + imposto_est)
 
-    # CMV
     cmv_alimentos = get_v("Alimentos")
     cmv_bebidas = get_v("Bebidas")
     cmv_descartaveis = get_v("Descartáveis")
@@ -350,7 +471,6 @@ if menu.startswith("📊 DRE Spoleto"):
     total_cmv = subtotal_cmv + cmv_fretes
     lucro_bruto = rec_liquida - total_cmv
 
-    # Ocupação
     ocup_aluguel = get_v("Aluguel")
     ocup_ar = get_v("Ar Condicionado")
     ocup_condo = get_v("Condomínio")
@@ -359,10 +479,9 @@ if menu.startswith("📊 DRE Spoleto"):
     ocup_taxas = get_v("Taxas E Outros")
     total_ocupacao = ocup_aluguel + ocup_ar + ocup_condo + ocup_fundo + ocup_iptu + ocup_taxas
 
-    # Pessoal
     pess_salario = get_v("Salário")
     pess_adiant = get_v("Adiantamento")
-    pess_benef = get_v("Benefícios")  # Alimentação funcionário cai aqui
+    pess_benef = get_v("Benefícios")
     pess_encargos = get_v("Encargos")
     pess_ferias = get_v("Férias")
     pess_13 = get_v("13 Salário")
@@ -371,21 +490,18 @@ if menu.startswith("📊 DRE Spoleto"):
     pess_outros = get_v("Outros (pessoal)")
     total_pessoal = pess_salario + pess_adiant + pess_benef + pess_encargos + pess_ferias + pess_13 + pess_provis + pess_rescisao + pess_outros
 
-    # Utilidades
     util_agua = get_v("Água E Esgoto")
     util_energia = get_v("Energia Elétrica")
-    util_gas = dm["gas"] + get_v("Gás")
+    util_gas = val_gas + get_v("Gás")
     util_internet = get_v("Internet")
     util_tel = get_v("Telefone")
     util_outros = get_v("Outros (utilidades)")
     total_utilidades = util_agua + util_energia + util_gas + util_internet + util_tel + util_outros
 
-    # Serviços / Terceiros
     serv_proprios = get_v("Serviços")
-    serv_terceiros = dm["terceiros"] + get_v("Terceiros")
+    serv_terceiros = val_terc + get_v("Terceiros")
     total_servicos = serv_proprios + serv_terceiros
 
-    # Material de Uso e Consumo
     mat_escritorio = get_v("Material De Escritório")
     mat_limpeza = get_v("Material De Limpeza")
     mat_uniformes = get_v("Uniformes")
@@ -393,12 +509,10 @@ if menu.startswith("📊 DRE Spoleto"):
     mat_outros = get_v("Outros Materiais De Uso E Consumo")
     total_materiais = mat_escritorio + mat_limpeza + mat_uniformes + mat_utensilios + mat_outros
 
-    # Manutenção
     manut_serv = get_v("Serviço - Manutenção E Reparos")
     manut_mat = get_v("Material - Manutenção E Reparos")
     total_manutencao = manut_serv + manut_mat
 
-    # Delivery & Marketing & Franqueador & Financeiro
     total_delivery = get_v("Custo Com Entrega (Motoqueiros)") + get_v("Comissão Agregadores")
     total_marketing = get_v("Anúncios/Propagandas") + get_v("Fundo De Marketing") + get_v("Royalties")
     total_financeiro = get_v("Custo Cartão De Crédito") + get_v("Custo Cartão De Débito")
@@ -409,18 +523,24 @@ if menu.startswith("📊 DRE Spoleto"):
         total_delivery + total_marketing + total_financeiro
     )
     resultado_operacional = venda_bruta - total_despesas_operacionais
-    resultado_final = resultado_operacional + dm["bonificacao"]
+    resultado_final = resultado_operacional + val_bon
 
-    # Montagem da tabela visual idêntica ao Spoleto
     def fmt_pct(val):
         if venda_bruta > 0:
             return f"{(val / venda_bruta) * 100:.2f}%"
         return "0.00%"
 
+    # Cartões de Resumo no topo
+    col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
+    col_kpi1.metric("🔹 Venda Bruta", f"R$ {venda_bruta:,.2f}")
+    col_kpi2.metric("📦 C M V Total", f"R$ {total_cmv:,.2f}", delta=fmt_pct(total_cmv), delta_color="inverse")
+    col_kpi3.metric("🔹 Lucro Bruto", f"R$ {lucro_bruto:,.2f}", delta=fmt_pct(lucro_bruto))
+    col_kpi4.metric("💰 Resultado Final", f"R$ {resultado_final:,.2f}", delta=fmt_pct(resultado_final))
+
     linhas_dre = [
         {"CONTA": "🔹 VENDA BRUTA", "VALOR": venda_bruta, "%": "100.00%"},
-        {"CONTA": "  • Faturamento Balcão", "VALOR": dm["balcao"], "%": fmt_pct(dm["balcao"])},
-        {"CONTA": "  • Faturamento Delivery", "VALOR": dm["delivery"], "%": fmt_pct(dm["delivery"])},
+        {"CONTA": "  • Faturamento Balcão", "VALOR": fat_b, "%": fmt_pct(fat_b)},
+        {"CONTA": "  • Faturamento Delivery", "VALOR": fat_d, "%": fmt_pct(fat_d)},
         {"CONTA": "(-) Imposto Federal", "VALOR": imposto_fed, "%": fmt_pct(imposto_fed)},
         {"CONTA": "(-) Imposto Estadual", "VALOR": imposto_est, "%": fmt_pct(imposto_est)},
         {"CONTA": "🔹 RECEITA LÍQUIDA", "VALOR": rec_liquida, "%": fmt_pct(rec_liquida)},
@@ -452,7 +572,32 @@ if menu.startswith("📊 DRE Spoleto"):
 
     df_view = pd.DataFrame(linhas_dre)
     df_view["VALOR"] = df_view["VALOR"].apply(lambda x: f"R$ {x:,.2f}" if pd.notnull(x) else "")
-    st.dataframe(df_view, use_container_width=True, height=750)
+    st.dataframe(df_view, use_container_width=True, height=650)
+
+    # ----------------- BOTÕES DE DOWNLOAD (EXCEL E PDF) -----------------
+    st.markdown("### 📥 Exportar Relatório Oficial")
+    col_dl_xls, col_dl_pdf = st.columns(2)
+
+    with col_dl_xls:
+        dados_excel = gerar_excel_dre(NOMES_MESES[mes_ativo], linhas_dre, df_l)
+        st.download_button(
+            label="📊 Baixar DRE em Excel (.xlsx)",
+            data=dados_excel,
+            file_name=f"DRE_Spoleto_{mes_ativo}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary",
+            use_container_width=True
+        )
+
+    with col_dl_pdf:
+        dados_pdf = gerar_pdf_dre(NOMES_MESES[mes_ativo], linhas_dre)
+        st.download_button(
+            label="📄 Baixar DRE em PDF (.pdf)",
+            data=dados_pdf,
+            file_name=f"DRE_Spoleto_{mes_ativo}.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
 
 # ==============================================================================
 # 2. ABA DE ESCANEAR NOTA & ALIMENTAR DRE AUTOMATICAMENTE
@@ -549,7 +694,6 @@ elif menu.startswith("📸 Escanear"):
                 }
                 st.rerun()
 
-    # Exibição e confirmação
     if st.session_state.dados_extraidos:
         dados = st.session_state.dados_extraidos
         st.markdown("---")
@@ -569,7 +713,6 @@ elif menu.startswith("📸 Escanear"):
                 key="editor_nota_ativa"
             )
 
-            # Subtotais
             somas_cat = df_edit.groupby("Categoria")["TotalItem"].sum().to_dict()
             st.write("#### 📊 Subtotais por Categoria que alimentarão o DRE:")
             c_grid = st.columns(len(somas_cat))
@@ -600,7 +743,7 @@ elif menu.startswith("📸 Escanear"):
 # ==============================================================================
 elif menu.startswith("📝 Lançamentos"):
     st.subheader(f"📝 Base de Lançamentos — {NOMES_MESES[mes_ativo]}")
-    st.write("Esta tabela corresponde exatamente à aba **LANÇAMENTOS** da sua planilha Spoleto[cite: 7].")
+    st.write("Esta tabela corresponde à aba **LANÇAMENTOS** da sua planilha Spoleto[cite: 7].")
 
     df_lanc = obter_lancamentos_mes(mes_ativo)
     if df_lanc.empty:
