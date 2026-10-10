@@ -7,11 +7,13 @@ import json
 import time
 import sqlite3
 import io
+import re
 from datetime import datetime
+from PIL import Image
 
 st.set_page_config(page_title="Painel de Custos & DRE Spoleto - Capry", layout="wide")
 
-# ----------------- CONTROLE DE ACESSO -----------------
+# ----------------- CONTROLO DE ACESSO -----------------
 USUARIO_CORRETO = "admin"
 SENHA_CORRETA = "massima"
 
@@ -23,7 +25,7 @@ def tela_login():
     with col2:
         st.markdown("<br><br>", unsafe_allow_html=True)
         st.markdown("### 🔐 Acesso ao Painel de Custos & DRE - Capry")
-        st.write("Digite suas credenciais:")
+        st.write("Digite as suas credenciais:")
         with st.form("form_login"):
             usuario = st.text_input("Usuário", placeholder="admin")
             senha = st.text_input("Senha", type="password", placeholder="massima")
@@ -38,13 +40,13 @@ if not st.session_state.autenticado:
     tela_login()
     st.stop()
 
-st.sidebar.write(f"👤 Logado como: **{USUARIO_CORRETO}**")
+st.sidebar.write(f"👤 Sessão iniciada: **{USUARIO_CORRETO}**")
 if st.sidebar.button("🚪 Sair do Sistema"):
     st.session_state.autenticado = False
     st.rerun()
 st.sidebar.markdown("---")
 
-# CSS para tela expandida
+# CSS para interface adaptada ao telemóvel
 st.markdown("""
 <style>
 div[data-testid="stCameraInput"] { width: 100% !important; max-width: 900px !important; margin: 0 auto; }
@@ -355,50 +357,99 @@ def gerar_excel_dre(nome_mes, df_dre_completo, df_lancamentos):
     output.seek(0)
     return output.getvalue()
 
-# ----------------- CONFIGURAÇÕES IA (EXCLUSIVO GEMINI-3.8-FLASH) -----------------
+# ----------------- CONFIGURAÇÕES IA MULTIMODAL RESILIENTE -----------------
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
 except Exception:
-    st.error("⚠️ Configure a GEMINI_API_KEY no arquivo .streamlit/secrets.toml.")
+    st.error("⚠️ Configure a GEMINI_API_KEY no ficheiro .streamlit/secrets.toml.")
     st.stop()
 
-# Definido estritamente para o modelo que está ativo e funcional
-MODELO_OFICIAL = "gemini-3.8-flash"
+# Lista de modelos ordenada por probabilidade de suporte visual
+MODELOS_TENTATIVA = [
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash-latest",
+    "gemini-3.8-flash"
+]
 
-def chamar_gemini_com_retry(chave, conteudos):
-    """Executa a chamada usando estritamente o modelo gemini-3.8-flash com 3 tentativas para evitar instabilidade."""
-    client = genai.Client(api_key=chave)
-    ultimo_erro = None
-    for tentativa in range(3):
+def extrair_json_seguro(texto_ia):
+    """Extrai JSON válido mesmo que a resposta venha com blocos de markdown ```json."""
+    if not texto_ia:
+        return None
+    try:
+        return json.loads(texto_ia)
+    except Exception:
+        pass
+    
+    padrao = r"\{[\s\S]*\}|\[[\s\S]*\]"
+    busca = re.search(padrao, texto_ia)
+    if busca:
         try:
-            response = client.models.generate_content(
-                model=MODELO_OFICIAL,
-                contents=conteudos,
-                config=types.GenerateContentConfig(response_mime_type="application/json"),
-            )
-            if response.text:
-                return json.loads(response.text)
-        except Exception as e:
-            ultimo_erro = e
-            time.sleep(2)
-            continue
-            
-    st.error(f"Erro ao conectar com a IA ({MODELO_OFICIAL}): {ultimo_erro}")
+            return json.loads(busca.group(0))
+        except Exception:
+            pass
     return None
 
-def processar_multiplas_imagens_com_ia(partes_img, chave):
+def otimizar_imagem_bytes(bytes_brutos):
+    """Garante que a imagem fique em JPEG leve e focada para a API processar sem erro de timeout ou tamanho."""
+    try:
+        img = Image.open(io.BytesIO(bytes_brutos))
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+        # Reduzir apenas se for gigante
+        if max(img.size) > 2200:
+            img.thumbnail((2200, 2200), Image.Resampling.LANCZOS)
+        out = io.BytesIO()
+        img.save(out, format="JPEG", quality=85, optimize=True)
+        return out.getvalue(), "image/jpeg"
+    except Exception:
+        return bytes_brutos, "image/jpeg"
+
+def chamar_gemini_robusto(chave, conteudos):
+    """Testa os modelos visuais da Google sequencialmente até obter resposta válida sem 404."""
+    client = genai.Client(api_key=chave)
+    erros = []
+
+    for mod in MODELOS_TENTATIVA:
+        for tentativa in range(2):
+            try:
+                response = client.models.generate_content(
+                    model=mod,
+                    contents=conteudos,
+                    config=types.GenerateContentConfig(response_mime_type="application/json"),
+                )
+                if response and response.text:
+                    dados = extrair_json_seguro(response.text)
+                    if dados is not None:
+                        return dados
+            except Exception as e:
+                erros.append(f"{mod} (tentativa {tentativa+1}): {str(e)}")
+                time.sleep(1.5)
+                continue
+
+    st.error(f"⚠️ Falha na leitura do documento pela IA. Diagnóstico dos servidores: {'; '.join(erros[-2:])}")
+    return None
+
+def processar_multiplas_imagens_com_ia(lista_fotos_bytes, chave):
     regras = carregar_regras()
     ex_regras = json.dumps(regras, ensure_ascii=False) if regras else "Nenhuma ainda."
+    
     prompt = f"""
     Você é o assistente financeiro oficial da franquia Spoleto (Capry Comércio Varejista de Alimentos LTDA).
-    Analise as imagens anexadas do cupom, boleto ou nota fiscal.
-    Extraia com máxima atenção:
-    1. 'razao_social': Nome do estabelecimento, condomínio ou fornecedor.
-    2. 'cnpj': CNPJ do emitente (se visível).
-    3. 'valor_total': Valor total final do documento (float numérico).
-    4. 'itens': Lista com: "Produto", "Quantidade", "Unid", "PrecoUnitario", "TotalItem", "Classificacao" (ex: Condomínio, Gás, Energia Elétrica, Alimentos, etc).
+    Analise as imagens do documento anexado (cupom fiscal, boleto, conta de condomínio, gás ou despesa).
+    Extraia obrigatoriamente:
+    1. 'razao_social': Nome do fornecedor, condomínio ou emitente.
+    2. 'cnpj': CNPJ do emitente se constar no papel.
+    3. 'valor_total': Valor total final da conta/nota (numérico float).
+    4. 'itens': Lista de produtos/serviços com:
+       - "Produto": nome do item
+       - "Quantidade": float
+       - "Unid": unidade (UN, KG, etc)
+       - "PrecoUnitario": float
+       - "TotalItem": float
+       - "Classificacao": escolha a conta mais adequada do Spoleto (ex: Condomínio, Gás, Energia Elétrica, Alimentos, Bebidas, Embalagens E Descartáveis, Material De Limpeza, etc).
     Regras memorizadas: {ex_regras}
-    Retorne APENAS um JSON no formato:
+    Retorne estritamente um JSON no formato:
     {{
       "razao_social": "...",
       "cnpj": "...",
@@ -406,7 +457,13 @@ def processar_multiplas_imagens_com_ia(partes_img, chave):
       "itens": [...]
     }}
     """
-    return chamar_gemini_com_retry(chave, [prompt] + partes_img)
+    
+    partes = [prompt]
+    for b in lista_fotos_bytes:
+        bytes_opt, mime_opt = otimizar_imagem_bytes(b)
+        partes.append(types.Part.from_bytes(data=bytes_opt, mime_type=mime_opt))
+
+    return chamar_gemini_robusto(chave, partes)
 
 def processar_texto_com_ia(texto, nome_arq, chave):
     regras = carregar_regras()
@@ -417,7 +474,7 @@ def processar_texto_com_ia(texto, nome_arq, chave):
     Retorne lista JSON com: Produto, Quantidade, Unid, PrecoUnitario, TotalItem, Classificacao.
     Texto: {texto[:15000]}
     """
-    res = chamar_gemini_com_retry(chave, prompt)
+    res = chamar_gemini_robusto(chave, [prompt])
     return res if isinstance(res, list) else []
 
 def categorizar_nomes_xml(nomes, chave):
@@ -430,7 +487,7 @@ def categorizar_nomes_xml(nomes, chave):
         {json.dumps(faltam, ensure_ascii=False)}.
         Retorne JSON objeto {{\"nome_do_produto\": \"Classificacao\"}}.
         """
-        res = chamar_gemini_com_retry(chave, p)
+        res = chamar_gemini_robusto(chave, [p])
         if isinstance(res, dict):
             mapa.update(res)
     return mapa
@@ -680,16 +737,13 @@ elif menu.startswith("📸 Escanear"):
         if f_upload and st.button("➕ Adicionar fotos à fila", key=f"btn_add_f_{ukey}"):
             st.session_state.fotos_acumuladas = []
             for f in f_upload:
-                st.session_state.fotos_acumuladas.append({
-                    "bytes": f.getvalue(),
-                    "mime": "image/jpeg" if f.name.lower().endswith(('jpg', 'jpeg')) else f"image/{f.name.split('.')[-1].lower()}"
-                })
-            st.success(f"{len(f_upload)} foto(s) da nova nota carregada(s)!")
+                st.session_state.fotos_acumuladas.append(f.getvalue())
+            st.success(f"{len(f_upload)} foto(s) carregada(s) com sucesso!")
 
     with aba_cam:
         f_cam = st.camera_input("Capturar foto", key=f"cam_input_{ukey}")
         if f_cam and st.button("➕ Adicionar captura à fila", key=f"btn_add_cam_{ukey}"):
-            st.session_state.fotos_acumuladas = [{"bytes": f_cam.getvalue(), "mime": "image/jpeg"}]
+            st.session_state.fotos_acumuladas = [f_cam.getvalue()]
             st.success("Foto capturada pronta para leitura!")
 
     if st.session_state.fotos_acumuladas:
@@ -697,9 +751,8 @@ elif menu.startswith("📸 Escanear"):
         c1, c2 = st.columns([2, 1])
         with c1:
             if st.button("🚀 Processar Fotos com IA & Alimentar DRE", type="primary", use_container_width=True):
-                partes = [types.Part.from_bytes(data=f["bytes"], mime_type=f["mime"]) for f in st.session_state.fotos_acumuladas]
-                with st.spinner("🤖 Lendo itens e identificando o documento..."):
-                    res = processar_multiplas_imagens_com_ia(partes, api_key)
+                with st.spinner("🤖 A IA está a ler e estruturar o documento..."):
+                    res = processar_multiplas_imagens_com_ia(st.session_state.fotos_acumuladas, api_key)
                     if res and isinstance(res, dict):
                         st.session_state.dados_extraidos = {
                             "razao_social": res.get("razao_social") or "Fornecedor",
@@ -710,7 +763,7 @@ elif menu.startswith("📸 Escanear"):
                         st.session_state.fotos_acumuladas = []
                         st.rerun()
                     else:
-                        st.error("Não foi possível extrair dados legíveis desta imagem. Tente capturar novamente com boa iluminação.")
+                        st.error("Não foi possível extrair dados legíveis da imagem. Tente capturar mais de perto ou com melhor luz.")
         with c2:
             if st.button("🗑️ Descartar Fotos", use_container_width=True):
                 resetar_processamento_nota()
@@ -780,9 +833,10 @@ elif menu.startswith("📸 Escanear"):
             st.write("💡 **Ideal para boletos e contas mensais:** o valor vai direto para a conta sem complicação[cite: 7, 8].")
             
             idx_sug = 0
-            if "CONDOM" in dados["razao_social"].upper() and "Condomínio" in LISTA_TODAS_CLASSIFICACOES:
+            razao_up = str(dados.get("razao_social", "")).upper()
+            if "CONDOM" in razao_up and "Condomínio" in LISTA_TODAS_CLASSIFICACOES:
                 idx_sug = LISTA_TODAS_CLASSIFICACOES.index("Condomínio")
-            elif "GAS" in dados["razao_social"].upper() and "Gás" in LISTA_TODAS_CLASSIFICACOES:
+            elif "GAS" in razao_up and "Gás" in LISTA_TODAS_CLASSIFICACOES:
                 idx_sug = LISTA_TODAS_CLASSIFICACOES.index("Gás")
             
             c_rap1, c_rap2 = st.columns(2)
@@ -794,7 +848,7 @@ elif menu.startswith("📸 Escanear"):
                     key=f"sel_rapido_dre_{ukey}"
                 )
             with c_rap2:
-                val_inicial = float(dados["valor_total"]) if dados["valor_total"] >= 0 else 0.0
+                val_inicial = float(dados["valor_total"]) if dados.get("valor_total", 0) >= 0 else 0.0
                 valor_rapido = st.number_input(
                     "Valor a Lançar (R$):",
                     value=val_inicial,
