@@ -54,127 +54,18 @@ div[data-testid="stCameraInput"] button { padding: 0.75rem 1.5rem !important; fo
 </style>
 """, unsafe_allow_html=True)
 
-# ----------------- CATÁLOGO DOS INDICADORES DO DRE SPOLETO -----------------
-CATALOGO_DRE_SPOLETO = {
-    # IMPOSTOS
-    "Simples": {"dre": "Imposto", "detalhamento": "Imposto Federal"},
-    "Icms": {"dre": "Imposto", "detalhamento": "Imposto Estadual"},
-    "Pis": {"dre": "Imposto", "detalhamento": "Imposto Federal"},
-    "Cofins": {"dre": "Imposto", "detalhamento": "Imposto Federal"},
-    "Iss": {"dre": "Imposto", "detalhamento": "Imposto Federal"},
-
-    # CMV
-    "Demais Alimentos": {"dre": "Alimentos", "detalhamento": "Alimentos"},
-    "Proteínas": {"dre": "Alimentos", "detalhamento": "Alimentos"},
-    "Laticínios": {"dre": "Alimentos", "detalhamento": "Alimentos"},
-    "Molhos": {"dre": "Alimentos", "detalhamento": "Alimentos"},
-    "Massas, Farinhas E Cereais": {"dre": "Alimentos", "detalhamento": "Alimentos"},
-    "Hortaliças": {"dre": "Alimentos", "detalhamento": "Alimentos"},
-    "Conservas": {"dre": "Alimentos", "detalhamento": "Alimentos"},
-    "Sobremesas": {"dre": "Alimentos", "detalhamento": "Alimentos"},
-    "Bebidas": {"dre": "Bebidas", "detalhamento": "Bebidas"},
-    "Embalagens E Descartáveis": {"dre": "Descartáveis", "detalhamento": "Descartáveis"},
-    "Frete FBD": {"dre": "Frete", "detalhamento": "Fretes"},
-    "Custo de Armazenagem": {"dre": "Frete", "detalhamento": "Fretes"},
-    "Outros (Frete)": {"dre": "Frete", "detalhamento": "Fretes"},
-
-    # OCUPAÇÃO
-    "Aluguel": {"dre": "Ocupação", "detalhamento": "Aluguel"},
-    "Aluguel Estoque Remoto": {"dre": "Ocupação", "detalhamento": "Aluguel"},
-    "Condomínio": {"dre": "Ocupação", "detalhamento": "Condomínio"},
-    "Fundo De Promoção": {"dre": "Ocupação", "detalhamento": "Fundo De Promoção"},
-    "Taxa Associação Lojista": {"dre": "Ocupação", "detalhamento": "Taxas E Outros"},
-    "Taxa De Incêndio E Seguro": {"dre": "Ocupação", "detalhamento": "Taxas E Outros"},
-    "Taxa Administrativa": {"dre": "Ocupação", "detalhamento": "Taxas E Outros"},
-    "Fundo De Reserva": {"dre": "Ocupação", "detalhamento": "Taxas E Outros"},
-    "Dedetização Shopping": {"dre": "Ocupação", "detalhamento": "Taxas E Outros"},
-    "Iptu": {"dre": "Ocupação", "detalhamento": "Iptu"},
-    "Ar Condicionado": {"dre": "Ocupação", "detalhamento": "Ar Condicionado"},
-
-    # PESSOAL
-    "Salário": {"dre": "Pessoal", "detalhamento": "Salário"},
-    "Adiantamento": {"dre": "Pessoal", "detalhamento": "Adiantamento"},
-    "Alimentação Funcionário": {"dre": "Pessoal", "detalhamento": "Benefícios"},
-    "Vale Transporte": {"dre": "Pessoal", "detalhamento": "Benefícios"},
-    "Vale Refeição": {"dre": "Pessoal", "detalhamento": "Benefícios"},
-    "Plano De Saúde": {"dre": "Pessoal", "detalhamento": "Benefícios"},
-    "Fgts": {"dre": "Pessoal", "detalhamento": "Encargos"},
-    "Inss": {"dre": "Pessoal", "detalhamento": "Encargos"},
-    "Férias": {"dre": "Pessoal", "detalhamento": "Férias"},
-    "13 Salário": {"dre": "Pessoal", "detalhamento": "13 Salário"},
-    "Provisão 13 Salário": {"dre": "Pessoal", "detalhamento": "Provisões"},
-    "Provisão Férias": {"dre": "Pessoal", "detalhamento": "Provisões"},
-    "Rescisão": {"dre": "Pessoal", "detalhamento": "Rescisão"},
-    "Hora Extra": {"dre": "Pessoal", "detalhamento": "Outros (pessoal)"},
-    "Auxílio Combustível": {"dre": "Pessoal", "detalhamento": "Outros (pessoal)"},
-    "Farmácia": {"dre": "Pessoal", "detalhamento": "Outros (pessoal)"},
-    "Contribuição Sindical": {"dre": "Pessoal", "detalhamento": "Outros (pessoal)"},
-    "Recrutamento/Seleção": {"dre": "Pessoal", "detalhamento": "Outros (pessoal)"},
-    "Treinamento": {"dre": "Pessoal", "detalhamento": "Outros (pessoal)"},
-
-    # UTILIDADES
-    "Gás": {"dre": "Utilidades", "detalhamento": "Gás"},
-    "Energia Elétrica": {"dre": "Utilidades", "detalhamento": "Energia Elétrica"},
-    "Água E Esgoto": {"dre": "Utilidades", "detalhamento": "Água E Esgoto"},
-    "Telefone": {"dre": "Utilidades", "detalhamento": "Telefone"},
-    "Celular Loja": {"dre": "Utilidades", "detalhamento": "Telefone"},
-    "Internet": {"dre": "Utilidades", "detalhamento": "Internet"},
-    "Taxa De Lixo": {"dre": "Utilidades", "detalhamento": "Outros (utilidades)"},
-
-    # SERVIÇOS & TERCEIROS
-    "Advogado": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Terceiros"},
-    "Contabilidade": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Terceiros"},
-    "Assessoria/Consultoria": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Terceiros"},
-    "Laboratório": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Terceiros"},
-    "Suporte Informática": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Terceiros"},
-    "Dedetização": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Terceiros"},
-    "Cartório": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Serviços"},
-    "Correio/Malote": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Serviços"},
-    "Aluguel Pos": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Serviços"},
-    "Fee Gcom": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Serviços"},
-    "Fee Clastech": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Serviços"},
-    "Fee Totem": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Serviços"},
-    "Tef": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Serviços"},
-
-    # MATERIAIS DE USO & LIMPEZA
-    "Material De Escritório": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Material De Escritório"},
-    "Material De Limpeza": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Material De Limpeza"},
-    "Pan Clean (Detergente Neutro)": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Material De Limpeza"},
-    "Virex Flv": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Material De Limpeza"},
-    "Suma Grill (Desincrustante)": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Material De Limpeza"},
-    "Break Up (Desengordurante)": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Material De Limpeza"},
-    "Suma Chlor": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Material De Limpeza"},
-    "Block Whitener": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Material De Limpeza"},
-    "Rolo Bactericida": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Material De Limpeza"},
-    "Uniformes": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Uniformes"},
-    "Utensílios De Cozinha": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Utensílios"},
-    "Alcool Gel": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
-    "Alcool Líquido": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
-    "Cloro": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
-    "Esponja Fibraço": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
-    "Esponja Dupla Face": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
-    "Bobina Pdv": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
-    "Filme Pvc": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
-    "Saco De Lixo": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
-    "Mop": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
-
-    # MANUTENÇÃO
-    "Serviço - Manutenção E Reparos": {"dre": "Manutenção", "detalhamento": "Serviço - Manutenção E Reparos"},
-    "Material - Manutenção E Reparos": {"dre": "Manutenção", "detalhamento": "Material - Manutenção E Reparos"},
-
-    # DELIVERY, MARKETING, FINANCEIRO E OUTROS
-    "Comissão Agregadores": {"dre": "Delivery", "detalhamento": "Comissão Agregadores"},
-    "Custo Com Entrega (Motoqueiros)": {"dre": "Delivery", "detalhamento": "Custo Com Entrega (Motoqueiros)"},
-    "Anúncios/Propagandas": {"dre": "Marketing", "detalhamento": "Anúncios/Propagandas"},
-    "Royalties": {"dre": "Taxas_Franqueador", "detalhamento": "Royalties"},
-    "Fundo De Marketing": {"dre": "Taxas_Franqueador", "detalhamento": "Fundo De Marketing"},
-    "Custo Cartão De Crédito": {"dre": "Financeiro", "detalhamento": "Custo Cartão De Crédito"},
-    "Custo Cartão De Débito": {"dre": "Financeiro", "detalhamento": "Custo Cartão De Débito"},
-    "Capex": {"dre": "Despesas_Não_Operacionais", "detalhamento": "Capex"},
-    "Pro Labore": {"dre": "Despesas_Não_Operacionais", "detalhamento": "Pro Labore"}
+# ----------------- 7 CATEGORIAS ESSENCIAIS MAPEADAS NO DRE -----------------
+MAPA_7_CATEGORIAS = {
+    "Demais Alimentos": {"dre": "Alimentos", "det": "Alimentos"},
+    "Descartáveis": {"dre": "Descartáveis", "det": "Descartáveis"},
+    "Limpeza": {"dre": "Material_De_Uso_E_Consumo", "det": "Material De Limpeza"},
+    "Utensílios": {"dre": "Material_De_Uso_E_Consumo", "det": "Utensílios"},
+    "Bebidas": {"dre": "Bebidas", "det": "Bebidas"},
+    "Horte": {"dre": "Alimentos", "det": "Alimentos"},
+    "Uniformes": {"dre": "Material_De_Uso_E_Consumo", "det": "Uniformes"}
 }
 
-LISTA_TODAS_CLASSIFICACOES = sorted(list(CATALOGO_DRE_SPOLETO.keys()))
+LISTA_7_CATEGORIAS = list(MAPA_7_CATEGORIAS.keys())
 
 # ----------------- BASE DE DADOS (SQLite) -----------------
 def init_db():
@@ -256,21 +147,6 @@ mes_ativo = st.sidebar.selectbox(
 )
 st.sidebar.markdown("---")
 
-def lancar_item_unico_dre(mes_ref, fornecedor, valor_total, classificacao_escolhida):
-    conn = sqlite3.connect("notas_fiscais.db")
-    cursor = conn.cursor()
-    data_hoje = datetime.now().strftime("%Y-%m-%d")
-    cfg = CATALOGO_DRE_SPOLETO.get(classificacao_escolhida, {"dre": "Ocupação", "detalhamento": classificacao_escolhida})
-    
-    cursor.execute("""
-        INSERT INTO lancamentos_dre (mes_referencia, data, fornecedor, descricao, valor, dre, classificacao, detalhamento)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (mes_ref, data_hoje, fornecedor.strip().upper(), classificacao_escolhida.upper(), float(valor_total), cfg["dre"], classificacao_escolhida, cfg["detalhamento"]))
-    
-    cursor.execute("DELETE FROM ajustes_dre WHERE mes_referencia = ? AND conta = ?", (mes_ref, classificacao_escolhida))
-    conn.commit()
-    conn.close()
-
 def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_produtos):
     conn = sqlite3.connect("notas_fiscais.db")
     cursor = conn.cursor()
@@ -284,23 +160,23 @@ def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_pro
     df_temp = pd.DataFrame(lista_produtos)
     if not df_temp.empty:
         col_tot = "TotalItem" if "TotalItem" in df_temp.columns else "Total do Item (R$)"
-        col_class = "Classificacao" if "Classificacao" in df_temp.columns else "Categoria"
-        totais = df_temp.groupby(col_class)[col_tot].sum().to_dict()
+        col_cat = "Categoria" if "Categoria" in df_temp.columns else "Classificacao"
+        totais = df_temp.groupby(col_cat)[col_tot].sum().to_dict()
         data_hoje = datetime.now().strftime("%Y-%m-%d")
 
-        for class_nome, v in totais.items():
+        for cat_nome, v in totais.items():
             if v > 0:
-                cfg = CATALOGO_DRE_SPOLETO.get(class_nome, {
-                    "dre": "Alimentos", "detalhamento": "Alimentos"
+                cfg = MAPA_7_CATEGORIAS.get(cat_nome, {
+                    "dre": "Alimentos", "det": "Alimentos"
                 })
                 cursor.execute("""
                     INSERT INTO lancamentos_dre (mes_referencia, data, fornecedor, descricao, valor, dre, classificacao, detalhamento)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (mes_ref, data_hoje, razao_social.upper(), class_nome.upper(), float(v), cfg["dre"], class_nome, cfg["detalhamento"]))
+                """, (mes_ref, data_hoje, razao_social.upper(), cat_nome.upper(), float(v), cfg["dre"], cat_nome, cfg["det"]))
 
         for item in lista_produtos:
             prod = str(item.get("Produto", "")).strip().upper()
-            c = str(item.get(col_class, "")).strip()
+            c = str(item.get(col_cat, "")).strip()
             if prod:
                 cursor.execute("""
                     INSERT INTO regras_classificacao (produto, categoria)
@@ -356,7 +232,7 @@ def gerar_excel_dre(nome_mes, df_dre_completo, df_lancamentos):
     output.seek(0)
     return output.getvalue()
 
-# ----------------- CONFIGURAÇÕES IA (MOTOR DIRETO E ESTÁVEL) -----------------
+# ----------------- CONFIGURAÇÕES IA (COM TRATAMENTO DE COTA 429) -----------------
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
 except Exception:
@@ -364,14 +240,12 @@ except Exception:
     st.stop()
 
 def parse_json_resposta(texto):
-    """Garante a leitura do JSON mesmo que a IA envie blocos markdown ```json."""
     if not texto:
         return None
     try:
         return json.loads(texto)
     except Exception:
         pass
-    
     match = re.search(r"\{[\s\S]*\}|\[[\s\S]*\]", texto)
     if match:
         try:
@@ -381,67 +255,59 @@ def parse_json_resposta(texto):
     return None
 
 def processar_multiplas_imagens_com_ia(lista_fotos_bytes, chave):
-    """Lê diretamente as fotos e destrincha os itens com a IA."""
     client = genai.Client(api_key=chave)
-    regras = carregar_regras()
-    ex_regras = json.dumps(regras, ensure_ascii=False) if regras else "Nenhuma."
-
     prompt = f"""
-    Você é o assistente financeiro da empresa Capry Comércio (franquia Spoleto).
-    Analise o documento anexado (nota fiscal, cupom fiscal ou boleto de despesa).
+    Você é o assistente financeiro da empresa Capry Comércio.
+    Analise o documento da nota fiscal ou cupom de compra.
     
-    Sua tarefa é extrair e destrinchar com máxima atenção:
+    Extraia:
     1. 'razao_social': Nome do fornecedor ou emitente.
-    2. 'cnpj': CNPJ do emitente (se visível).
-    3. 'valor_total': Valor total final da nota (numérico float).
-    4. 'itens': Lista detalhada de cada item/produto comprado:
-       - "Produto": nome do produto ou descrição
+    2. 'cnpj': CNPJ do emitente.
+    3. 'valor_total': Valor total final da nota (float).
+    4. 'itens': Lista detalhada com:
+       - "Produto": nome do item
        - "Quantidade": float
-       - "Unid": unidade (UN, KG, CX, etc)
+       - "Unid": UN, KG, CX, etc
        - "PrecoUnitario": float
        - "TotalItem": float
-       - "Classificacao": atribua uma classificação entre estas opções principais:
-         [Demais Alimentos, Proteínas, Laticínios, Molhos, Massas, Farinhas E Cereais, Hortaliças, Conservas, Bebidas, Embalagens E Descartáveis, Material De Limpeza, Utensílios De Cozinha, Material De Escritório, Uniformes, Condomínio, Gás, Energia Elétrica, Água E Esgoto, Aluguel, Alimentação Funcionário]
+       - "Categoria": escolha estritamente uma destas opções:
+         ["Demais Alimentos", "Descartáveis", "Limpeza", "Utensílios", "Bebidas", "Horte", "Uniformes"]
 
-    Regras já ensinadas: {ex_regras}
-
-    Retorne APENAS um objeto JSON no formato exato:
+    Retorne APENAS um JSON válido no formato:
     {{
       "razao_social": "...",
       "cnpj": "...",
       "valor_total": 0.0,
       "itens": [
-        {{"Produto": "...", "Quantidade": 1.0, "Unid": "UN", "PrecoUnitario": 10.0, "TotalItem": 10.0, "Classificacao": "Demais Alimentos"}}
+        {{"Produto": "...", "Quantidade": 1.0, "Unid": "UN", "PrecoUnitario": 10.0, "TotalItem": 10.0, "Categoria": "Demais Alimentos"}}
       ]
     }}
     """
-    
     conteudos = [prompt]
     for b in lista_fotos_bytes:
         conteudos.append(types.Part.from_bytes(data=b, mime_type="image/jpeg"))
 
-    for tentativa in range(3):
-        try:
-            response = client.models.generate_content(
-                model='gemini-3.8-flash',
-                contents=conteudos,
-                config=types.GenerateContentConfig(response_mime_type="application/json"),
-            )
-            if response and response.text:
-                res_json = parse_json_resposta(response.text)
-                if res_json:
-                    return res_json
-        except Exception as e:
-            time.sleep(2)
-            if tentativa == 2:
-                st.error(f"Erro ao processar imagem com a IA: {e}")
+    try:
+        response = client.models.generate_content(
+            model='gemini-3.8-flash',
+            contents=conteudos,
+            config=types.GenerateContentConfig(response_mime_type="application/json"),
+        )
+        if response and response.text:
+            return parse_json_resposta(response.text)
+    except Exception as e:
+        erro_str = str(e)
+        if "429" in erro_str or "RESOURCE_EXHAUSTED" in erro_str:
+            st.warning("⚠️ **Limite temporário de requisições gratuitas atingido no Google AI Studio (Erro 429).** Você pode preencher os itens na tabela abaixo manualmente enquanto o limite renova!")
+        else:
+            st.error(f"Erro na comunicação com a IA: {e}")
     return None
 
 def processar_texto_com_ia(texto, nome_arq, chave):
     client = genai.Client(api_key=chave)
     prompt = f"""
-    Analise o texto do arquivo '{nome_arq}'.
-    Extraia os itens com Produto, Quantidade, Unid, PrecoUnitario, TotalItem, Classificacao.
+    Analise o arquivo '{nome_arq}'.
+    Extraia cada produto com: Produto, Quantidade, Unid, PrecoUnitario, TotalItem e Categoria (Demais Alimentos, Descartáveis, Limpeza, Utensílios, Bebidas, Horte, Uniformes).
     Retorne apenas JSON lista de dicionários.
     Texto: {texto[:15000]}
     """
@@ -453,7 +319,11 @@ def processar_texto_com_ia(texto, nome_arq, chave):
         )
         return parse_json_resposta(response.text) or []
     except Exception as e:
-        st.error(f"Erro ao processar arquivo: {e}")
+        erro_str = str(e)
+        if "429" in erro_str or "RESOURCE_EXHAUSTED" in erro_str:
+            st.warning("⚠️ Limite diário da chave atingido no Google. Adicione as linhas manualmente na tabela!")
+        else:
+            st.error(f"Erro ao processar: {e}")
         return []
 
 def categorizar_nomes_xml(nomes, chave):
@@ -463,9 +333,9 @@ def categorizar_nomes_xml(nomes, chave):
     if faltam:
         client = genai.Client(api_key=chave)
         p = f"""
-        Classifique os produtos abaixo nas opções oficiais do DRE Spoleto (Demais Alimentos, Proteínas, Laticínios, Bebidas, Embalagens E Descartáveis, Material De Limpeza, etc):
-        {json.dumps(faltam, ensure_ascii=False)}.
-        Retorne JSON objeto {{\"nome\": \"Classificacao\"}}.
+        Classifique cada produto estritamente entre: ["Demais Alimentos", "Descartáveis", "Limpeza", "Utensílios", "Bebidas", "Horte", "Uniformes"].
+        Produtos: {json.dumps(faltam, ensure_ascii=False)}.
+        Retorne JSON {{\"produto\": \"Categoria\"}}.
         """
         try:
             response = client.models.generate_content(
@@ -502,11 +372,11 @@ menu = st.sidebar.radio("Módulo:", [
 ])
 
 # ==============================================================================
-# 1. ABA DO DRE OFICIAL (SOMA DINÂMICA REAL: ESCANEADOS + AJUSTES)
+# 1. ABA DO DRE OFICIAL (COM TODAS AS CONTAS EDITÁVEIS MANUALMENTE)
 # ==============================================================================
 if menu.startswith("📊 DRE Spoleto"):
     st.subheader(f"📊 Demonstrativo de Resultados (DRE) — {NOMES_MESES[mes_ativo]}")
-    st.write("Todos os boletos e notas escaneados (Condomínio, Gás, Alimentos, etc.) entram automaticamente abaixo somados aos ajustes[cite: 7, 8].")
+    st.write("Insira e ajuste os valores de **Condomínio, Gás, Energia, Aluguel e Salários** diretamente na tabela abaixo. Tudo recalcula na hora[cite: 8, 9]!")
 
     df_l = obter_lancamentos_mes(mes_ativo)
     somas_escaneadas = df_l.groupby("detalhamento")["valor"].sum().to_dict() if not df_l.empty else {}
@@ -517,7 +387,7 @@ if menu.startswith("📊 DRE Spoleto"):
         ("Faturamento Delivery", None, 0.0),
         ("Imposto Federal", "Imposto Federal", 0.0),
         ("Imposto Estadual", "Imposto Estadual", 0.0),
-        ("Alimentos", "Alimentos", 0.0),
+        ("Alimentos (Demais Alimentos + Horte)", "Alimentos", 0.0),
         ("Bebidas", "Bebidas", 0.0),
         ("Descartáveis", "Descartáveis", 0.0),
         ("Fretes", "Fretes", 0.0),
@@ -566,7 +436,7 @@ if menu.startswith("📊 DRE Spoleto"):
     for nome_conta, chave_det, val_padrao in CONTAS_DRE_PAINEL:
         val_escaneado = float(somas_escaneadas.get(chave_det, 0.0)) if chave_det else 0.0
         val_ajuste = float(ajustes_banco.get(nome_conta, val_padrao))
-        val_final = val_escaneado if val_escaneado > 0 and val_ajuste == 0.0 else (val_escaneado + val_ajuste)
+        val_final = val_escaneado if (val_escaneado > 0 and val_ajuste == 0.0) else (val_escaneado + val_ajuste)
 
         lista_linhas_editaveis.append({
             "CONTA": nome_conta,
@@ -575,7 +445,7 @@ if menu.startswith("📊 DRE Spoleto"):
 
     df_base_editavel = pd.DataFrame(lista_linhas_editaveis)
 
-    st.write("👇 **Tabela de Lançamentos do DRE (Altere qualquer valor e clique em salvar):**")
+    st.write("👇 **Tabela de Lançamentos do DRE (Clique para editar e depois clique em Salvar):**")
     
     qtd_lanc = len(df_l)
     df_dre_editado = st.data_editor(
@@ -592,10 +462,10 @@ if menu.startswith("📊 DRE Spoleto"):
 
     col_save_dre, _ = st.columns([2, 3])
     with col_save_dre:
-        if st.button("💾 Salvar Alterações do DRE na Base de Dados", type="primary", use_container_width=True):
+        if st.button("💾 Salvar Lançamentos e Ajustes do DRE na Base de Dados", type="primary", use_container_width=True):
             novos_ajustes = dict(zip(df_dre_editado["CONTA"], df_dre_editado["VALOR (R$)"]))
             salvar_ajustes_dre(mes_ativo, novos_ajustes)
-            st.success("✅ **Alterações salvas com sucesso no banco de dados!**")
+            st.success("✅ **Valores gravados com sucesso! O DRE está atualizado e salvo.**")
 
     v_map = dict(zip(df_dre_editado["CONTA"], df_dre_editado["VALOR (R$)"]))
 
@@ -609,7 +479,7 @@ if menu.startswith("📊 DRE Spoleto"):
     imp_est = v("Imposto Estadual")
     rec_liquida = venda_bruta - (imp_fed + imp_est)
 
-    cmv_alim = v("Alimentos")
+    cmv_alim = v("Alimentos (Demais Alimentos + Horte)")
     cmv_beb = v("Bebidas")
     cmv_desc = v("Descartáveis")
     cmv_fret = v("Fretes")
@@ -662,7 +532,7 @@ if menu.startswith("📊 DRE Spoleto"):
         {"CONTA": "🔹 RECEITA LÍQUIDA", "VALOR": rec_liquida, "%": pct(rec_liquida)},
         {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
         {"CONTA": "📦 C M V (Custo de Mercadoria Vendida)", "VALOR": total_cmv, "%": pct(total_cmv)},
-        {"CONTA": "  • Alimentos", "VALOR": cmv_alim, "%": pct(cmv_alim)},
+        {"CONTA": "  • Alimentos (Demais Alimentos + Horte)", "VALOR": cmv_alim, "%": pct(cmv_alim)},
         {"CONTA": "  • Bebidas", "VALOR": cmv_beb, "%": pct(cmv_beb)},
         {"CONTA": "  • Descartáveis", "VALOR": cmv_desc, "%": pct(cmv_desc)},
         {"CONTA": "  • Fretes", "VALOR": cmv_fret, "%": pct(cmv_fret)},
@@ -670,12 +540,15 @@ if menu.startswith("📊 DRE Spoleto"):
         {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
         {"CONTA": "🏢 TOTAL OCUPAÇÃO", "VALOR": total_ocup, "%": pct(total_ocup)},
         {"CONTA": "  • Condomínio", "VALOR": v("Condomínio"), "%": pct(v("Condomínio"))},
-        {"CONTA": "  • Aluguel / Taxas", "VALOR": total_ocup - v("Condomínio"), "%": pct(total_ocup - v("Condomínio"))},
+        {"CONTA": "  • Aluguel / Outros", "VALOR": total_ocup - v("Condomínio"), "%": pct(total_ocup - v("Condomínio"))},
         {"CONTA": "👥 TOTAL PESSOAL", "VALOR": total_pess, "%": pct(total_pess)},
         {"CONTA": "💡 TOTAL UTILIDADES", "VALOR": total_util, "%": pct(total_util)},
         {"CONTA": "  • Gás", "VALOR": v("Gás"), "%": pct(v("Gás"))},
         {"CONTA": "  • Energia Elétrica", "VALOR": v("Energia Elétrica"), "%": pct(v("Energia Elétrica"))},
         {"CONTA": "🧹 MATERIAIS DE USO & CONSUMO", "VALOR": total_mat, "%": pct(total_mat)},
+        {"CONTA": "  • Limpeza", "VALOR": v("Material de Limpeza"), "%": pct(v("Material de Limpeza"))},
+        {"CONTA": "  • Utensílios", "VALOR": v("Utensílios"), "%": pct(v("Utensílios"))},
+        {"CONTA": "  • Uniformes", "VALOR": v("Uniformes"), "%": pct(v("Uniformes"))},
         {"CONTA": "🔧 MANUTENÇÃO", "VALOR": total_manut, "%": pct(total_manut)},
         {"CONTA": "🛵 DELIVERY", "VALOR": total_deliv, "%": pct(total_deliv)},
         {"CONTA": "📢 MARKETING & FRANQUEADOR", "VALOR": total_mkt, "%": pct(total_mkt)},
@@ -702,10 +575,11 @@ if menu.startswith("📊 DRE Spoleto"):
     )
 
 # ==============================================================================
-# 2. ABA DE ESCANEAR NOTA & ALIMENTAR DRE AUTOMATICAMENTE
+# 2. ABA DE ESCANEAR NOTA & ALIMENTAR DRE (APENAS AS 7 CATEGORIAS)
 # ==============================================================================
 elif menu.startswith("📸 Escanear"):
     st.subheader(f"📸 Escanear Nota Fiscal para o DRE de: {NOMES_MESES[mes_ativo]}")
+    st.info("💡 As notas de compras são classificadas estritamente em: **Demais Alimentos, Descartáveis, Limpeza, Utensílios, Bebidas, Horte e Uniformes**[cite: 7, 8].")
 
     ukey = st.session_state.uploader_key
 
@@ -717,7 +591,7 @@ elif menu.startswith("📸 Escanear"):
 
     with aba_foto:
         f_upload = st.file_uploader(
-            "Fotos do cupom/boleto/nota:",
+            "Fotos do cupom/nota:",
             type=["jpg", "jpeg", "png", "webp"],
             accept_multiple_files=True,
             key=f"file_uploader_{ukey}"
@@ -738,8 +612,8 @@ elif menu.startswith("📸 Escanear"):
         st.write(f"**Total acumulado:** {len(st.session_state.fotos_acumuladas)} foto(s)")
         c1, c2 = st.columns([2, 1])
         with c1:
-            if st.button("🚀 Processar Fotos com IA & Alimentar DRE", type="primary", use_container_width=True):
-                with st.spinner("🤖 A IA está lendo o documento e destrinchando cada item..."):
+            if st.button("🚀 Processar Fotos com IA & Destrinchar", type="primary", use_container_width=True):
+                with st.spinner("🤖 Lendo itens e classificando nas 7 categorias..."):
                     res = processar_multiplas_imagens_com_ia(st.session_state.fotos_acumuladas, api_key)
                     if res and isinstance(res, dict):
                         st.session_state.dados_extraidos = {
@@ -751,7 +625,15 @@ elif menu.startswith("📸 Escanear"):
                         st.session_state.fotos_acumuladas = []
                         st.rerun()
                     else:
-                        st.error("Não foi possível extrair dados legíveis da imagem. Tire a foto mais de perto e com boa iluminação.")
+                        # Fallback se a IA falhar ou cota esgotar: cria tabela vazia para não travar
+                        st.session_state.dados_extraidos = {
+                            "razao_social": "Compra Manual",
+                            "cnpj": "Não informado",
+                            "valor_total": 0.0,
+                            "itens": [{"Produto": "Item 1", "Quantidade": 1.0, "Unid": "UN", "PrecoUnitario": 0.0, "TotalItem": 0.0, "Categoria": "Demais Alimentos"}]
+                        }
+                        st.session_state.fotos_acumuladas = []
+                        st.rerun()
         with c2:
             if st.button("🗑️ Descartar Fotos", use_container_width=True):
                 resetar_processamento_nota()
@@ -777,7 +659,7 @@ elif menu.startswith("📸 Escanear"):
                     p = i.get("prod", {})
                     nm = p.get("xProd", "")
                     itens_x.append({
-                        "Classificacao": mapa.get(nm, "Demais Alimentos"),
+                        "Categoria": mapa.get(nm, "Demais Alimentos"),
                         "Produto": nm,
                         "Quantidade": float(p.get("qCom", 0)),
                         "Unid": p.get("uCom", "UN"),
@@ -794,125 +676,80 @@ elif menu.startswith("📸 Escanear"):
             else:
                 txt = doc.read().decode("latin1", errors="ignore") if ext == "pdf" else pd.read_excel(doc).to_string()
                 res_it = processar_texto_com_ia(txt, doc.name, api_key)
+                if not res_it:
+                    res_it = [{"Produto": "Item 1", "Quantidade": 1.0, "Unid": "UN", "PrecoUnitario": 0.0, "TotalItem": 0.0, "Categoria": "Demais Alimentos"}]
                 st.session_state.dados_extraidos = {
-                    "razao_social": "Importação",
+                    "razao_social": "Arquivo Importado",
                     "cnpj": "Não informado",
                     "valor_total": sum(float(i.get("TotalItem", 0)) for i in res_it),
                     "itens": res_it
                 }
                 st.rerun()
 
-    # ----------------- PAINEL DE RESULTADO ISOLADO DA NOTA -----------------
+    # ----------------- REVISÃO DA NOTA (SOMENTE AS 7 CATEGORIAS) -----------------
     if st.session_state.dados_extraidos:
         dados = st.session_state.dados_extraidos
         st.markdown("---")
-        st.subheader("📋 Resumo do Documento Identificado")
+        st.subheader("📋 Resumo da Compra Identificada")
         c_a, c_b, c_c = st.columns(3)
-        c_a.metric("Fornecedor / Emitente", dados["razao_social"])
+        c_a.metric("Fornecedor", dados["razao_social"])
         c_b.metric("CNPJ", dados["cnpj"])
-        c_c.metric("Valor Total", f"R$ {dados['valor_total']:,.2f}")
+        c_c.metric("Valor Total da Nota", f"R$ {dados['valor_total']:,.2f}")
 
-        tab_rapida, tab_detalhada = st.tabs([
-            "⚡ Lançamento Rápido (Item Único: Condomínio, Gás, Energia...)",
-            "📦 Destrinchar Vários Itens (Compras de Mercadoria)"
-        ])
+        df_itens = pd.DataFrame(dados["itens"])
+        if not df_itens.empty:
+            if "Categoria" not in df_itens.columns and "Classificacao" in df_itens.columns:
+                df_itens.rename(columns={"Classificacao": "Categoria"}, inplace=True)
 
-        with tab_rapida:
-            st.write("💡 **Ideal para boletos e contas mensais:** o valor vai direto para a conta sem complicação[cite: 7, 8].")
-            
-            idx_sug = 0
-            razao_up = str(dados.get("razao_social", "")).upper()
-            if "CONDOM" in razao_up and "Condomínio" in LISTA_TODAS_CLASSIFICACOES:
-                idx_sug = LISTA_TODAS_CLASSIFICACOES.index("Condomínio")
-            elif "GAS" in razao_up and "Gás" in LISTA_TODAS_CLASSIFICACOES:
-                idx_sug = LISTA_TODAS_CLASSIFICACOES.index("Gás")
-            
-            c_rap1, c_rap2 = st.columns(2)
-            with c_rap1:
-                classificacao_rapida = st.selectbox(
-                    "Selecione o Indicador do DRE:",
-                    LISTA_TODAS_CLASSIFICACOES,
-                    index=idx_sug,
-                    key=f"sel_rapido_dre_{ukey}"
-                )
-            with c_rap2:
-                val_inicial = float(dados["valor_total"]) if dados.get("valor_total", 0) >= 0 else 0.0
-                valor_rapido = st.number_input(
-                    "Valor a Lançar (R$):",
-                    value=val_inicial,
-                    min_value=0.0,
-                    step=10.0,
-                    key=f"val_rapido_dre_{ukey}"
-                )
+            # Garante que cada item caia estritamente em uma das 7 categorias
+            df_itens["Categoria"] = df_itens["Categoria"].apply(
+                lambda x: x if x in LISTA_7_CATEGORIAS else "Demais Alimentos"
+            )
 
-            if st.button(f"⚡ Lançar R$ {valor_rapido:,.2f} direto em '{classificacao_rapida}' no DRE", type="primary", use_container_width=True):
-                if valor_rapido <= 0.0:
-                    st.warning("⚠️ Digite um valor maior que zero para lançar no DRE.")
-                else:
-                    lancar_item_unico_dre(
+            st.write("👇 **Revise os itens e ajuste a categoria se necessário (pode adicionar linhas ou alterar valores):**")
+            df_edit = st.data_editor(
+                df_itens,
+                column_config={
+                    "Categoria": st.column_config.SelectboxColumn(
+                        "Categoria",
+                        options=LISTA_7_CATEGORIAS,
+                        required=True
+                    ),
+                    "Produto": st.column_config.TextColumn("Produto", required=True),
+                    "Quantidade": st.column_config.NumberColumn("Qtd", format="%.2f"),
+                    "Unid": st.column_config.TextColumn("Unid"),
+                    "PrecoUnitario": st.column_config.NumberColumn("Preço Unit. (R$)", format="R$ %.2f"),
+                    "TotalItem": st.column_config.NumberColumn("Total Item (R$)", format="R$ %.2f"),
+                },
+                use_container_width=True,
+                num_rows="dynamic",
+                key=f"editor_nota_ativa_{ukey}"
+            )
+
+            somas_cat = df_edit.groupby("Categoria")["TotalItem"].sum().to_dict()
+            st.write("#### 📊 Subtotais por Categoria:")
+            c_grid = st.columns(min(len(somas_cat), 4))
+            for idx, (cl_n, val_n) in enumerate(somas_cat.items()):
+                c_grid[idx % 4].metric(cl_n, f"R$ {val_n:,.2f}")
+
+            st.markdown("---")
+            col_save_det, col_canc = st.columns([2, 1])
+            with col_save_det:
+                if st.button(f"🚀 Confirmar & Lançar no DRE ({NOMES_MESES[mes_ativo]})", type="primary", use_container_width=True):
+                    salvar_nota_e_lancar_dre(
                         mes_ref=mes_ativo,
-                        fornecedor=dados["razao_social"],
-                        valor_total=valor_rapido,
-                        classificacao_escolhida=classificacao_rapida
+                        razao_social=dados["razao_social"],
+                        cnpj=dados["cnpj"],
+                        valor_total=dados["valor_total"] or sum(somas_cat.values()),
+                        lista_produtos=df_edit.to_dict(orient="records")
                     )
-                    st.success(f"✅ Sucesso! R$ {valor_rapido:,.2f} lançado diretamente em **{classificacao_rapida}** no DRE de {NOMES_MESES[mes_ativo]}[cite: 7, 8]!")
+                    st.success(f"✅ Sucesso! Itens incorporados à aba LANÇAMENTOS e o DRE de {NOMES_MESES[mes_ativo]} foi recalculado[cite: 7, 8]!")
                     resetar_processamento_nota()
                     st.rerun()
-
-        with tab_detalhada:
-            df_itens = pd.DataFrame(dados["itens"])
-            if not df_itens.empty:
-                if "Classificacao" not in df_itens.columns and "Categoria" in df_itens.columns:
-                    df_itens.rename(columns={"Categoria": "Classificacao"}, inplace=True)
-
-                df_itens["Classificacao"] = df_itens["Classificacao"].apply(
-                    lambda x: x if x in CATALOGO_DRE_SPOLETO else "Demais Alimentos"
-                )
-
-                st.write("👇 **Revise cada item individual desta nota:**")
-                df_edit = st.data_editor(
-                    df_itens,
-                    column_config={
-                        "Classificacao": st.column_config.SelectboxColumn(
-                            "Classificação Spoleto",
-                            options=LISTA_TODAS_CLASSIFICACOES,
-                            required=True
-                        ),
-                        "Produto": st.column_config.TextColumn("Produto", required=True),
-                        "Quantidade": st.column_config.NumberColumn("Qtd", format="%.2f"),
-                        "Unid": st.column_config.TextColumn("Unid"),
-                        "PrecoUnitario": st.column_config.NumberColumn("Preço Unit. (R$)", format="R$ %.2f"),
-                        "TotalItem": st.column_config.NumberColumn("Total Item (R$)", format="R$ %.2f"),
-                    },
-                    use_container_width=True,
-                    num_rows="dynamic",
-                    key=f"editor_nota_ativa_{ukey}"
-                )
-
-                somas_class = df_edit.groupby("Classificacao")["TotalItem"].sum().to_dict()
-                st.write("#### 📊 Subtotais por Categoria:")
-                c_grid = st.columns(min(len(somas_class), 4))
-                for idx, (cl_n, val_n) in enumerate(somas_class.items()):
-                    c_grid[idx % 4].metric(cl_n, f"R$ {val_n:,.2f}")
-
-                st.markdown("---")
-                col_save_det, col_canc = st.columns([2, 1])
-                with col_save_det:
-                    if st.button(f"🚀 Confirmar Itens Detalhados no DRE ({NOMES_MESES[mes_ativo]})", type="primary", use_container_width=True):
-                        salvar_nota_e_lancar_dre(
-                            mes_ref=mes_ativo,
-                            razao_social=dados["razao_social"],
-                            cnpj=dados["cnpj"],
-                            valor_total=dados["valor_total"] or sum(somas_class.values()),
-                            lista_produtos=df_edit.to_dict(orient="records")
-                        )
-                        st.success(f"✅ Sucesso! Itens detalhados incorporados à aba LANÇAMENTOS do DRE[cite: 7, 8]!")
-                        resetar_processamento_nota()
-                        st.rerun()
-                with col_canc:
-                    if st.button("❌ Descartar Nota", use_container_width=True):
-                        resetar_processamento_nota()
-                        st.rerun()
+            with col_canc:
+                if st.button("❌ Descartar Nota", use_container_width=True):
+                    resetar_processamento_nota()
+                    st.rerun()
 
 # ==============================================================================
 # 3. ABA DE LANÇAMENTOS DO MÊS
@@ -956,7 +793,7 @@ elif menu.startswith("🧠 Regras"):
     st.write("Produtos memorizados pelas suas correções anteriores:")
     regras = carregar_regras()
     if regras:
-        df_r = pd.DataFrame(list(regras.items()), columns=["Produto", "Classificação Spoleto"]).sort_values("Produto")
+        df_r = pd.DataFrame(list(regras.items()), columns=["Produto", "Categoria"]).sort_values("Produto")
         st.dataframe(df_r, use_container_width=True)
     else:
         st.info("Nenhuma regra personalizada ainda. Sempre que corrigir e salvar uma nota, a IA memoriza aqui.")
