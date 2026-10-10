@@ -10,6 +10,44 @@ from datetime import datetime
 
 st.set_page_config(page_title="Painel Inteligente de Custos - Capry", layout="wide")
 
+# ----------------- CONTROLE DE LOGIN -----------------
+USUARIO_CORRETO = "admin"
+SENHA_CORRETA = "massima"
+
+if "autenticado" not in st.session_state:
+    st.session_state.autenticado = False
+
+def tela_login():
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        st.markdown("### 🔐 Acesso ao Painel de Custos - Capry")
+        st.write("Digite suas credenciais para acessar o sistema:")
+        
+        with st.form("form_login"):
+            usuario = st.text_input("Usuário", placeholder="Digite o usuário")
+            senha = st.text_input("Senha", type="password", placeholder="Digite a senha")
+            botao_entrar = st.form_submit_button("Entrar", type="primary", use_container_width=True)
+
+            if botao_entrar:
+                if usuario == USUARIO_CORRETO and senha == SENHA_CORRETA:
+                    st.session_state.autenticado = True
+                    st.success("Login efetuado com sucesso!")
+                    st.rerun()
+                else:
+                    st.error("❌ Usuário ou senha incorretos!")
+
+if not st.session_state.autenticado:
+    tela_login()
+    st.stop()
+
+# Botão de Logout no menu lateral
+st.sidebar.write(f"👤 Logado como: **{USUARIO_CORRETO}**")
+if st.sidebar.button("🚪 Sair do Sistema"):
+    st.session_state.autenticado = False
+    st.rerun()
+st.sidebar.markdown("---")
+
 # CSS para expandir o visor da câmera
 st.markdown("""
 <style>
@@ -48,7 +86,6 @@ def init_db():
             itens_json TEXT
         )
     """)
-    # Tabela de memória de regras/classificações corrigidas
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS regras_classificacao (
             produto TEXT PRIMARY KEY,
@@ -70,7 +107,6 @@ def salvar_nota(razao_social, cnpj, valor_total, lista_produtos):
         VALUES (?, ?, ?, ?, ?)
     """, (data_registo, razao_social, cnpj, valor_total, itens_json))
     
-    # Memorizar as categorias corrigidas pelo utilizador para futuras notas
     for item in lista_produtos:
         prod = str(item.get("Produto", "")).strip().upper()
         cat = str(item.get("Categoria", "")).strip()
@@ -220,7 +256,6 @@ def categorizar_nomes_xml(lista_nomes, chave):
             mapa.update(res)
     return mapa
 
-# Inicialização de variáveis de sessão
 if "fotos_acumuladas" not in st.session_state:
     st.session_state.fotos_acumuladas = []
 if "dados_extraidos" not in st.session_state:
@@ -266,7 +301,6 @@ if menu_principal == "📄 Capturar / Enviar Nota":
                 })
                 st.success("Foto adicionada à lista de espera!")
 
-    # Painel de gestão de fotos acumuladas
     if st.session_state.fotos_acumuladas:
         st.write(f"### 📷 Fotos prontas para leitura: **{len(st.session_state.fotos_acumuladas)} foto(s)**")
         col_c1, col_c2 = st.columns([2, 1])
@@ -361,7 +395,6 @@ if menu_principal == "📄 Capturar / Enviar Nota":
             if "TotalItem" not in df_editavel.columns and "Total do Item (R$)" in df_editavel.columns:
                 df_editavel.rename(columns={"Total do Item (R$)": "TotalItem", "Preço Unitário (R$)": "PrecoUnitario"}, inplace=True)
 
-            # Tabela global editável
             df_alterado = st.data_editor(
                 df_editavel,
                 column_config={
@@ -381,7 +414,6 @@ if menu_principal == "📄 Capturar / Enviar Nota":
                 key="editor_tabela_itens"
             )
 
-            # Totais por Categoria
             st.subheader("📊 Totais por Categoria Atualizados")
             df_resumo = df_alterado.groupby("Categoria")["TotalItem"].sum().reset_index()
             soma_todas_categorias = float(df_resumo["TotalItem"].sum())
@@ -405,7 +437,6 @@ if menu_principal == "📄 Capturar / Enviar Nota":
                     else:
                         st.warning(f"⚠️ Diferença de R$ {diferenca_nota:,.2f} em relação ao valor da nota (R$ {dados['valor_total']:,.2f}).")
 
-            # ----------------- ITENS SEPARADOS POR CATEGORIA -----------------
             st.subheader("📦 Itens Detalhados por Categoria Separada")
             categorias_existentes = sorted(df_alterado["Categoria"].dropna().unique())
 
@@ -425,7 +456,6 @@ if menu_principal == "📄 Capturar / Enviar Nota":
                         "PrecoUnitario": "Preço Unitário (R$)",
                         "TotalItem": "Total do Item (R$)"
                     }, inplace=True)
-                    # Não precisa exibir a coluna Categoria aqui pois já está agrupada
                     cols_para_exibir = [c for c in ["Produto", "Qtd", "Unid", "Preço Unitário (R$)", "Total do Item (R$)"] if c in df_cat_show.columns]
                     st.dataframe(df_cat_show[cols_para_exibir], use_container_width=True)
 
@@ -444,7 +474,7 @@ if menu_principal == "📄 Capturar / Enviar Nota":
                     st.session_state.dados_extraidos = None
                     st.rerun()
 
-# ----------------- HISTÓRICO COM ITENS SEPARADOS POR CATEGORIA -----------------
+# ----------------- HISTÓRICO & CONSULTAS -----------------
 elif menu_principal == "🗄️ Histórico & Consultas":
     st.subheader("🗄️ Histórico de Notas Salvas")
     df_historico = listar_notas()
@@ -483,7 +513,6 @@ elif menu_principal == "🗄️ Histórico & Consultas":
             if itens_recuperados:
                 df_itens = pd.DataFrame(itens_recuperados)
 
-                # Padronizar nomes de colunas
                 col_map = {}
                 if "TotalItem" in df_itens.columns:
                     col_map["TotalItem"] = "Total"
@@ -500,7 +529,6 @@ elif menu_principal == "🗄️ Histórico & Consultas":
 
                 st.write(f"### 📄 Detalhes da Nota #{nota_selecionada} — {fornecedor_bd}")
 
-                # 1. Tabela com o subtotal de cada categoria
                 st.write("#### 📊 Subtotais por Categoria")
                 df_cat_subtotais = df_itens.groupby("Categoria")["Total"].sum().reset_index()
                 soma_categorias_hist = float(df_cat_subtotais["Total"].sum())
@@ -517,7 +545,6 @@ elif menu_principal == "🗄️ Histórico & Consultas":
                     value=f"R$ {soma_categorias_hist:,.2f}"
                 )
 
-                # 2. Itens separados por categoria
                 st.write("#### 📦 Itens Detalhados da Compra (Separados por Categoria)")
                 cats_hist = sorted(df_itens["Categoria"].dropna().unique())
 
