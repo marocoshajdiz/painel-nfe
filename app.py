@@ -7,7 +7,7 @@ import json
 
 st.set_page_config(page_title="Painel Inteligente de Custos - Capry", layout="wide")
 
-st.title("🛒 Painel Inteligente de Custos com IA - Capry Comércio")
+st.title("🛒 Painel Inteligente de Custos  - Capry Comércio")
 st.write("Faça o upload do arquivo (**XML, Excel ou PDF**) da nota fiscal para categorização com IA e validação de totais.")
 
 try:
