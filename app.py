@@ -101,12 +101,13 @@ def listar_notas():
 def obter_detalhes_nota(nota_id):
     conn = sqlite3.connect("notas_fiscais.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT itens_json FROM notas WHERE id = ?", (nota_id,))
+    cursor.execute("SELECT itens_json, valor_total, razao_social FROM notas WHERE id = ?", (nota_id,))
     linha = cursor.fetchone()
     conn.close()
     if linha:
-        return json.loads(linha[0])
-    return []
+        itens = json.loads(linha[0])
+        return itens, linha[1], linha[2]
+    return [], 0.0, ""
 
 def excluir_nota(nota_id):
     conn = sqlite3.connect("notas_fiscais.db")
@@ -385,13 +386,11 @@ if menu_principal == "📄 Capturar / Enviar Nota":
             df_resumo = df_alterado.groupby("Categoria")["TotalItem"].sum().reset_index()
             soma_todas_categorias = float(df_resumo["TotalItem"].sum())
 
-            # Tabela com as categorias e seus valores
             df_resumo_tabela = df_resumo.copy()
             df_resumo_tabela["TotalItem"] = df_resumo_tabela["TotalItem"].apply(lambda x: f"R$ {x:,.2f}")
             df_resumo_tabela.rename(columns={"TotalItem": "Total da Categoria (R$)"}, inplace=True)
             st.dataframe(df_resumo_tabela, use_container_width=True)
 
-            # Soma total exibida em destaque logo abaixo da tabela
             col_tot1, col_tot2 = st.columns([1, 1])
             with col_tot1:
                 st.metric(
@@ -421,7 +420,7 @@ if menu_principal == "📄 Capturar / Enviar Nota":
                     st.session_state.dados_extraidos = None
                     st.rerun()
 
-# ----------------- HISTÓRICO -----------------
+# ----------------- HISTÓRICO & CONSULTAS COM SUBTOTAL POR CATEGORIA -----------------
 elif menu_principal == "🗄️ Histórico & Consultas":
     st.subheader("🗄️ Histórico de Notas Salvas")
     df_historico = listar_notas()
@@ -442,11 +441,11 @@ elif menu_principal == "🗄️ Histórico & Consultas":
         st.dataframe(df_historico_show, use_container_width=True)
 
         st.markdown("---")
-        st.subheader("🔍 Consultar Detalhes ou Excluir Registro")
+        st.subheader("🔍 Consultar Detalhes da Nota")
 
         col_select, col_del = st.columns([2, 1])
         with col_select:
-            nota_selecionada = st.selectbox("Selecione o registo pelo ID:", df_historico["id"].tolist())
+            nota_selecionada = st.selectbox("Selecione o registo pelo ID para abrir a nota completa:", df_historico["id"].tolist())
 
         with col_del:
             st.write("&nbsp;")
@@ -456,11 +455,60 @@ elif menu_principal == "🗄️ Histórico & Consultas":
                 st.rerun()
 
         if nota_selecionada:
-            itens_recuperados = obter_detalhes_nota(nota_selecionada)
+            itens_recuperados, valor_tot_bd, fornecedor_bd = obter_detalhes_nota(nota_selecionada)
             if itens_recuperados:
-                st.write(f"**Itens da Nota #{nota_selecionada}:**")
                 df_itens = pd.DataFrame(itens_recuperados)
-                st.dataframe(df_itens, use_container_width=True)
+
+                # Padronizar nomes de colunas
+                col_map = {}
+                if "TotalItem" in df_itens.columns:
+                    col_map["TotalItem"] = "Total"
+                elif "Total do Item (R$)" in df_itens.columns:
+                    col_map["Total do Item (R$)"] = "Total"
+
+                if "PrecoUnitario" in df_itens.columns:
+                    col_map["PrecoUnitario"] = "PrecoUnit"
+                elif "Preço Unitário (R$)" in df_itens.columns:
+                    col_map["Preço Unitário (R$)"] = "PrecoUnit"
+
+                df_itens.rename(columns=col_map, inplace=True)
+                df_itens["Total"] = pd.to_numeric(df_itens["Total"], errors="coerce").fillna(0.0)
+
+                st.write(f"### 📄 Detalhes da Nota #{nota_selecionada} — {fornecedor_bd}")
+
+                # 1. Tabela com o subtotal de cada categoria
+                st.write("#### 📊 Subtotais por Categoria")
+                df_cat_subtotais = df_itens.groupby("Categoria")["Total"].sum().reset_index()
+                soma_categorias_hist = float(df_cat_subtotais["Total"].sum())
+
+                df_cat_show = df_cat_subtotais.copy()
+                df_cat_show["Subtotal"] = df_cat_show["Total"].apply(lambda x: f"R$ {x:,.2f}")
+                df_cat_show.drop(columns=["Total"], inplace=True)
+                df_cat_show.rename(columns={"Categoria": "Categoria", "Subtotal": "Subtotal da Categoria (R$)"}, inplace=True)
+
+                st.dataframe(df_cat_show, use_container_width=True)
+
+                # Métrica com o total somado das categorias
+                st.metric(
+                    label="💰 Total Somado das Categorias",
+                    value=f"R$ {soma_categorias_hist:,.2f}"
+                )
+
+                # 2. Tabela detalhada de itens
+                st.write("#### 📦 Itens Detalhados da Compra")
+                df_itens_show = df_itens.copy()
+                df_itens_show["PrecoUnit"] = df_itens_show["PrecoUnit"].apply(lambda x: f"R$ {float(x):,.2f}" if pd.notnull(x) else "R$ 0,00")
+                df_itens_show["Total"] = df_itens_show["Total"].apply(lambda x: f"R$ {float(x):,.2f}")
+                df_itens_show.rename(columns={
+                    "Produto": "Produto",
+                    "Categoria": "Categoria",
+                    "Quantidade": "Qtd",
+                    "Unid": "Unid",
+                    "PrecoUnit": "Preço Unitário (R$)",
+                    "Total": "Total do Item (R$)"
+                }, inplace=True)
+
+                st.dataframe(df_itens_show, use_container_width=True)
 
 # ----------------- MEMÓRIA DE REGRAS -----------------
 elif menu_principal == "🧠 Dicionário de Classificações":
