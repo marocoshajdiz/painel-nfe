@@ -9,6 +9,7 @@ import sqlite3
 import io
 import re
 from datetime import datetime
+import pypdf
 
 st.set_page_config(page_title="Painel de Custos & DRE Spoleto - Capry", layout="wide")
 
@@ -232,7 +233,7 @@ def gerar_excel_dre(nome_mes, df_dre_completo, df_lancamentos):
     output.seek(0)
     return output.getvalue()
 
-# ----------------- CONFIGURAÇÕES IA (COM TRATAMENTO DE COTA 429) -----------------
+# ----------------- CONFIGURAÇÕES IA -----------------
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
 except Exception:
@@ -298,17 +299,23 @@ def processar_multiplas_imagens_com_ia(lista_fotos_bytes, chave):
     except Exception as e:
         erro_str = str(e)
         if "429" in erro_str or "RESOURCE_EXHAUSTED" in erro_str:
-            st.warning("⚠️ **Limite temporário de requisições gratuitas atingido no Google AI Studio (Erro 429).** Você pode preencher os itens na tabela abaixo manualmente enquanto o limite renova!")
+            st.warning("⚠️ Limite diário de requisições da IA atingido. Você pode inserir os produtos diretamente na tabela abaixo!")
         else:
-            st.error(f"Erro na comunicação com a IA: {e}")
+            st.error(f"Erro na IA: {e}")
     return None
 
 def processar_texto_com_ia(texto, nome_arq, chave):
     client = genai.Client(api_key=chave)
     prompt = f"""
-    Analise o arquivo '{nome_arq}'.
+    Analise o texto do arquivo '{nome_arq}'.
     Extraia cada produto com: Produto, Quantidade, Unid, PrecoUnitario, TotalItem e Categoria (Demais Alimentos, Descartáveis, Limpeza, Utensílios, Bebidas, Horte, Uniformes).
-    Retorne apenas JSON lista de dicionários.
+    Retorne apenas JSON no formato:
+    {{
+      "razao_social": "...",
+      "cnpj": "...",
+      "valor_total": 0.0,
+      "itens": [...]
+    }}
     Texto: {texto[:15000]}
     """
     try:
@@ -317,14 +324,14 @@ def processar_texto_com_ia(texto, nome_arq, chave):
             contents=prompt,
             config=types.GenerateContentConfig(response_mime_type="application/json"),
         )
-        return parse_json_resposta(response.text) or []
+        return parse_json_resposta(response.text)
     except Exception as e:
         erro_str = str(e)
         if "429" in erro_str or "RESOURCE_EXHAUSTED" in erro_str:
-            st.warning("⚠️ Limite diário da chave atingido no Google. Adicione as linhas manualmente na tabela!")
+            st.warning("⚠️ Limite diário de requisições da IA atingido. Adicione os itens manualmente na tabela abaixo!")
         else:
             st.error(f"Erro ao processar: {e}")
-        return []
+        return None
 
 def categorizar_nomes_xml(nomes, chave):
     regras = carregar_regras()
@@ -622,134 +629,185 @@ elif menu.startswith("📸 Escanear"):
                             "valor_total": float(res.get("valor_total") or 0.0),
                             "itens": res.get("itens", [])
                         }
-                        st.session_state.fotos_acumuladas = []
-                        st.rerun()
                     else:
-                        # Fallback se a IA falhar ou cota esgotar: cria tabela vazia para não travar
                         st.session_state.dados_extraidos = {
                             "razao_social": "Compra Manual",
                             "cnpj": "Não informado",
                             "valor_total": 0.0,
                             "itens": [{"Produto": "Item 1", "Quantidade": 1.0, "Unid": "UN", "PrecoUnitario": 0.0, "TotalItem": 0.0, "Categoria": "Demais Alimentos"}]
                         }
-                        st.session_state.fotos_acumuladas = []
-                        st.rerun()
+                    st.session_state.fotos_acumuladas = []
+                    st.rerun()
         with c2:
             if st.button("🗑️ Descartar Fotos", use_container_width=True):
                 resetar_processamento_nota()
                 st.rerun()
 
     with aba_arq:
-        doc = st.file_uploader("Enviar XML, PDF ou Excel:", type=["xml", "xlsx", "xls", "pdf"], key=f"doc_uploader_{ukey}")
+        doc = st.file_uploader("Enviar XML da NF-e, PDF ou Excel da Compra:", type=["xml", "xlsx", "xls", "pdf"], key=f"doc_uploader_{ukey}")
         if doc and st.button("Processar Arquivo", key=f"btn_doc_{ukey}"):
             st.session_state.dados_extraidos = None
             ext = doc.name.split(".")[-1].lower()
+
             if ext == "xml":
-                data = xmltodict.parse(doc.read())
-                inf = data.get("nfeProc", data).get("NFe", {}).get("infNFe", {})
-                emit = inf.get("emit", {})
-                tot = inf.get("total", {}).get("ICMSTot", {})
-                det = inf.get("det", [])
-                if not isinstance(det, list):
-                    det = [det]
-                nomes = [i.get("prod", {}).get("xProd", "") for i in det]
-                mapa = categorizar_nomes_xml(nomes, api_key)
-                itens_x = []
-                for i in det:
-                    p = i.get("prod", {})
-                    nm = p.get("xProd", "")
-                    itens_x.append({
-                        "Categoria": mapa.get(nm, "Demais Alimentos"),
-                        "Produto": nm,
-                        "Quantidade": float(p.get("qCom", 0)),
-                        "Unid": p.get("uCom", "UN"),
-                        "PrecoUnitario": float(p.get("vUnCom", 0)),
-                        "TotalItem": float(p.get("vProd", 0))
-                    })
-                st.session_state.dados_extraidos = {
-                    "razao_social": emit.get("xNome", "Fornecedor"),
-                    "cnpj": emit.get("CNPJ", "Não informado"),
-                    "valor_total": float(tot.get("vNF", 0.0)),
-                    "itens": itens_x
-                }
-                st.rerun()
-            else:
-                txt = doc.read().decode("latin1", errors="ignore") if ext == "pdf" else pd.read_excel(doc).to_string()
-                res_it = processar_texto_com_ia(txt, doc.name, api_key)
-                if not res_it:
-                    res_it = [{"Produto": "Item 1", "Quantidade": 1.0, "Unid": "UN", "PrecoUnitario": 0.0, "TotalItem": 0.0, "Categoria": "Demais Alimentos"}]
-                st.session_state.dados_extraidos = {
-                    "razao_social": "Arquivo Importado",
-                    "cnpj": "Não informado",
-                    "valor_total": sum(float(i.get("TotalItem", 0)) for i in res_it),
-                    "itens": res_it
-                }
-                st.rerun()
+                try:
+                    data = xmltodict.parse(doc.read())
+                    inf = data.get("nfeProc", data).get("NFe", {}).get("infNFe", {})
+                    emit = inf.get("emit", {})
+                    tot = inf.get("total", {}).get("ICMSTot", {})
+                    det = inf.get("det", [])
+                    if not isinstance(det, list):
+                        det = [det]
+                    nomes = [i.get("prod", {}).get("xProd", "") for i in det]
+                    mapa = categorizar_nomes_xml(nomes, api_key)
+                    itens_x = []
+                    for i in det:
+                        p = i.get("prod", {})
+                        nm = p.get("xProd", "")
+                        itens_x.append({
+                            "Categoria": mapa.get(nm, "Demais Alimentos"),
+                            "Produto": nm,
+                            "Quantidade": float(p.get("qCom", 0)),
+                            "Unid": p.get("uCom", "UN"),
+                            "PrecoUnitario": float(p.get("vUnCom", 0)),
+                            "TotalItem": float(p.get("vProd", 0))
+                        })
+                    st.session_state.dados_extraidos = {
+                        "razao_social": emit.get("xNome", "Fornecedor"),
+                        "cnpj": emit.get("CNPJ", "Não informado"),
+                        "valor_total": float(tot.get("vNF", 0.0)),
+                        "itens": itens_x
+                    }
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao ler XML: {e}")
+
+            elif ext == "pdf":
+                try:
+                    reader = pypdf.PdfReader(doc)
+                    texto_pdf = "".join([page.extract_text() or "" for page in reader.pages])
+                    res_pdf = processar_texto_com_ia(texto_pdf, doc.name, api_key)
+                    if res_pdf and isinstance(res_pdf, dict):
+                        st.session_state.dados_extraidos = {
+                            "razao_social": res_pdf.get("razao_social") or doc.name,
+                            "cnpj": res_pdf.get("cnpj") or "Não informado",
+                            "valor_total": float(res_pdf.get("valor_total") or 0.0),
+                            "itens": res_pdf.get("itens", [])
+                        }
+                    else:
+                        st.session_state.dados_extraidos = {
+                            "razao_social": doc.name,
+                            "cnpj": "Não informado",
+                            "valor_total": 0.0,
+                            "itens": [{"Produto": "Item 1", "Quantidade": 1.0, "Unid": "UN", "PrecoUnitario": 0.0, "TotalItem": 0.0, "Categoria": "Demais Alimentos"}]
+                        }
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao ler PDF: {e}")
+
+            elif ext in ["xlsx", "xls"]:
+                try:
+                    df_planilha = pd.read_excel(doc)
+                    texto_excel = df_planilha.head(60).to_string()
+                    res_xl = processar_texto_com_ia(texto_excel, doc.name, api_key)
+                    if res_xl and isinstance(res_xl, dict):
+                        st.session_state.dados_extraidos = {
+                            "razao_social": res_xl.get("razao_social") or doc.name,
+                            "cnpj": res_xl.get("cnpj") or "Não informado",
+                            "valor_total": float(res_xl.get("valor_total") or 0.0),
+                            "itens": res_xl.get("itens", [])
+                        }
+                    else:
+                        st.session_state.dados_extraidos = {
+                            "razao_social": doc.name,
+                            "cnpj": "Não informado",
+                            "valor_total": 0.0,
+                            "itens": [{"Produto": "Item 1", "Quantidade": 1.0, "Unid": "UN", "PrecoUnitario": 0.0, "TotalItem": 0.0, "Categoria": "Demais Alimentos"}]
+                        }
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao ler Excel: {e}")
 
     # ----------------- REVISÃO DA NOTA (SOMENTE AS 7 CATEGORIAS) -----------------
     if st.session_state.dados_extraidos:
         dados = st.session_state.dados_extraidos
         st.markdown("---")
-        st.subheader("📋 Resumo da Compra Identificada")
+        st.subheader("📋 Resumo da Compra")
+        
         c_a, c_b, c_c = st.columns(3)
-        c_a.metric("Fornecedor", dados["razao_social"])
-        c_b.metric("CNPJ", dados["cnpj"])
-        c_c.metric("Valor Total da Nota", f"R$ {dados['valor_total']:,.2f}")
+        with c_a:
+            fornec_input = st.text_input("Fornecedor / Emitente:", value=dados.get("razao_social") or "Fornecedor")
+        with c_b:
+            cnpj_input = st.text_input("CNPJ:", value=dados.get("cnpj") or "Não informado")
+        with c_c:
+            st.metric("Valor Total Registrado", f"R$ {dados.get('valor_total', 0.0):,.2f}")
 
-        df_itens = pd.DataFrame(dados["itens"])
-        if not df_itens.empty:
-            if "Categoria" not in df_itens.columns and "Classificacao" in df_itens.columns:
-                df_itens.rename(columns={"Classificacao": "Categoria"}, inplace=True)
+        df_itens = pd.DataFrame(dados.get("itens", []))
+        if df_itens.empty:
+            df_itens = pd.DataFrame([{"Produto": "", "Quantidade": 1.0, "Unid": "UN", "PrecoUnitario": 0.0, "TotalItem": 0.0, "Categoria": "Demais Alimentos"}])
 
-            # Garante que cada item caia estritamente em uma das 7 categorias
-            df_itens["Categoria"] = df_itens["Categoria"].apply(
-                lambda x: x if x in LISTA_7_CATEGORIAS else "Demais Alimentos"
-            )
+        if "Categoria" not in df_itens.columns and "Classificacao" in df_itens.columns:
+            df_itens.rename(columns={"Classificacao": "Categoria"}, inplace=True)
 
-            st.write("👇 **Revise os itens e ajuste a categoria se necessário (pode adicionar linhas ou alterar valores):**")
-            df_edit = st.data_editor(
-                df_itens,
-                column_config={
-                    "Categoria": st.column_config.SelectboxColumn(
-                        "Categoria",
-                        options=LISTA_7_CATEGORIAS,
-                        required=True
-                    ),
-                    "Produto": st.column_config.TextColumn("Produto", required=True),
-                    "Quantidade": st.column_config.NumberColumn("Qtd", format="%.2f"),
-                    "Unid": st.column_config.TextColumn("Unid"),
-                    "PrecoUnitario": st.column_config.NumberColumn("Preço Unit. (R$)", format="R$ %.2f"),
-                    "TotalItem": st.column_config.NumberColumn("Total Item (R$)", format="R$ %.2f"),
-                },
-                use_container_width=True,
-                num_rows="dynamic",
-                key=f"editor_nota_ativa_{ukey}"
-            )
+        df_itens["Categoria"] = df_itens["Categoria"].apply(
+            lambda x: x if x in LISTA_7_CATEGORIAS else "Demais Alimentos"
+        )
 
-            somas_cat = df_edit.groupby("Categoria")["TotalItem"].sum().to_dict()
-            st.write("#### 📊 Subtotais por Categoria:")
-            c_grid = st.columns(min(len(somas_cat), 4))
-            for idx, (cl_n, val_n) in enumerate(somas_cat.items()):
-                c_grid[idx % 4].metric(cl_n, f"R$ {val_n:,.2f}")
+        st.write("👇 **Preencha ou ajuste os produtos e valores (Pode usar 'Adicionar Linha' se necessário):**")
+        df_edit = st.data_editor(
+            df_itens,
+            column_config={
+                "Categoria": st.column_config.SelectboxColumn(
+                    "Categoria",
+                    options=LISTA_7_CATEGORIAS,
+                    required=True
+                ),
+                "Produto": st.column_config.TextColumn("Produto", required=True),
+                "Quantidade": st.column_config.NumberColumn("Qtd", format="%.2f", min_value=0.0),
+                "Unid": st.column_config.TextColumn("Unid"),
+                "PrecoUnitario": st.column_config.NumberColumn("Preço Unit. (R$)", format="R$ %.2f", min_value=0.0),
+                "TotalItem": st.column_config.NumberColumn("Total Item (R$)", format="R$ %.2f", min_value=0.0, required=True),
+            },
+            use_container_width=True,
+            num_rows="dynamic",
+            key=f"editor_nota_ativa_{ukey}"
+        )
 
-            st.markdown("---")
-            col_save_det, col_canc = st.columns([2, 1])
-            with col_save_det:
-                if st.button(f"🚀 Confirmar & Lançar no DRE ({NOMES_MESES[mes_ativo]})", type="primary", use_container_width=True):
+        # Atualiza automaticamente o Total do Item se estiver zerado e Preço * Qtd > 0
+        df_edit["TotalItem"] = df_edit.apply(
+            lambda r: (r["Quantidade"] * r["PrecoUnitario"]) if (r["TotalItem"] == 0 and r["PrecoUnitario"] > 0) else r["TotalItem"],
+            axis=1
+        )
+
+        somas_cat = df_edit.groupby("Categoria")["TotalItem"].sum().to_dict()
+        soma_total_itens = sum(somas_cat.values())
+        
+        st.write("#### 📊 Subtotais por Categoria:")
+        c_grid = st.columns(min(len(somas_cat), 4))
+        for idx, (cl_n, val_n) in enumerate(somas_cat.items()):
+            c_grid[idx % 4].metric(cl_n, f"R$ {val_n:,.2f}")
+
+        st.markdown("---")
+        col_save_det, col_canc = st.columns([2, 1])
+        with col_save_det:
+            if st.button(f"🚀 Confirmar & Lançar no DRE ({NOMES_MESES[mes_ativo]})", type="primary", use_container_width=True):
+                if soma_total_itens <= 0:
+                    st.warning("⚠️ Insira ao menos um item com valor maior que R$ 0,00 na tabela.")
+                else:
                     salvar_nota_e_lancar_dre(
                         mes_ref=mes_ativo,
-                        razao_social=dados["razao_social"],
-                        cnpj=dados["cnpj"],
-                        valor_total=dados["valor_total"] or sum(somas_cat.values()),
+                        razao_social=fornec_input,
+                        cnpj=cnpj_input,
+                        valor_total=soma_total_itens,
                         lista_produtos=df_edit.to_dict(orient="records")
                     )
                     st.success(f"✅ Sucesso! Itens incorporados à aba LANÇAMENTOS e o DRE de {NOMES_MESES[mes_ativo]} foi recalculado[cite: 7, 8]!")
                     resetar_processamento_nota()
                     st.rerun()
-            with col_canc:
-                if st.button("❌ Descartar Nota", use_container_width=True):
-                    resetar_processamento_nota()
-                    st.rerun()
+        with col_canc:
+            if st.button("❌ Descartar Nota", use_container_width=True):
+                resetar_processamento_nota()
+                st.rerun()
 
 # ==============================================================================
 # 3. ABA DE LANÇAMENTOS DO MÊS
