@@ -53,7 +53,167 @@ div[data-testid="stCameraInput"] button { padding: 0.75rem 1.5rem !important; fo
 </style>
 """, unsafe_allow_html=True)
 
-# ----------------- BASE DE DADOS (SQLite com Ajustes Manuais do DRE) -----------------
+# ----------------- CATÁLOGO OFICIAL DOS 132 INDICADORES DO DRE SPOLETO -----------------
+CATALOGO_DRE_SPOLETO = {
+    # IMPOSTOS
+    "Simples": {"dre": "Imposto", "detalhamento": "Imposto Federal"},
+    "Icms": {"dre": "Imposto", "detalhamento": "Imposto Estadual"},
+    "Pis": {"dre": "Imposto", "detalhamento": "Imposto Federal"},
+    "Cofins": {"dre": "Imposto", "detalhamento": "Imposto Federal"},
+    "Iss": {"dre": "Imposto", "detalhamento": "Imposto Federal"},
+
+    # CMV - ALIMENTOS, BEBIDAS, DESCARTÁVEIS E FRETES
+    "Demais Alimentos": {"dre": "Alimentos", "detalhamento": "Alimentos"},
+    "Proteínas": {"dre": "Alimentos", "detalhamento": "Alimentos"},
+    "Laticínios": {"dre": "Alimentos", "detalhamento": "Alimentos"},
+    "Molhos": {"dre": "Alimentos", "detalhamento": "Alimentos"},
+    "Massas, Farinhas E Cereais": {"dre": "Alimentos", "detalhamento": "Alimentos"},
+    "Hortaliças": {"dre": "Alimentos", "detalhamento": "Alimentos"},
+    "Conservas": {"dre": "Alimentos", "detalhamento": "Alimentos"},
+    "Sobremesas": {"dre": "Alimentos", "detalhamento": "Alimentos"},
+    "Bebidas": {"dre": "Bebidas", "detalhamento": "Bebidas"},
+    "Embalagens E Descartáveis": {"dre": "Descartáveis", "detalhamento": "Descartáveis"},
+    "Frete FBD": {"dre": "Frete", "detalhamento": "Fretes"},
+    "Custo de Armazenagem": {"dre": "Frete", "detalhamento": "Fretes"},
+    "Outros (Frete)": {"dre": "Frete", "detalhamento": "Fretes"},
+
+    # OCUPAÇÃO
+    "Aluguel": {"dre": "Ocupação", "detalhamento": "Aluguel"},
+    "Aluguel Estoque Remoto": {"dre": "Ocupação", "detalhamento": "Aluguel"},
+    "Condomínio": {"dre": "Ocupação", "detalhamento": "Condomínio"},
+    "Fundo De Promoção": {"dre": "Ocupação", "detalhamento": "Fundo De Promoção"},
+    "Taxa Associação Lojista": {"dre": "Ocupação", "detalhamento": "Taxas E Outros"},
+    "Taxa De Incêndio E Seguro": {"dre": "Ocupação", "detalhamento": "Taxas E Outros"},
+    "Taxa Administrativa": {"dre": "Ocupação", "detalhamento": "Taxas E Outros"},
+    "Fundo De Reserva": {"dre": "Ocupação", "detalhamento": "Taxas E Outros"},
+    "Dedetização Shopping": {"dre": "Ocupação", "detalhamento": "Taxas E Outros"},
+    "Iptu": {"dre": "Ocupação", "detalhamento": "Iptu"},
+    "Ar Condicionado": {"dre": "Ocupação", "detalhamento": "Ar Condicionado"},
+
+    # PESSOAL
+    "Salário": {"dre": "Pessoal", "detalhamento": "Salário"},
+    "Adiantamento": {"dre": "Pessoal", "detalhamento": "Adiantamento"},
+    "Alimentação Funcionário": {"dre": "Pessoal", "detalhamento": "Benefícios"},
+    "Vale Transporte": {"dre": "Pessoal", "detalhamento": "Benefícios"},
+    "Vale Refeição": {"dre": "Pessoal", "detalhamento": "Benefícios"},
+    "Plano De Saúde": {"dre": "Pessoal", "detalhamento": "Benefícios"},
+    "Fgts": {"dre": "Pessoal", "detalhamento": "Encargos"},
+    "Inss": {"dre": "Pessoal", "detalhamento": "Encargos"},
+    "Férias": {"dre": "Pessoal", "detalhamento": "Férias"},
+    "13 Salário": {"dre": "Pessoal", "detalhamento": "13 Salário"},
+    "Provisão 13 Salário": {"dre": "Pessoal", "detalhamento": "Provisões"},
+    "Provisão Férias": {"dre": "Pessoal", "detalhamento": "Provisões"},
+    "Rescisão": {"dre": "Pessoal", "detalhamento": "Rescisão"},
+    "Hora Extra": {"dre": "Pessoal", "detalhamento": "Outros (pessoal)"},
+    "Auxílio Combustível": {"dre": "Pessoal", "detalhamento": "Outros (pessoal)"},
+    "Farmácia": {"dre": "Pessoal", "detalhamento": "Outros (pessoal)"},
+    "Contribuição Sindical": {"dre": "Pessoal", "detalhamento": "Outros (pessoal)"},
+    "Recrutamento/Seleção": {"dre": "Pessoal", "detalhamento": "Outros (pessoal)"},
+    "Treinamento": {"dre": "Pessoal", "detalhamento": "Outros (pessoal)"},
+
+    # UTILIDADES
+    "Água E Esgoto": {"dre": "Utilidades", "detalhamento": "Água E Esgoto"},
+    "Energia Elétrica": {"dre": "Utilidades", "detalhamento": "Energia Elétrica"},
+    "Gás": {"dre": "Utilidades", "detalhamento": "Gás"},
+    "Telefone": {"dre": "Utilidades", "detalhamento": "Telefone"},
+    "Celular Loja": {"dre": "Utilidades", "detalhamento": "Telefone"},
+    "Internet": {"dre": "Utilidades", "detalhamento": "Internet"},
+    "Taxa De Lixo": {"dre": "Utilidades", "detalhamento": "Outros (utilidades)"},
+
+    # SERVIÇOS GERAIS & TERCEIROS
+    "Advogado": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Terceiros"},
+    "Contabilidade": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Terceiros"},
+    "Assessoria/Consultoria": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Terceiros"},
+    "Laboratório": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Terceiros"},
+    "Suporte Informática": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Terceiros"},
+    "Dedetização": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Terceiros"},
+    "Cartório": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Serviços"},
+    "Correio/Malote": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Serviços"},
+    "Aluel Máquinas Das Adquirentes": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Serviços"},
+    "Aluguel Pos": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Serviços"},
+    "Fee Gcom": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Serviços"},
+    "Fee Clastech": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Serviços"},
+    "Fee Totem": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Serviços"},
+    "Tef": {"dre": "Serviços_Gerais_Terceiros", "detalhamento": "Serviços"},
+
+    # MATERIAIS DE USO E CONSUMO & LIMPEZA
+    "Material De Escritório": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Material De Escritório"},
+    "Material De Limpeza": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Material De Limpeza"},
+    "Pan Clean (Detergente Neutro)": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Material De Limpeza"},
+    "Virex Flv": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Material De Limpeza"},
+    "Suma Grill (Desincrustante)": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Material De Limpeza"},
+    "Break Up (Desengordurante)": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Material De Limpeza"},
+    "Suma Chlor": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Material De Limpeza"},
+    "Block Whitener": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Material De Limpeza"},
+    "Rolo Bactericida": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Material De Limpeza"},
+    "Suma Mach (Máquina De Lavar)": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Material De Limpeza"},
+    "Suma Rinse (Máquina De Lavar)": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Material De Limpeza"},
+    "Uniformes": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Uniformes"},
+    "Utensílios De Cozinha": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Utensílios"},
+    "Alcool Gel": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
+    "Alcool Líquido": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
+    "Cloro": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
+    "Esponja Fibraço": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
+    "Esponja Dupla Face": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
+    "Bobina Pdv": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
+    "Bobina Balança": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
+    "Bobina Picotada": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
+    "Filme Pvc": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
+    "Borrifador": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
+    "Rede De Proteção (Touca Preta)": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
+    "Touca Descartável": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
+    "Rodo De Alumínio": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
+    "Refil Rodo De Alumínio": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
+    "Pedra De Afiar": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
+    "Saco De Lixo": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
+    "Fita Ph": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
+    "Mop": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
+    "Refil Para Mop": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
+    "Luva Latex": {"dre": "Material_De_Uso_E_Consumo", "detalhamento": "Outros Materiais De Uso E Consumo"},
+
+    # MANUTENÇÃO
+    "Serviço - Manutenção E Reparos": {"dre": "Manutenção", "detalhamento": "Serviço - Manutenção E Reparos"},
+    "Material - Manutenção E Reparos": {"dre": "Manutenção", "detalhamento": "Material - Manutenção E Reparos"},
+
+    # DELIVERY
+    "Comissão Agregadores": {"dre": "Delivery", "detalhamento": "Comissão Agregadores"},
+    "Custo Com Entrega (Motoqueiros)": {"dre": "Delivery", "detalhamento": "Custo Com Entrega (Motoqueiros)"},
+    "Custo Com Taxa Grátis": {"dre": "Delivery", "detalhamento": "Custo Com Taxa Grátis"},
+    "Taxa Transação (Taxa Cartão Ifood)": {"dre": "Delivery", "detalhamento": "Taxa Transação (Taxa Cartão Ifood)"},
+    "Mensalidade": {"dre": "Delivery", "detalhamento": "Mensalidade"},
+    "Voucher/Cupom": {"dre": "Delivery", "detalhamento": "Voucher/Cupom"},
+    "Site Próprio (Pwa)": {"dre": "Delivery", "detalhamento": "Site Próprio (Pwa)"},
+    "Outros (Delivery)": {"dre": "Delivery", "detalhamento": "Outros (Delivery)"},
+
+    # MARKETING & TAXAS FRANQUEADOR
+    "Anúncios/Propagandas": {"dre": "Marketing", "detalhamento": "Anúncios/Propagandas"},
+    "Gerenciamento Página Instagram": {"dre": "Marketing", "detalhamento": "Gerenciamento Página Instagram"},
+    "Gráfica (Folhetos, Banners)": {"dre": "Marketing", "detalhamento": "Gráfica (Folhetos, Banners)"},
+    "Programação Visual": {"dre": "Marketing", "detalhamento": "Programação Visual"},
+    "Dólar (Gnocchi Da Fortuna)": {"dre": "Marketing", "detalhamento": "Outros (Marketing)"},
+    "Outros (Marketing)": {"dre": "Marketing", "detalhamento": "Outros (Marketing)"},
+    "Royalties": {"dre": "Taxas_Franqueador", "detalhamento": "Royalties"},
+    "Fundo De Marketing": {"dre": "Taxas_Franqueador", "detalhamento": "Fundo De Marketing"},
+
+    # FINANCEIRO & NÃO OPERACIONAIS
+    "Custo Cartão De Crédito": {"dre": "Financeiro", "detalhamento": "Custo Cartão De Crédito"},
+    "Custo Cartão De Débito": {"dre": "Financeiro", "detalhamento": "Custo Cartão De Débito"},
+    "Custo Ticket": {"dre": "Financeiro", "detalhamento": "Custo Ticket"},
+    "Despesas De Viagens": {"dre": "Despesas_Não_Operacionais", "detalhamento": "Despesas De Viagens"},
+    "Despesas De Convenção": {"dre": "Despesas_Não_Operacionais", "detalhamento": "Despesas De Convenção"},
+    "Rateio De Escritório Administrativo": {"dre": "Despesas_Não_Operacionais", "detalhamento": "Rateio De Escritório Administrativo"},
+    "Pessoal - Supervisor E Nutricionista": {"dre": "Despesas_Não_Operacionais", "detalhamento": "Pessoal - Supervisor E Nutricionista"},
+    "Empréstimos Bancário": {"dre": "Despesas_Não_Operacionais", "detalhamento": "Empréstimos Bancário"},
+    "Pronampe": {"dre": "Despesas_Não_Operacionais", "detalhamento": "Pronampe"},
+    "Juros De Empréstimos": {"dre": "Despesas_Não_Operacionais", "detalhamento": "Juros De Empréstimos"},
+    "Empréstimo Folha De Pagamento": {"dre": "Despesas_Não_Operacionais", "detalhamento": "Empréstimo Folha De Pagamento"},
+    "Capex": {"dre": "Despesas_Não_Operacionais", "detalhamento": "Capex"},
+    "Pro Labore": {"dre": "Despesas_Não_Operacionais", "detalhamento": "Pro Labore"}
+}
+
+LISTA_TODAS_CLASSIFICACOES = sorted(list(CATALOGO_DRE_SPOLETO.keys()))
+
+# ----------------- BASE DE DADOS (SQLite) -----------------
 def init_db():
     conn = sqlite3.connect("notas_fiscais.db")
     cursor = conn.cursor()
@@ -133,15 +293,6 @@ mes_ativo = st.sidebar.selectbox(
 )
 st.sidebar.markdown("---")
 
-MAPA_DRE_REGRAS = {
-    "Alimentos": {"desc": "ALIMENTOS", "dre": "Alimentos", "class": "Demais Alimentos", "det": "Alimentos"},
-    "Bebidas": {"desc": "BEBIDAS", "dre": "Bebidas", "class": "Bebidas", "det": "Bebidas"},
-    "Descartáveis": {"desc": "DESCARTAVEIS", "dre": "Descartáveis", "class": "Embalagens E Descartáveis", "det": "Descartáveis"},
-    "Limpeza": {"desc": "LIMPEZA", "dre": "Material_De_Uso_E_Consumo", "class": "Material De Limpeza", "det": "Material De Limpeza"},
-    "Funcionários": {"desc": "FUNCIONARIO", "dre": "Pessoal", "class": "Alimentação Funcionário", "det": "Benefícios"},
-    "Utensílios": {"desc": "UTENSILIOS", "dre": "Material_De_Uso_E_Consumo", "class": "Utensílios De Cozinha", "det": "Utensílios"}
-}
-
 def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_produtos):
     conn = sqlite3.connect("notas_fiscais.db")
     cursor = conn.cursor()
@@ -155,22 +306,23 @@ def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_pro
     df_temp = pd.DataFrame(lista_produtos)
     if not df_temp.empty:
         col_tot = "TotalItem" if "TotalItem" in df_temp.columns else "Total do Item (R$)"
-        totais = df_temp.groupby("Categoria")[col_tot].sum().to_dict()
+        col_class = "Classificacao" if "Classificacao" in df_temp.columns else "Categoria"
+        totais = df_temp.groupby(col_class)[col_tot].sum().to_dict()
         data_hoje = datetime.now().strftime("%Y-%m-%d")
 
-        for cat, v in totais.items():
+        for class_nome, v in totais.items():
             if v > 0:
-                cfg = MAPA_DRE_REGRAS.get(cat, {
-                    "desc": cat.upper(), "dre": "Alimentos", "class": "Demais Alimentos", "det": "Alimentos"
+                cfg = CATALOGO_DRE_SPOLETO.get(class_nome, {
+                    "dre": "Alimentos", "detalhamento": "Alimentos"
                 })
                 cursor.execute("""
                     INSERT INTO lancamentos_dre (mes_referencia, data, fornecedor, descricao, valor, dre, classificacao, detalhamento)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (mes_ref, data_hoje, razao_social.upper(), cfg["desc"], float(v), cfg["dre"], cfg["class"], cfg["det"]))
+                """, (mes_ref, data_hoje, razao_social.upper(), class_nome.upper(), float(v), cfg["dre"], class_nome, cfg["detalhamento"]))
 
         for item in lista_produtos:
             prod = str(item.get("Produto", "")).strip().upper()
-            c = str(item.get("Categoria", "")).strip()
+            c = str(item.get(col_class, "")).strip()
             if prod:
                 cursor.execute("""
                     INSERT INTO regras_classificacao (produto, categoria)
@@ -226,16 +378,24 @@ def gerar_excel_dre(nome_mes, df_dre_completo, df_lancamentos):
     output.seek(0)
     return output.getvalue()
 
-# ----------------- CONFIGURAÇÕES IA -----------------
+# ----------------- CONFIGURAÇÕES IA COM O CATÁLOGO COMPLETO -----------------
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
 except Exception:
     st.error("⚠️ Configure a GEMINI_API_KEY no arquivo .streamlit/secrets.toml.")
     st.stop()
 
-LISTA_CATEGORIAS = ["Alimentos", "Descartáveis", "Limpeza", "Funcionários", "Utensílios", "Bebidas"]
-CATEGORIAS_VALIDAS = ", ".join(LISTA_CATEGORIAS)
 MODELOS_IA = ["gemini-3.8-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+
+# Amostra resumida das opções mais comuns para orientar o prompt da IA
+AMOSTRA_CLASSIFICACOES = """
+Demais Alimentos, Proteínas, Laticínios, Molhos, Massas, Farinhas E Cereais, Hortaliças, Conservas, Sobremesas,
+Bebidas, Embalagens E Descartáveis, Frete FBD, Aluguel, Condomínio, Fundo De Promoção, IPTU, Ar Condicionado,
+Alimentação Funcionário, Vale Transporte, Salário, Energia Elétrica, Água E Esgoto, Gás, Internet, Telefone,
+Material De Limpeza, Pan Clean (Detergente Neutro), Virex Flv, Break Up (Desengordurante), Suma Grill,
+Material De Escritório, Uniformes, Utensílios De Cozinha, Saco De Lixo, Bobina Pdv, Esponja Fibraço,
+Serviço - Manutenção E Reparos, Material - Manutenção E Reparos, Comissão Agregadores, Anúncios/Propagandas, Capex
+"""
 
 def chamar_gemini_com_fallback(chave, conteudos):
     client = genai.Client(api_key=chave)
@@ -261,11 +421,16 @@ def processar_multiplas_imagens_com_ia(partes_img, chave):
     regras = carregar_regras()
     ex_regras = json.dumps(regras, ensure_ascii=False) if regras else "Nenhuma ainda."
     prompt = f"""
-    Você é o assistente financeiro da franquia Spoleto (Capry Comércio).
+    Você é o assistente financeiro oficial da franquia Spoleto (Capry Comércio Varejista de Alimentos LTDA).
     Analise as imagens anexadas do cupom/nota fiscal.
-    Categorias obrigatórias: {CATEGORIAS_VALIDAS}.
-    Priorize este histórico de regras: {ex_regras}
-    Extraia: 'razao_social', 'cnpj', 'valor_total' (float) e 'itens' [Produto, Quantidade, Unid, PrecoUnitario, TotalItem, Categoria].
+    Sua tarefa é extrair os itens e associar a 'Classificacao' com EXATIDÃO entre as 132 opções oficiais do DRE Spoleto.
+    Exemplos de classificações válidas:
+    {AMOSTRA_CLASSIFICACOES}
+
+    Priorize rigorosamente estas regras memorizadas pelo usuário:
+    {ex_regras}
+
+    Extraia: 'razao_social', 'cnpj', 'valor_total' (float) e 'itens' [Produto, Quantidade, Unid, PrecoUnitario, TotalItem, Classificacao].
     Retorne APENAS um JSON válido.
     """
     return chamar_gemini_com_fallback(chave, [prompt] + partes_img)
@@ -274,9 +439,10 @@ def processar_texto_com_ia(texto, nome_arq, chave):
     regras = carregar_regras()
     ex_regras = json.dumps(regras, ensure_ascii=False) if regras else "Nenhuma."
     prompt = f"""
-    Analise o arquivo '{nome_arq}'. Categorias obrigatórias: {CATEGORIAS_VALIDAS}.
+    Analise o arquivo '{nome_arq}'. Classifique os itens com as categorias oficiais do DRE Spoleto.
+    Exemplos: {AMOSTRA_CLASSIFICACOES}.
     Regras conhecidas: {ex_regras}.
-    Retorne lista JSON com: Produto, Quantidade, Unid, PrecoUnitario, TotalItem, Categoria.
+    Retorne lista JSON com: Produto, Quantidade, Unid, PrecoUnitario, TotalItem, Classificacao.
     Texto: {texto[:15000]}
     """
     res = chamar_gemini_com_fallback(chave, prompt)
@@ -287,7 +453,11 @@ def categorizar_nomes_xml(nomes, chave):
     mapa = {n: regras[n.strip().upper()] for n in nomes if n.strip().upper() in regras}
     faltam = [n for n in nomes if n.strip().upper() not in regras]
     if faltam:
-        p = f"Classifique os itens em {CATEGORIAS_VALIDAS}: {json.dumps(faltam, ensure_ascii=False)}. Retorne JSON objeto {{\"nome\": \"categoria\"}}."
+        p = f"""
+        Classifique os produtos abaixo nas opções oficiais do DRE Spoleto (ex: Demais Alimentos, Proteínas, Laticínios, Embalagens E Descartáveis, Bebidas, Material De Limpeza, Utensílios De Cozinha, etc):
+        {json.dumps(faltam, ensure_ascii=False)}.
+        Retorne JSON objeto {{\"nome_do_produto\": \"Classificacao\"}}.
+        """
         res = chamar_gemini_com_fallback(chave, p)
         if isinstance(res, dict):
             mapa.update(res)
@@ -317,12 +487,10 @@ if menu.startswith("📊 DRE Spoleto"):
     df_l = obter_lancamentos_mes(mes_ativo)
     somas_escaneadas = df_l.groupby("detalhamento")["valor"].sum().to_dict() if not df_l.empty else {}
 
-    # 2. Obter ajustes manuais salvos anteriormente no banco para este mês
+    # 2. Obter ajustes manuais salvos no banco para este mês
     ajustes_banco = obter_ajustes_dre(mes_ativo)
 
-    # Definição das contas analíticas (editáveis) do DRE Spoleto
-    # chave: (Nome exibido na tela, Categoria/Origem do detalhamento se houver)
-    CONTAS_DRE = [
+    CONTAS_DRE_PAINEL = [
         # Receitas & Impostos
         ("Faturamento Balcão", None, 0.0),
         ("Faturamento Delivery", None, 0.0),
@@ -382,9 +550,8 @@ if menu.startswith("📊 DRE Spoleto"):
         ("Total Bonificação", None, 0.0)
     ]
 
-    # Preencher valores: prioridade 1: Ajuste manual no banco; prioridade 2: Escaneado de notas
     lista_linhas_editaveis = []
-    for nome_conta, chave_det, val_padrao in CONTAS_DRE:
+    for nome_conta, chave_det, val_padrao in CONTAS_DRE_PAINEL:
         if nome_conta in ajustes_banco:
             val_atual = ajustes_banco[nome_conta]
         elif chave_det and chave_det in somas_escaneadas:
@@ -399,12 +566,11 @@ if menu.startswith("📊 DRE Spoleto"):
 
     df_base_editavel = pd.DataFrame(lista_linhas_editaveis)
 
-    # Tabela com Edição Direta
     st.write("👇 **Tabela de Lançamentos do DRE (Clique no valor para editar):**")
     df_dre_editado = st.data_editor(
         df_base_editavel,
         column_config={
-            "CONTA": st.column_config.TextColumn("Conta / Rubrica", disabled=True),
+            "CONTA": st.column_config.TextColumn("Conta / Indicador", disabled=True),
             "VALOR (R$)": st.column_config.NumberColumn("VALOR (R$)", format="R$ %.2f", min_value=0.0, step=10.0, required=True)
         },
         use_container_width=True,
@@ -413,7 +579,6 @@ if menu.startswith("📊 DRE Spoleto"):
         key=f"editor_dre_{mes_ativo}"
     )
 
-    # Botão para persistir qualquer alteração feita no DRE
     col_save_dre, _ = st.columns([2, 3])
     with col_save_dre:
         if st.button("💾 Salvar Alterações do DRE na Base de Dados", type="primary", use_container_width=True):
@@ -421,7 +586,6 @@ if menu.startswith("📊 DRE Spoleto"):
             salvar_ajustes_dre(mes_ativo, novos_ajustes)
             st.success("✅ **Alterações salvas com sucesso no banco de dados!**")
 
-    # Mapear valores editados para cálculo em cascata em tempo real
     v_map = dict(zip(df_dre_editado["CONTA"], df_dre_editado["VALOR (R$)"]))
 
     def v(k):
@@ -471,7 +635,6 @@ if menu.startswith("📊 DRE Spoleto"):
             return f"{(val / venda_bruta) * 100:.2f}%"
         return "0.00%"
 
-    # RESUMO EXECUTIVO COM CARDS
     st.markdown("---")
     st.write("### 📈 Visão Consolidada em Tempo Real")
     c1, c2, c3, c4 = st.columns(4)
@@ -480,7 +643,6 @@ if menu.startswith("📊 DRE Spoleto"):
     c3.metric("🔹 Lucro Bruto", f"R$ {lucro_bruto:,.2f}", delta=pct(lucro_bruto))
     c4.metric("💰 Resultado Final", f"R$ {res_final:,.2f}", delta=pct(res_final))
 
-    # ESTRUTURA OFICIAL SINTÉTICA DO DRE SPOLETO
     estrutura_dre_spoleto = [
         {"CONTA": "🔹 VENDA BRUTA", "VALOR": venda_bruta, "%": "100.00%"},
         {"CONTA": "  • Faturamento Balcão", "VALOR": fat_balcao, "%": pct(fat_balcao)},
@@ -514,7 +676,6 @@ if menu.startswith("📊 DRE Spoleto"):
     df_spoleto_view["VALOR"] = df_spoleto_view["VALOR"].apply(lambda x: f"R$ {x:,.2f}" if pd.notnull(x) else "")
     st.dataframe(df_spoleto_view, use_container_width=True, height=550)
 
-    # Botão de Exportação Excel
     st.markdown("### 📥 Baixar Relatório")
     dados_excel = gerar_excel_dre(NOMES_MESES[mes_ativo], pd.DataFrame(estrutura_dre_spoleto), df_l)
     st.download_button(
@@ -527,11 +688,11 @@ if menu.startswith("📊 DRE Spoleto"):
     )
 
 # ==============================================================================
-# 2. ABA DE ESCANEAR NOTA & ALIMENTAR DRE AUTOMATICAMENTE
+# 2. ABA DE ESCANEAR NOTA & ALIMENTAR DRE AUTOMATICAMENTE COM 132 INDICADORES
 # ==============================================================================
 elif menu.startswith("📸 Escanear"):
     st.subheader(f"📸 Escanear Nota Fiscal para o DRE de: {NOMES_MESES[mes_ativo]}")
-    st.info(f"Ao confirmar o salvamento, todos os itens serão classificados e entrarão direto no DRE de **{NOMES_MESES[mes_ativo]}**[cite: 7, 8]!")
+    st.info(f"Ao confirmar o salvamento, todos os itens serão classificados nos 132 indicadores oficiais do Spoleto e entrarão direto no DRE de **{NOMES_MESES[mes_ativo]}**[cite: 7, 8]!")
 
     aba_foto, aba_cam, aba_arq = st.tabs([
         "📸 Fotos Nítidas (Telemóvel / Galeria)",
@@ -561,7 +722,7 @@ elif menu.startswith("📸 Escanear"):
         with c1:
             if st.button("🚀 Processar Fotos com IA & Alimentar DRE", type="primary", use_container_width=True):
                 partes = [types.Part.from_bytes(data=f["bytes"], mime_type=f["mime"]) for f in st.session_state.fotos_acumuladas]
-                with st.spinner("🤖 Lendo itens e classificando categorias do Spoleto..."):
+                with st.spinner("🤖 Lendo itens e classificando nos 132 indicadores do Spoleto..."):
                     res = processar_multiplas_imagens_com_ia(partes, api_key)
                     if res and isinstance(res, dict):
                         st.session_state.dados_extraidos = {
@@ -596,7 +757,7 @@ elif menu.startswith("📸 Escanear"):
                     p = i.get("prod", {})
                     nm = p.get("xProd", "")
                     itens_x.append({
-                        "Categoria": mapa.get(nm, "Alimentos"),
+                        "Classificacao": mapa.get(nm, "Demais Alimentos"),
                         "Produto": nm,
                         "Quantidade": float(p.get("qCom", 0)),
                         "Unid": p.get("uCom", "UN"),
@@ -632,19 +793,39 @@ elif menu.startswith("📸 Escanear"):
 
         df_itens = pd.DataFrame(dados["itens"])
         if not df_itens.empty:
+            if "Classificacao" not in df_itens.columns and "Categoria" in df_itens.columns:
+                df_itens.rename(columns={"Categoria": "Classificacao"}, inplace=True)
+
+            # Se a IA sugerir algo fora do catálogo, fallback suave para Demais Alimentos
+            df_itens["Classificacao"] = df_itens["Classificacao"].apply(
+                lambda x: x if x in CATALOGO_DRE_SPOLETO else "Demais Alimentos"
+            )
+
+            st.write("👇 **Revise e altere a Classificação do Spoleto de cada item se necessário:**")
             df_edit = st.data_editor(
                 df_itens,
-                column_config={"Categoria": st.column_config.SelectboxColumn("Categoria", options=LISTA_CATEGORIAS, required=True)},
+                column_config={
+                    "Classificacao": st.column_config.SelectboxColumn(
+                        "Classificação Spoleto",
+                        options=LISTA_TODAS_CLASSIFICACOES,
+                        required=True
+                    ),
+                    "Produto": st.column_config.TextColumn("Produto", required=True),
+                    "Quantidade": st.column_config.NumberColumn("Qtd", format="%.2f"),
+                    "Unid": st.column_config.TextColumn("Unid"),
+                    "PrecoUnitario": st.column_config.NumberColumn("Preço Unit. (R$)", format="R$ %.2f"),
+                    "TotalItem": st.column_config.NumberColumn("Total Item (R$)", format="R$ %.2f"),
+                },
                 use_container_width=True,
                 num_rows="dynamic",
                 key="editor_nota_ativa"
             )
 
-            somas_cat = df_edit.groupby("Categoria")["TotalItem"].sum().to_dict()
-            st.write("#### 📊 Subtotais por Categoria que alimentarão o DRE:")
-            c_grid = st.columns(len(somas_cat))
-            for idx, (cat_n, val_n) in enumerate(somas_cat.items()):
-                c_grid[idx].metric(cat_n, f"R$ {val_n:,.2f}")
+            somas_class = df_edit.groupby("Classificacao")["TotalItem"].sum().to_dict()
+            st.write("#### 📊 Subtotais que alimentarão a aba LANÇAMENTOS e o DRE:")
+            c_grid = st.columns(min(len(somas_class), 4))
+            for idx, (cl_n, val_n) in enumerate(somas_class.items()):
+                c_grid[idx % 4].metric(cl_n, f"R$ {val_n:,.2f}")
 
             st.markdown("---")
             c_salvar, c_limpar = st.columns([2, 1])
@@ -654,7 +835,7 @@ elif menu.startswith("📸 Escanear"):
                         mes_ref=mes_ativo,
                         razao_social=dados["razao_social"],
                         cnpj=dados["cnpj"],
-                        valor_total=dados["valor_total"] or sum(somas_cat.values()),
+                        valor_total=dados["valor_total"] or sum(somas_class.values()),
                         lista_produtos=df_edit.to_dict(orient="records")
                     )
                     st.success(f"✅ Sucesso! Os valores foram incorporados à aba LANÇAMENTOS e o DRE de {NOMES_MESES[mes_ativo]} foi atualizado automaticamente[cite: 7, 8].")
@@ -707,7 +888,7 @@ elif menu.startswith("🧠 Regras"):
     st.write("Produtos memorizados pelas suas correções anteriores:")
     regras = carregar_regras()
     if regras:
-        df_r = pd.DataFrame(list(regras.items()), columns=["Produto", "Categoria"]).sort_values("Produto")
+        df_r = pd.DataFrame(list(regras.items()), columns=["Produto", "Classificação Spoleto"]).sort_values("Produto")
         st.dataframe(df_r, use_container_width=True)
     else:
         st.info("Nenhuma regra personalizada ainda. Sempre que corrigir e salvar uma nota, a IA memoriza aqui.")
