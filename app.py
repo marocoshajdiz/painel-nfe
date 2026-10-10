@@ -9,15 +9,9 @@ import sqlite3
 import io
 from datetime import datetime
 
-# Importações para geração de PDF
-from reportlab.lib.pagesizes import A4
-from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-
 st.set_page_config(page_title="Painel de Custos & DRE Spoleto - Capry", layout="wide")
 
-# ----------------- CONTROLO DE ACESSO -----------------
+# ----------------- CONTROLE DE ACESSO -----------------
 USUARIO_CORRETO = "admin"
 SENHA_CORRETA = "massima"
 
@@ -50,7 +44,7 @@ if st.sidebar.button("🚪 Sair do Sistema"):
     st.rerun()
 st.sidebar.markdown("---")
 
-# CSS para visor expandido da câmara
+# CSS para visor expandido da câmera
 st.markdown("""
 <style>
 div[data-testid="stCameraInput"] { width: 100% !important; max-width: 900px !important; margin: 0 auto; }
@@ -231,14 +225,12 @@ def salvar_dados_mensais_seguro(mes_ref, dados):
             ultima_atualizacao=excluded.ultima_atualizacao
     """, (mes_ref, dados["balcao"], dados["delivery"], dados["imposto_est"], dados["gas"], dados["terceiros"], dados["bonificacao"], horario_agora))
     conn.commit()
-    
-    # Verificação de segurança pós-gravação
     c.execute("SELECT ultima_atualizacao FROM dados_mensais WHERE mes_referencia = ?", (mes_ref,))
     confirmacao = c.fetchone()
     conn.close()
     return confirmacao[0] if confirmacao else horario_agora
 
-# ----------------- GERADORES EXCEL & PDF -----------------
+# ----------------- GERADOR EXCEL -----------------
 def gerar_excel_dre(nome_mes, linhas_dre, df_lancamentos):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -254,64 +246,6 @@ def gerar_excel_dre(nome_mes, linhas_dre, df_lancamentos):
             df_lanc_export.to_excel(writer, sheet_name="LANÇAMENTOS", index=False)
     output.seek(0)
     return output.getvalue()
-
-def gerar_pdf_dre(nome_mes, linhas_dre):
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=24, leftMargin=24, topMargin=24, bottomMargin=24)
-    story = []
-    styles = getSampleStyleSheet()
-
-    title_style = ParagraphStyle(
-        'TitleStyle',
-        parent=styles['Heading1'],
-        fontSize=13,
-        textColor=colors.HexColor('#8B0000'),
-        alignment=1,
-        spaceAfter=4
-    )
-    story.append(Paragraph("<b>DEMONSTRATIVO DE RESULTADOS (DRE) - SPOLETO</b>", title_style))
-    story.append(Paragraph(f"<b>Capry Comércio Varejista de Alimentos LTDA | Competência: {nome_mes}</b>", ParagraphStyle('Sub', parent=styles['Normal'], alignment=1, fontSize=9, spaceAfter=12)))
-
-    table_data = [["CONTA / RUBRICA", "VALOR (R$)", "% AV"]]
-    destaques = []
-
-    for item in linhas_dre:
-        conta = item["CONTA"]
-        val = item["VALOR"]
-        pct = item["%"]
-        if "----" in conta:
-            continue
-        
-        conta_limpa = conta.replace("🔹 ", "").replace("📦 ", "").replace("🏢 ", "").replace("👥 ", "").replace("💡 ", "").replace("🧹 ", "").replace("🔧 ", "").replace("🛵 ", "").replace("📢 ", "").replace("💳 ", "").replace("🔴 ", "").replace("🏆 ", "").replace("💰 ", "")
-        val_str = f"R$ {val:,.2f}" if isinstance(val, (int, float)) and val is not None else ""
-        table_data.append([conta_limpa, val_str, pct])
-        
-        if any(mark in conta for mark in ["🔹", "📦", "🏢", "👥", "💡", "🧹", "🔧", "🛵", "📢", "💳", "🔴", "🏆", "💰"]):
-            destaques.append(len(table_data) - 1)
-
-    t = Table(table_data, colWidths=[330, 140, 70])
-    t_style = [
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#8B0000')),
-        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0,0), (-1,0), 9),
-        ('BOTTOMPADDING', (0,0), (-1,0), 4),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#E0E0E0')),
-        ('FONTNAME', (0,1), (-1,-1), 'Helvetica'),
-        ('FONTSIZE', (0,1), (-1,-1), 8),
-        ('ALIGN', (1,0), (-1,-1), 'RIGHT'),
-        ('ALIGN', (0,0), (0,-1), 'LEFT'),
-    ]
-
-    for idx in destaques:
-        t_style.append(('BACKGROUND', (0, idx), (-1, idx), colors.HexColor('#F2F2F2')))
-        t_style.append(('FONTNAME', (0, idx), (-1, idx), 'Helvetica-Bold'))
-
-    t.setStyle(TableStyle(t_style))
-    story.append(t)
-    doc.build(story)
-    buffer.seek(0)
-    return buffer.getvalue()
 
 # ----------------- CONFIGURAÇÕES IA -----------------
 try:
@@ -394,16 +328,14 @@ if "dados_extraidos" not in st.session_state:
     st.session_state.dados_extraidos = None
 
 # ==============================================================================
-# 1. ABA DO DRE OFICIAL (TEMPO REAL & GRAVAÇÃO SEGURA)
+# 1. ABA DO DRE OFICIAL
 # ==============================================================================
 if menu.startswith("📊 DRE Spoleto"):
     st.subheader(f"📊 Demonstrativo de Resultados (DRE) — {NOMES_MESES[mes_ativo]}")
     st.write(f"Todos os custos escaneados neste mês entram automaticamente no cálculo de CMV e despesas operacionais abaixo[cite: 7, 8].")
 
-    # Carregar dados gravados na base de dados
     dados_bd = obter_dados_mensais(mes_ativo)
 
-    # Inicializar variáveis da sessão reativa para tempo real
     prefixo = f"dre_{mes_ativo}_"
     if f"{prefixo}balcao" not in st.session_state:
         st.session_state[f"{prefixo}balcao"] = dados_bd["balcao"]
@@ -450,14 +382,12 @@ if menu.startswith("📊 DRE Spoleto"):
         with col_status:
             st.info(f"🕒 **Última gravação confirmada no banco:** {dados_bd['atualizado_em']}")
 
-    # Leitura dos lançamentos escaneados
     df_l = obter_lancamentos_mes(mes_ativo)
     somas_det = df_l.groupby("detalhamento")["valor"].sum().to_dict() if not df_l.empty else {}
 
     def get_v(det_nome):
         return float(somas_det.get(det_nome, 0.0))
 
-    # CÁLCULOS EM TEMPO REAL COM BASE NOS VALORES ATIVOS NA TELA
     venda_bruta = fat_b + fat_d
     imposto_fed = get_v("Imposto Federal")
     imposto_est = imp_e
@@ -530,7 +460,6 @@ if menu.startswith("📊 DRE Spoleto"):
             return f"{(val / venda_bruta) * 100:.2f}%"
         return "0.00%"
 
-    # Cartões de Resumo no topo
     col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
     col_kpi1.metric("🔹 Venda Bruta", f"R$ {venda_bruta:,.2f}")
     col_kpi2.metric("📦 C M V Total", f"R$ {total_cmv:,.2f}", delta=fmt_pct(total_cmv), delta_color="inverse")
@@ -574,30 +503,16 @@ if menu.startswith("📊 DRE Spoleto"):
     df_view["VALOR"] = df_view["VALOR"].apply(lambda x: f"R$ {x:,.2f}" if pd.notnull(x) else "")
     st.dataframe(df_view, use_container_width=True, height=650)
 
-    # ----------------- BOTÕES DE DOWNLOAD (EXCEL E PDF) -----------------
     st.markdown("### 📥 Exportar Relatório Oficial")
-    col_dl_xls, col_dl_pdf = st.columns(2)
-
-    with col_dl_xls:
-        dados_excel = gerar_excel_dre(NOMES_MESES[mes_ativo], linhas_dre, df_l)
-        st.download_button(
-            label="📊 Baixar DRE em Excel (.xlsx)",
-            data=dados_excel,
-            file_name=f"DRE_Spoleto_{mes_ativo}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary",
-            use_container_width=True
-        )
-
-    with col_dl_pdf:
-        dados_pdf = gerar_pdf_dre(NOMES_MESES[mes_ativo], linhas_dre)
-        st.download_button(
-            label="📄 Baixar DRE em PDF (.pdf)",
-            data=dados_pdf,
-            file_name=f"DRE_Spoleto_{mes_ativo}.pdf",
-            mime="application/pdf",
-            use_container_width=True
-        )
+    dados_excel = gerar_excel_dre(NOMES_MESES[mes_ativo], linhas_dre, df_l)
+    st.download_button(
+        label="📊 Baixar DRE em Excel (.xlsx)",
+        data=dados_excel,
+        file_name=f"DRE_Spoleto_{mes_ativo}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="primary",
+        use_container_width=True
+    )
 
 # ==============================================================================
 # 2. ABA DE ESCANEAR NOTA & ALIMENTAR DRE AUTOMATICAMENTE
@@ -739,7 +654,7 @@ elif menu.startswith("📸 Escanear"):
                     st.rerun()
 
 # ==============================================================================
-# 3. ABA DE LANÇAMENTOS DO MÊS (ESPELHO DA ABA DO EXCEL)
+# 3. ABA DE LANÇAMENTOS DO MÊS
 # ==============================================================================
 elif menu.startswith("📝 Lançamentos"):
     st.subheader(f"📝 Base de Lançamentos — {NOMES_MESES[mes_ativo]}")
