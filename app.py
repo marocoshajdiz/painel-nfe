@@ -55,7 +55,7 @@ div[data-testid="stCameraInput"] button { padding: 0.75rem 1.5rem !important; fo
 </style>
 """, unsafe_allow_html=True)
 
-# ----------------- 7 CATEGORIAS ESSENCIAIS MAPEADAS NO DRE -----------------
+# ----------------- CATEGORIAS DE CLASSIFICAÇÃO MAPEADAS NO DRE -----------------
 MAPA_7_CATEGORIAS = {
     "Demais Alimentos": {"dre": "Alimentos", "det": "Alimentos"},
     "Descartáveis": {"dre": "Descartáveis", "det": "Descartáveis"},
@@ -64,8 +64,35 @@ MAPA_7_CATEGORIAS = {
     "Bebidas": {"dre": "Bebidas", "det": "Bebidas"},
     "Horte": {"dre": "Alimentos", "det": "Alimentos"},
     "Uniformes": {"dre": "Material_De_Uso_E_Consumo", "det": "Uniformes"},
+    "Uniforme": {"dre": "Material_De_Uso_E_Consumo", "det": "Uniformes"},
+    "Alimentação Funcionário": {"dre": "Benefícios", "det": "Benefícios"},
 }
 LISTA_7_CATEGORIAS = list(MAPA_7_CATEGORIAS.keys())
+
+
+def formatar_numero_br(valor):
+    """Formata número no padrão brasileiro: 1.234,56."""
+    try:
+        return f"{float(valor or 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    except (TypeError, ValueError):
+        return "0,00"
+
+
+def converter_numero_br(valor):
+    """Aceita números digitados como 1234,56 ou 1.234,56."""
+    if valor is None or (isinstance(valor, float) and pd.isna(valor)):
+        return 0.0
+    if isinstance(valor, (int, float)):
+        return float(valor)
+    texto = str(valor).strip().replace("R$", "").replace(" ", "")
+    if not texto:
+        return 0.0
+    if "," in texto:
+        texto = texto.replace(".", "").replace(",", ".")
+    try:
+        return float(texto)
+    except ValueError:
+        return 0.0
 MODELO_GEMINI = "gemini-3.8-flash"
 
 
@@ -378,7 +405,7 @@ Retorne apenas JSON válido neste formato:
 
 Cada produto deve corresponder a uma linha real do documento. Use ponto decimal para números.
 Categorias permitidas, escolha exatamente uma:
-["Demais Alimentos", "Descartáveis", "Limpeza", "Utensílios", "Bebidas", "Horte", "Uniformes"].
+["Demais Alimentos", "Descartáveis", "Limpeza", "Utensílios", "Bebidas", "Horte", "Uniformes", "Uniforme", "Alimentação Funcionário"].
 Use "Horte" para hortifrúti. Não confunda valor total da nota com subtotal dos produtos.
 """
 
@@ -578,16 +605,16 @@ if menu.startswith("📊 DRE Spoleto"):
         val_escaneado = float(somas_escaneadas.get(chave_det, 0.0)) if chave_det else 0.0
         val_ajuste = float(ajustes_banco.get(nome_conta, val_padrao))
         val_final = val_escaneado if (val_escaneado > 0 and val_ajuste == 0.0) else (val_escaneado + val_ajuste)
-        lista_linhas_editaveis.append({"CONTA": nome_conta, "VALOR (R$)": float(round(val_final, 2))})
+        lista_linhas_editaveis.append({"CONTA": nome_conta, "VALOR (R$)": formatar_numero_br(round(val_final, 2))})
 
     df_base_editavel = pd.DataFrame(lista_linhas_editaveis)
-    st.write("👇 **Tabela de Lançamentos do DRE (Clique para editar e depois clique em Salvar):**")
+    st.write("👇 **Tabela de Lançamentos do DRE (digite os valores com vírgula decimal, por exemplo 1.234,56, e depois clique em Salvar):**")
     qtd_lanc = len(df_l)
     df_dre_editado = st.data_editor(
         df_base_editavel,
         column_config={
             "CONTA": st.column_config.TextColumn("Conta / Indicador", disabled=True),
-            "VALOR (R$)": st.column_config.NumberColumn("VALOR (R$)", format="R$ %.2f", min_value=0.0, step=10.0, required=True),
+            "VALOR (R$)": st.column_config.TextColumn("VALOR (R$) — padrão 1.234,56", help="Digite valores no padrão brasileiro, por exemplo 125,90 ou 1.234,56."),
         },
         use_container_width=True,
         num_rows="fixed",
@@ -598,11 +625,11 @@ if menu.startswith("📊 DRE Spoleto"):
     col_save_dre, _ = st.columns([2, 3])
     with col_save_dre:
         if st.button("💾 Salvar Lançamentos e Ajustes do DRE na Base de Dados", type="primary", use_container_width=True):
-            novos_ajustes = dict(zip(df_dre_editado["CONTA"], df_dre_editado["VALOR (R$)"]))
+            novos_ajustes = {str(conta): converter_numero_br(valor) for conta, valor in zip(df_dre_editado["CONTA"], df_dre_editado["VALOR (R$)"])}
             salvar_ajustes_dre(mes_ativo, novos_ajustes)
             st.success("✅ Valores gravados com sucesso!")
 
-    v_map = dict(zip(df_dre_editado["CONTA"], df_dre_editado["VALOR (R$)"]))
+    v_map = {str(conta): converter_numero_br(valor) for conta, valor in zip(df_dre_editado["CONTA"], df_dre_editado["VALOR (R$)"])}
 
     def v(k):
         return float(v_map.get(k, 0.0) or 0.0)
@@ -690,7 +717,7 @@ if menu.startswith("📊 DRE Spoleto"):
         {"CONTA": "💰 RESULTADO FINAL LÍQUIDO", "VALOR": res_final, "%": pct(res_final)},
     ]
     df_spoleto_view = pd.DataFrame(estrutura_dre_spoleto)
-    df_spoleto_view["VALOR"] = df_spoleto_view["VALOR"].apply(lambda x: f"R$ {x:,.2f}" if pd.notnull(x) else "")
+    df_spoleto_view["VALOR"] = df_spoleto_view["VALOR"].apply(lambda x: f"R$ {formatar_numero_br(x)}" if pd.notnull(x) else "")
     st.dataframe(df_spoleto_view, use_container_width=True, height=550)
 
     st.markdown("### 📥 Baixar Relatório")
@@ -709,7 +736,7 @@ if menu.startswith("📊 DRE Spoleto"):
 # ==============================================================================
 elif menu.startswith("📸 Escanear"):
     st.subheader(f"📸 Escanear Nota Fiscal para o DRE de: {NOMES_MESES[mes_ativo]}")
-    st.info("💡 As notas de compras são classificadas em: **Demais Alimentos, Descartáveis, Limpeza, Utensílios, Bebidas, Horte e Uniformes**.")
+    st.info("💡 Classificações: **Demais Alimentos, Descartáveis, Limpeza, Utensílios, Bebidas, Horte, Uniformes, Uniforme e Alimentação Funcionário**.")
 
     ukey = st.session_state.uploader_key
     aba_foto, aba_cam, aba_arq = st.tabs([
@@ -736,7 +763,7 @@ elif menu.startswith("📸 Escanear"):
         col_proc, col_desc = st.columns([2, 1])
         with col_proc:
             if st.button("🚀 Processar Fotos com IA & Destrinchar", type="primary", use_container_width=True):
-                with st.spinner("🤖 Lendo itens e classificando nas 7 categorias..."):
+                with st.spinner("🤖 Lendo itens e classificando os produtos..."):
                     res = processar_multiplas_imagens_com_ia(st.session_state.fotos_acumuladas, api_key)
                     if res:
                         st.session_state.dados_extraidos = res
