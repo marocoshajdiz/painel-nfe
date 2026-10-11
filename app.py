@@ -4,7 +4,8 @@ import pandas as pd
 from google import genai
 from google.genai import types
 import json
-import sqlite3
+import psycopg2
+from urllib.parse import urlsplit
 import io
 import re
 from datetime import datetime
@@ -96,65 +97,37 @@ def converter_numero_br(valor):
 MODELO_GEMINI = "gemini-3.8-flash"
 
 
-# ----------------- BASE DE DADOS (SQLite) -----------------
-def init_db():
-    conn = sqlite3.connect("notas_fiscais.db")
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS notas (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            mes_referencia TEXT,
-            data_registo TEXT,
-            razao_social TEXT,
-            cnpj TEXT,
-            valor_total REAL,
-            itens_json TEXT
-        )
-    """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS lancamentos_dre (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            mes_referencia TEXT,
-            data TEXT,
-            fornecedor TEXT,
-            descricao TEXT,
-            valor REAL,
-            dre TEXT,
-            classificacao TEXT,
-            detalhamento TEXT
-        )
-    """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS ajustes_dre (
-            mes_referencia TEXT,
-            conta TEXT,
-            valor REAL,
-            PRIMARY KEY (mes_referencia, conta)
-        )
-    """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS dados_mensais (
-            mes_referencia TEXT PRIMARY KEY,
-            fat_balcao REAL DEFAULT 0,
-            fat_delivery REAL DEFAULT 0,
-            imposto_estadual REAL DEFAULT 0,
-            gas REAL DEFAULT 0,
-            terceiros REAL DEFAULT 0,
-            bonificacao REAL DEFAULT 0,
-            ultima_atualizacao TEXT
-        )
-    """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS regras_classificacao (
-            produto TEXT PRIMARY KEY,
-            categoria TEXT
-        )
-    """)
-    conn.commit()
-    conn.close()
+# ----------------- BASE DE DADOS PERSISTENTE (SUPABASE) -----------------
+def conectar_db():
+    """Abre uma conexão nova para cada operação, evitando conexões expiradas."""
+    try:
+        url = st.secrets["DATABASE_URL"]
+    except (KeyError, FileNotFoundError):
+        st.error("DATABASE_URL não configurada nos Secrets do Streamlit.")
+        st.stop()
+    if not str(url).startswith(("postgresql://", "postgres://")):
+        st.error("DATABASE_URL inválida: deve começar com postgresql://")
+        st.stop()
+    return psycopg2.connect(str(url), connect_timeout=12, sslmode="require")
 
 
-init_db()
+def verificar_banco():
+    """Confere conexão e estrutura sem modificar dados existentes."""
+    try:
+        with conectar_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT to_regclass('public.notas'), to_regclass('public.lancamentos_dre')")
+                tabelas = cur.fetchone()
+                if not all(tabelas):
+                    st.error("Tabelas não encontradas no Supabase. Confira o SQL da etapa anterior.")
+                    st.stop()
+    except Exception as erro:
+        st.error("Não foi possível conectar ao Supabase. Confira DATABASE_URL, senha e Session pooler.")
+        st.caption(f"Detalhe técnico: {type(erro).__name__}")
+        st.stop()
+
+
+verificar_banco()
 
 MESES_DISPONIVEIS = [
     "2026-10", "2026-11", "2026-12",
@@ -179,14 +152,14 @@ st.sidebar.markdown("---")
 
 
 def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_produtos):
-    conn = sqlite3.connect("notas_fiscais.db")
+    conn = conectar_db()
     try:
         cursor = conn.cursor()
         data_registo = datetime.now().strftime("%Y-%m-%d %H:%M")
         itens_json = json.dumps(lista_produtos, ensure_ascii=False)
         cursor.execute("""
             INSERT INTO notas (mes_referencia, data_registo, razao_social, cnpj, valor_total, itens_json)
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s)
         """, (mes_ref, data_registo, razao_social, cnpj, valor_total, itens_json))
 
         df_temp = pd.DataFrame(lista_produtos)
@@ -204,7 +177,7 @@ def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_pro
                         cursor.execute("""
                             INSERT INTO lancamentos_dre
                             (mes_referencia, data, fornecedor, descricao, valor, dre, classificacao, detalhamento)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                         """, (
                             mes_ref, data_hoje, razao_social.upper(), str(cat_nome).upper(),
                             float(valor), cfg["dre"], cat_nome, cfg["det"]
@@ -216,7 +189,7 @@ def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_pro
                     if prod and categoria in LISTA_7_CATEGORIAS:
                         cursor.execute("""
                             INSERT INTO regras_classificacao (produto, categoria)
-                            VALUES (?, ?)
+                            VALUES (%s, %s)
                             ON CONFLICT(produto) DO UPDATE SET categoria=excluded.categoria
                         """, (prod, categoria))
         conn.commit()
@@ -225,7 +198,7 @@ def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_pro
 
 
 def carregar_regras():
-    conn = sqlite3.connect("notas_fiscais.db")
+    conn = conectar_db()
     try:
         c = conn.cursor()
         c.execute("SELECT produto, categoria FROM regras_classificacao")
@@ -235,35 +208,42 @@ def carregar_regras():
 
 
 def obter_lancamentos_mes(mes_ref):
-    conn = sqlite3.connect("notas_fiscais.db")
+    conn = conectar_db()
     try:
-        return pd.read_sql_query(
-            """SELECT id, data, fornecedor, descricao, valor, dre, classificacao, detalhamento
-               FROM lancamentos_dre WHERE mes_referencia = ? ORDER BY id DESC""",
-            conn, params=(mes_ref,)
-        )
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """SELECT id, data, fornecedor, descricao, valor, dre, classificacao, detalhamento
+                   FROM lancamentos_dre WHERE mes_referencia = %s ORDER BY id DESC""",
+                (mes_ref,)
+            )
+            nomes = [col[0] for col in cursor.description]
+            linhas = cursor.fetchall()
+            resultado = pd.DataFrame(linhas, columns=nomes)
+            if not resultado.empty:
+                resultado["valor"] = resultado["valor"].astype(float)
+            return resultado
     finally:
         conn.close()
 
 
 def obter_ajustes_dre(mes_ref):
-    conn = sqlite3.connect("notas_fiscais.db")
+    conn = conectar_db()
     try:
         c = conn.cursor()
-        c.execute("SELECT conta, valor FROM ajustes_dre WHERE mes_referencia = ?", (mes_ref,))
+        c.execute("SELECT conta, valor FROM ajustes_dre WHERE mes_referencia = %s", (mes_ref,))
         return {row[0]: float(row[1]) for row in c.fetchall()}
     finally:
         conn.close()
 
 
 def salvar_ajustes_dre(mes_ref, dict_valores):
-    conn = sqlite3.connect("notas_fiscais.db")
+    conn = conectar_db()
     try:
         c = conn.cursor()
         for conta, val in dict_valores.items():
             c.execute("""
                 INSERT INTO ajustes_dre (mes_referencia, conta, valor)
-                VALUES (?, ?, ?)
+                VALUES (%s, %s, %s)
                 ON CONFLICT(mes_referencia, conta) DO UPDATE SET valor=excluded.valor
             """, (mes_ref, conta, float(val)))
         conn.commit()
@@ -997,9 +977,10 @@ elif menu.startswith("📝 Lançamentos"):
         with c_del:
             st.write("")
             if st.button("Eliminar Lançamento", type="secondary", use_container_width=True):
-                conn = sqlite3.connect("notas_fiscais.db")
+                conn = conectar_db()
                 try:
-                    conn.execute("DELETE FROM lancamentos_dre WHERE id = ?", (id_del,))
+                    with conn.cursor() as cursor:
+                        cursor.execute("DELETE FROM lancamentos_dre WHERE id = %s", (int(id_del),))
                     conn.commit()
                 finally:
                     conn.close()
