@@ -1,0 +1,14 @@
+
+# Chaves e senhas
+.streamlit/secrets.toml
+.env
+.env.*
+
+# Banco de dados local
+*.db
+*.sqlite
+*.sqlite3
+
+# Arquivos temporários do Python
+__pycache__/
+*.pyc
