@@ -171,52 +171,104 @@ def mes_anterior(mes):
     return f"{ano - 1:04d}-12" if numero == 1 else f"{ano:04d}-{numero - 1:02d}"
 
 
-def apurar_cmv_automatico(mes):
-    """Retorna (valores, mensagem). Nunca presume estoque ausente igual a zero."""
-    anterior = mes_anterior(mes)
+def preparar_saldos_iniciais():
+    """Cria uma tabela independente, sem modificar inventários existentes."""
     with conectar_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT mes_referencia, id, status FROM inventarios WHERE mes_referencia IN (%s,%s)", (anterior, mes))
-            inv = {r[0]: (r[1], r[2]) for r in cur.fetchall()}
-            if anterior not in inv or inv[anterior][1] != 'FECHADO':
-                return None, f"É necessário fechar o inventário de {anterior} (estoque inicial)."
-            if mes not in inv or inv[mes][1] != 'FECHADO':
-                return None, f"Feche o inventário de {mes} para apurar o CMV."
-            saldos = {}
-            for referencia in (anterior, mes):
-                inv_id = inv[referencia][0]
-                cur.execute("""SELECT p.id, p.produto, p.categoria, p.ativo,
-                                      ii.quantidade, ii.custo_unitario, p.preco_unitario
-                               FROM produtos_inventario p
-                               LEFT JOIN inventario_itens ii ON ii.produto_id=p.id AND ii.inventario_id=%s
-                               WHERE p.ativo=TRUE OR ii.id IS NOT NULL""", (inv_id,))
-                totais = {c: 0.0 for c in CONTAS_CMV.values()}
-                for pid, nome, categoria, ativo, quantidade, custo, preco in cur.fetchall():
-                    # Produtos sem classificação devem ser revisados antes da apuração.
-                    if categoria not in CATEGORIAS_CMV:
-                        if ativo and (categoria is None or categoria == 'Não classificado'):
-                            return None, f"Classifique o produto '{nome}' antes de apurar o CMV."
-                        continue
-                    if quantidade is None:
-                        if ativo:
-                            return None, f"Falta contagem de '{nome}' no inventário de {referencia}. Informe 0 quando não houver estoque."
-                        continue
-                    custo_final = custo if custo is not None else preco
-                    if custo_final is None or float(custo_final) <= 0:
-                        if float(quantidade) != 0:
-                            return None, f"Informe um custo unitário válido para '{nome}' em {referencia}."
-                        custo_final = 0
-                    totais[CATEGORIAS_CMV[categoria]] += float(quantidade) * float(custo_final)
-                saldos[referencia] = totais
-            cur.execute("""SELECT detalhamento, COALESCE(SUM(valor),0)
-                           FROM lancamentos_dre WHERE mes_referencia=%s
-                           AND detalhamento IN ('Alimentos','Bebidas','Descartáveis')
-                           GROUP BY detalhamento""", (mes,))
-            compras = {str(k): float(v) for k, v in cur.fetchall()}
-    valores = {conta: round(saldos[anterior][grupo] + compras.get(grupo, 0.0) - saldos[mes][grupo], 2)
-               for conta, grupo in CONTAS_CMV.items()}
-    return valores, None
+            cur.execute("""CREATE TABLE IF NOT EXISTS saldos_iniciais_cmv (
+                mes_referencia TEXT NOT NULL,
+                categoria TEXT NOT NULL CHECK (categoria IN ('Alimentos','Bebidas','Descartáveis')),
+                valor NUMERIC(15,2) NOT NULL CHECK (valor >= 0),
+                atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (mes_referencia, categoria)
+            )""")
+        conn.commit()
 
+
+def consultar_saldos_iniciais(mes):
+    with conectar_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT categoria, valor FROM saldos_iniciais_cmv WHERE mes_referencia=%s", (mes,))
+            return {categoria: float(valor) for categoria, valor in cur.fetchall()}
+
+
+def salvar_saldos_iniciais(mes, valores):
+    if set(valores) != {'Alimentos','Bebidas','Descartáveis'}:
+        raise ValueError('Informe as três categorias.')
+    with conectar_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT status FROM inventarios WHERE mes_referencia=%s FOR UPDATE", (mes,))
+            inv = cur.fetchone()
+            if inv and inv[0] == 'FECHADO':
+                raise ValueError('Reabra o inventário para alterar o estoque inicial.')
+            for categoria, valor in valores.items():
+                if not 0 <= valor < float('inf'):
+                    raise ValueError('O estoque inicial deve ser um valor válido e não negativo.')
+                cur.execute("""INSERT INTO saldos_iniciais_cmv (mes_referencia,categoria,valor)
+                    VALUES (%s,%s,%s) ON CONFLICT (mes_referencia,categoria)
+                    DO UPDATE SET valor=EXCLUDED.valor, atualizado_em=NOW()""", (mes,categoria,round(valor,2)))
+        conn.commit()
+
+
+def calcular_valor_inventario(cur, inv_id, referencia):
+    """Apura valores por grupo e exige contagem/custo para itens ativos de CMV."""
+    cur.execute("""SELECT p.produto,p.categoria,p.ativo,ii.quantidade,
+                          ii.custo_unitario,p.preco_unitario
+                   FROM produtos_inventario p
+                   LEFT JOIN inventario_itens ii ON ii.produto_id=p.id AND ii.inventario_id=%s
+                   WHERE p.ativo=TRUE OR ii.id IS NOT NULL""", (inv_id,))
+    totais = {grupo: 0.0 for grupo in CONTAS_CMV.values()}
+    for nome, categoria, ativo, quantidade, custo, preco in cur.fetchall():
+        if categoria not in CATEGORIAS_CMV:
+            if ativo and (categoria is None or categoria == 'Não classificado'):
+                raise ValueError(f"Classifique o produto '{nome}' antes de apurar o CMV.")
+            continue
+        if quantidade is None:
+            if ativo:
+                raise ValueError(f"Falta contagem de '{nome}' em {referencia}. Informe 0 quando não houver estoque.")
+            continue
+        custo_final = custo if custo is not None else preco
+        if (custo_final is None or float(custo_final) <= 0) and float(quantidade) != 0:
+            raise ValueError(f"Informe custo unitário válido para '{nome}' em {referencia}.")
+        totais[CATEGORIAS_CMV[categoria]] += float(quantidade) * float(custo_final or 0)
+    return totais
+
+
+def apurar_cmv_automatico(mes):
+    """Prefere saldo inicial manual; sem ele, usa inventário anterior fechado."""
+    anterior = mes_anterior(mes)
+    try:
+        with conectar_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT categoria,valor FROM saldos_iniciais_cmv WHERE mes_referencia=%s", (mes,))
+                manuais = {c:float(v) for c,v in cur.fetchall()}
+                cur.execute("SELECT mes_referencia,id,status FROM inventarios WHERE mes_referencia IN (%s,%s)", (anterior,mes))
+                inv = {r[0]:(r[1],r[2]) for r in cur.fetchall()}
+                if mes not in inv or inv[mes][1] != 'FECHADO':
+                    return None, f'Feche o inventário de {mes} para apurar o CMV.'
+                if manuais:
+                    if set(manuais) != set(CONTAS_CMV.values()):
+                        return None, 'Preencha os três saldos iniciais manuais.'
+                    inicial = manuais
+                else:
+                    if anterior not in inv or inv[anterior][1] != 'FECHADO':
+                        return None, f'Informe o estoque inicial manual de {mes} ou feche o inventário de {anterior}.'
+                    inicial = calcular_valor_inventario(cur, inv[anterior][0], anterior)
+                final = calcular_valor_inventario(cur, inv[mes][0], mes)
+                cur.execute("""SELECT detalhamento,COALESCE(SUM(valor),0)
+                               FROM lancamentos_dre WHERE mes_referencia=%s
+                               AND detalhamento IN ('Alimentos','Bebidas','Descartáveis')
+                               GROUP BY detalhamento""", (mes,))
+                compras = {str(k):float(v) for k,v in cur.fetchall()}
+        valores = {conta:round(inicial[grupo]+compras.get(grupo,0)-final[grupo],2)
+                   for conta,grupo in CONTAS_CMV.items()}
+        return valores,None
+    except ValueError as erro:
+        return None,str(erro)
+
+
+
+preparar_saldos_iniciais()
 
 def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_produtos):
     conn = conectar_db()
@@ -1397,6 +1449,35 @@ elif menu == "📦 Inventário e Produtos":
     interface_cadastro_produto()
     interface_excluir_produto()
     interface_classificar_estoque()
+    # O saldo inicial manual é por categoria e não altera contagens do mês anterior.
+    with st.expander("💰 Estoque inicial do mês — preenchimento manual", expanded=False):
+        st.caption("Use quando não houver inventário anterior fechado. Valores em R$ por categoria. "
+                   "Quando preenchidos, têm prioridade sobre o mês anterior.")
+        saldos = consultar_saldos_iniciais(mes_ativo)
+        inv_estado = inventario_do_mes(mes_ativo)
+        bloqueado = bool(inv_estado and inv_estado[1] == 'FECHADO')
+        if bloqueado:
+            st.warning("Inventário fechado: reabra para editar o saldo inicial.")
+        with st.form(f"form_saldo_inicial_{mes_ativo}"):
+            campos = {}
+            for grupo in ('Alimentos','Bebidas','Descartáveis'):
+                campos[grupo] = st.text_input(f"Estoque inicial — {grupo} (R$)",
+                    value=formatar_numero_br(saldos[grupo]) if grupo in saldos else "",
+                    placeholder="Ex.: 1.250,00", disabled=bloqueado)
+            if st.form_submit_button("💾 Salvar estoque inicial", disabled=bloqueado):
+                try:
+                    if any(not str(v).strip() for v in campos.values()):
+                        raise ValueError("Preencha os três campos, mesmo que o valor seja 0,00.")
+                    if any(not re.fullmatch(r"[0-9., ]+", v.strip()) for v in campos.values()):
+                        raise ValueError("Use somente números, pontos e vírgula.")
+                    valores = {grupo: converter_numero_br(valor) for grupo,valor in campos.items()}
+                    salvar_saldos_iniciais(mes_ativo,valores)
+                    st.success("Estoque inicial salvo no Supabase!")
+                    st.rerun()
+                except Exception as erro:
+                    st.error(f"Não foi possível salvar: {erro}")
+        if saldos:
+            st.info("Saldo inicial manual registrado para este mês. Ele será utilizado no CMV após o fechamento.")
     if "resultado_importacao_estoque" in st.session_state:
         st.success(st.session_state.pop("resultado_importacao_estoque"))
     produtos = listar_produtos_estoque()
