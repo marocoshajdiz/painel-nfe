@@ -14,8 +14,11 @@ import pypdf
 st.set_page_config(page_title="Painel de Custos & DRE Spoleto - Capry", layout="wide")
 
 # ----------------- CONTROLE DE ACESSO -----------------
-USUARIO_CORRETO = "admin"
-SENHA_CORRETA = "massima"
+USUARIO_CORRETO = st.secrets.get("LOGIN_USUARIO", "admin")
+SENHA_CORRETA = st.secrets.get("LOGIN_SENHA", "")
+if not SENHA_CORRETA:
+    st.error("Configure LOGIN_SENHA nos Secrets do Streamlit para habilitar o acesso.")
+    st.stop()
 
 if "autenticado" not in st.session_state:
     st.session_state.autenticado = False
@@ -149,6 +152,70 @@ mes_ativo = st.sidebar.selectbox(
     format_func=lambda m: NOMES_MESES[m],
 )
 st.sidebar.markdown("---")
+
+
+# CMV por inventário: valores calculados, nunca duplicados em ajustes_dre.
+CONTAS_CMV = {
+    "Alimentos (Demais Alimentos + Horte)": "Alimentos",
+    "Bebidas": "Bebidas",
+    "Descartáveis": "Descartáveis",
+}
+CATEGORIAS_CMV = {
+    "Demais Alimentos": "Alimentos", "Horte": "Alimentos",
+    "Bebidas": "Bebidas", "Descartáveis": "Descartáveis",
+}
+
+
+def mes_anterior(mes):
+    ano, numero = map(int, mes.split("-"))
+    return f"{ano - 1:04d}-12" if numero == 1 else f"{ano:04d}-{numero - 1:02d}"
+
+
+def apurar_cmv_automatico(mes):
+    """Retorna (valores, mensagem). Nunca presume estoque ausente igual a zero."""
+    anterior = mes_anterior(mes)
+    with conectar_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT mes_referencia, id, status FROM inventarios WHERE mes_referencia IN (%s,%s)", (anterior, mes))
+            inv = {r[0]: (r[1], r[2]) for r in cur.fetchall()}
+            if anterior not in inv or inv[anterior][1] != 'FECHADO':
+                return None, f"É necessário fechar o inventário de {anterior} (estoque inicial)."
+            if mes not in inv or inv[mes][1] != 'FECHADO':
+                return None, f"Feche o inventário de {mes} para apurar o CMV."
+            saldos = {}
+            for referencia in (anterior, mes):
+                inv_id = inv[referencia][0]
+                cur.execute("""SELECT p.id, p.produto, p.categoria, p.ativo,
+                                      ii.quantidade, ii.custo_unitario, p.preco_unitario
+                               FROM produtos_inventario p
+                               LEFT JOIN inventario_itens ii ON ii.produto_id=p.id AND ii.inventario_id=%s
+                               WHERE p.ativo=TRUE OR ii.id IS NOT NULL""", (inv_id,))
+                totais = {c: 0.0 for c in CONTAS_CMV.values()}
+                for pid, nome, categoria, ativo, quantidade, custo, preco in cur.fetchall():
+                    # Produtos sem classificação devem ser revisados antes da apuração.
+                    if categoria not in CATEGORIAS_CMV:
+                        if ativo and (categoria is None or categoria == 'Não classificado'):
+                            return None, f"Classifique o produto '{nome}' antes de apurar o CMV."
+                        continue
+                    if quantidade is None:
+                        if ativo:
+                            return None, f"Falta contagem de '{nome}' no inventário de {referencia}. Informe 0 quando não houver estoque."
+                        continue
+                    custo_final = custo if custo is not None else preco
+                    if custo_final is None or float(custo_final) <= 0:
+                        if float(quantidade) != 0:
+                            return None, f"Informe um custo unitário válido para '{nome}' em {referencia}."
+                        custo_final = 0
+                    totais[CATEGORIAS_CMV[categoria]] += float(quantidade) * float(custo_final)
+                saldos[referencia] = totais
+            cur.execute("""SELECT detalhamento, COALESCE(SUM(valor),0)
+                           FROM lancamentos_dre WHERE mes_referencia=%s
+                           AND detalhamento IN ('Alimentos','Bebidas','Descartáveis')
+                           GROUP BY detalhamento""", (mes,))
+            compras = {str(k): float(v) for k, v in cur.fetchall()}
+    valores = {conta: round(saldos[anterior][grupo] + compras.get(grupo, 0.0) - saldos[mes][grupo], 2)
+               for conta, grupo in CONTAS_CMV.items()}
+    return valores, None
 
 
 def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_produtos):
@@ -531,6 +598,13 @@ if menu.startswith("📊 DRE Spoleto"):
     df_l = obter_lancamentos_mes(mes_ativo)
     somas_escaneadas = df_l.groupby("detalhamento")["valor"].sum().to_dict() if not df_l.empty else {}
     ajustes_banco = obter_ajustes_dre(mes_ativo)
+    cmv_auto, aviso_cmv = apurar_cmv_automatico(mes_ativo)
+    if aviso_cmv:
+        st.info("📦 CMV automático pendente: " + aviso_cmv + " Enquanto isso, permanecem os valores atuais da DRE.")
+    else:
+        st.success("📦 CMV calculado automaticamente pelo inventário fechado: alimentos, bebidas e descartáveis.")
+        if any(valor < 0 for valor in cmv_auto.values()):
+            st.warning("Há CMV negativo. Confira compras, quantidades e custos antes de utilizar a DRE.")
 
     CONTAS_DRE_PAINEL = [
         ("Faturamento Balcão", None, 0.0),
@@ -586,7 +660,8 @@ if menu.startswith("📊 DRE Spoleto"):
     for nome_conta, chave_det, val_padrao in CONTAS_DRE_PAINEL:
         val_escaneado = float(somas_escaneadas.get(chave_det, 0.0)) if chave_det else 0.0
         val_ajuste = float(ajustes_banco.get(nome_conta, val_padrao))
-        val_final = val_escaneado if (val_escaneado > 0 and val_ajuste == 0.0) else (val_escaneado + val_ajuste)
+        val_final = (cmv_auto[nome_conta] if cmv_auto is not None and nome_conta in CONTAS_CMV
+                     else val_escaneado + val_ajuste)
         lista_linhas_editaveis.append({"CONTA": nome_conta, "VALOR (R$)": formatar_numero_br(round(val_final, 2))})
 
     df_base_editavel = pd.DataFrame(lista_linhas_editaveis)
@@ -596,7 +671,7 @@ if menu.startswith("📊 DRE Spoleto"):
         df_base_editavel,
         column_config={
             "CONTA": st.column_config.TextColumn("Conta / Indicador", disabled=True),
-            "VALOR (R$)": st.column_config.TextColumn("VALOR (R$) — padrão 1.234,56", help="Digite valores no padrão brasileiro, por exemplo 125,90 ou 1.234,56."),
+            "VALOR (R$)": st.column_config.TextColumn("VALOR (R$) — padrão 1.234,56", help="O CMV é automático após fechamento; demais valores podem ser editados."),
         },
         use_container_width=True,
         num_rows="fixed",
@@ -607,11 +682,20 @@ if menu.startswith("📊 DRE Spoleto"):
     col_save_dre, _ = st.columns([2, 3])
     with col_save_dre:
         if st.button("💾 Salvar Lançamentos e Ajustes do DRE na Base de Dados", type="primary", use_container_width=True):
-            novos_ajustes = {str(conta): converter_numero_br(valor) for conta, valor in zip(df_dre_editado["CONTA"], df_dre_editado["VALOR (R$)"])}
+            novos_ajustes = {}
+            for conta, valor in zip(df_dre_editado["CONTA"], df_dre_editado["VALOR (R$)"]):
+                conta = str(conta)
+                if cmv_auto is not None and conta in CONTAS_CMV:
+                    continue  # CMV apurado não é ajuste manual.
+                base_nota = float(somas_escaneadas.get(next((det for nome, det, _ in CONTAS_DRE_PAINEL if nome == conta), None), 0.0))
+                novos_ajustes[conta] = converter_numero_br(valor) - base_nota
             salvar_ajustes_dre(mes_ativo, novos_ajustes)
             st.success("✅ Valores gravados com sucesso!")
 
     v_map = {str(conta): converter_numero_br(valor) for conta, valor in zip(df_dre_editado["CONTA"], df_dre_editado["VALOR (R$)"])}
+    if cmv_auto is not None:
+        v_map.update(cmv_auto)  # A DRE nunca usa edição manual no lugar do CMV fechado.
+
 
     def v(k):
         return float(v_map.get(k, 0.0) or 0.0)
@@ -1139,6 +1223,72 @@ def fechar_ou_reabrir(mes, fechar):
         conn.commit()
 
 
+def sugerir_categoria_estoque(nome):
+    """Sugestão por nome; sempre revisável pelo responsável."""
+    n = str(nome).upper().strip()
+    bebidas = ('COCA ', 'FANTA ', 'SPRITE', 'SCHWEPPES', 'ÁGUA CRYSTAL', 'AGUA CRYSTAL',
+               'ÁGUA SABORIZADA', 'AGUA SABORIZADA', 'ICE TEA', 'SUCO ', 'CERVEJA ', 'VINHO ')
+    limpeza = ('CLORO ', 'ALCOOL ', 'ÁLCOOL ', 'CIF ', 'SUMA ', 'REXONA SAB',
+               'GALÃO ALCOOL', 'GALAO ALCOOL', 'PULVERISADOR', 'ESPONJA ',
+               'SACO DE LIXO', 'PANO MULTIUSO', 'PAPEL TOALHA', 'PASTILHA AZUL', 'PASTILHA VERDE')
+    descartaveis = ('REDE CABELO', 'AVENTAL DESCART', 'LUVA ', 'DEDEIRA', 'COPO DE PAPEL',
+                    'SACO MASSA', 'KIT GARFO', 'TAÇA SUPORTE', 'TACA SUPORTE',
+                    'CANUDO ', 'PAPEL DE HAMB', 'SACO TORRADA', 'GUARDANAPO',
+                    'EMBALAGEM ', 'SACOLA ', 'SACO SPOLETO', 'SACO TALHER',
+                    'LACRE ', 'PAPEL BANDEJA', 'TAMPA PARA ', 'POTE MOLHO',
+                    'TOUCA BRANCA', 'BOBINA PICT')
+    utensilios = ('PUMP BOMBONA', 'MANGA DE CONFEITEIRO', 'COLHER DE SOBREMESA',
+                  'BOBINA PDV', 'BOBINA BALANÇA', 'BOBINA BALANCA', 'ETIQUETA DE VALIDADE',
+                  'ROLO PACK FILM', 'PALITO SACHE')
+    horte = ('ALHO PORO', 'ALHO PORÓ', 'BROCOLIS', 'BRÓCOLIS', 'CEBOLA', 'CEBOLINHA',
+             'CENOURA', 'MANJERICÃO', 'MANJERICAO', 'SALSA', 'TOMATE', 'ABOBRINHA',
+             'ALECRIN', 'ALFACE', 'ESPINAFRE', 'BERINGELA', 'SALVIA', 'SÁLVIA')
+    if n.startswith(bebidas): return 'Bebidas'
+    if n.startswith(limpeza): return 'Limpeza'
+    if n.startswith(descartaveis): return 'Descartáveis'
+    if n.startswith(utensilios): return 'Utensílios'
+    if n.startswith(horte): return 'Horte'
+    return 'Demais Alimentos'
+
+
+def interface_classificar_estoque():
+    with st.expander('🏷️ Classificar produtos para o CMV', expanded=False):
+        st.caption('Revise as sugestões antes de aplicar. O botão atualiza as categorias dos produtos ativos, sem alterar quantidades ou preços.')
+        produtos_class = listar_produtos_estoque()
+        if not produtos_class:
+            st.info('Importe os produtos antes de classificá-los.')
+            return
+        categorias_validas = ['Não classificado'] + LISTA_7_CATEGORIAS
+        linhas_class = []
+        for pid, codigo, nome, categoria, unidade, preco in produtos_class:
+            sugestao = sugerir_categoria_estoque(nome)
+            linhas_class.append({'ID': int(pid), 'Produto': nome, 'Categoria atual': categoria or 'Não classificado',
+                                 'Nova categoria': categoria if categoria in LISTA_7_CATEGORIAS else sugestao})
+        df_class = pd.DataFrame(linhas_class)
+        with st.form('form_classificacao_inventario'):
+            revisado = st.data_editor(df_class, hide_index=True, use_container_width=True,
+                                      disabled=['ID', 'Produto', 'Categoria atual'],
+                                      column_config={'ID': None,
+                                                     'Nova categoria': st.column_config.SelectboxColumn('Nova categoria', options=categorias_validas, required=True)},
+                                      key='editor_classificacao_inventario')
+            confirmado = st.checkbox('Revisei as categorias e autorizo a atualização em massa')
+            if st.form_submit_button('💾 Salvar classificação de todos os produtos', type='primary'):
+                if not confirmado:
+                    st.warning('Marque a confirmação antes de salvar.')
+                else:
+                    try:
+                        alteracoes = [(str(linha['Nova categoria']), int(linha['ID'])) for linha in revisado.to_dict('records')
+                                      if linha['Nova categoria'] in LISTA_7_CATEGORIAS]
+                        with conectar_db() as conn:
+                            with conn.cursor() as cur:
+                                cur.executemany('UPDATE produtos_inventario SET categoria=%s WHERE id=%s AND ativo=TRUE', alteracoes)
+                            conn.commit()
+                        st.success(f'{len(alteracoes)} produtos classificados!')
+                        st.rerun()
+                    except Exception as erro:
+                        st.error(f'Não foi possível salvar: {erro}')
+
+
 def importar_planilha_estoque(arquivo):
     """Importa A=produto, B=unidade, C=preço da planilha Spoleto."""
     df = pd.read_excel(arquivo, sheet_name=0, header=None, usecols="A:C")
@@ -1169,7 +1319,7 @@ def importar_planilha_estoque(arquivo):
                     continue
                 cur.execute("""INSERT INTO produtos_inventario
                                (produto, unidade, categoria, preco_unitario, ativo)
-                               VALUES (%s,%s,%s,%s,TRUE)""", (nome, unidade, 'Não classificado', preco))
+                               VALUES (%s,%s,%s,%s,TRUE)""", (nome, unidade, sugerir_categoria_estoque(nome), preco))
                 inseridos += 1
         conn.commit()
     return inseridos, ignorados
@@ -1246,6 +1396,7 @@ elif menu == "📦 Inventário e Produtos":
     st.subheader(f"📦 Inventário e Produtos — {NOMES_MESES[mes_ativo]}")
     interface_cadastro_produto()
     interface_excluir_produto()
+    interface_classificar_estoque()
     if "resultado_importacao_estoque" in st.session_state:
         st.success(st.session_state.pop("resultado_importacao_estoque"))
     produtos = listar_produtos_estoque()
@@ -1289,6 +1440,13 @@ elif menu == "📦 Inventário e Produtos":
     inv = inventario_do_mes(mes_ativo)
     if inv and inv[1] == 'FECHADO':
         st.success("🔒 Inventário fechado")
+        cmv_fechado, aviso_fechado = apurar_cmv_automatico(mes_ativo)
+        if aviso_fechado:
+            st.warning("CMV ainda pendente: " + aviso_fechado)
+        else:
+            st.write("**CMV automático da DRE:**")
+            st.dataframe(pd.DataFrame([{"Categoria": CONTAS_CMV[k], "CMV (R$)": v}
+                                      for k, v in cmv_fechado.items()]), hide_index=True, use_container_width=True)
         with st.expander("Reabrir inventário (responsável)"):
             if st.checkbox("Confirmo que quero permitir novas alterações", key=f"confirmar_reabrir_{mes_ativo}"):
                 if st.button("Reabrir inventário"):
