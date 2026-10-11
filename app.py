@@ -1145,13 +1145,13 @@ def importar_planilha_estoque(arquivo):
     validos = []
     for linha in df.itertuples(index=False, name=None):
         nome, unidade, preco = linha
-        if pd.isna(nome) or pd.isna(unidade) or pd.isna(preco):
+        if pd.isna(nome) or pd.isna(unidade):
             continue
         nome, unidade = str(nome).strip(), str(unidade).strip()
-        valor = converter_numero_br(preco)
+        valor = 0.0 if pd.isna(preco) or str(preco).strip() == "" else converter_numero_br(preco)
         if not nome or not unidade or unidade.lower() in ('unidade', 'unid', 'r$', 'quant.'):
             continue
-        if isinstance(preco, str) and not re.search(r"\d", preco):
+        if isinstance(preco, str) and preco.strip() and not re.search(r"\d", preco):
             continue
         if valor < 0:
             continue
@@ -1202,6 +1202,8 @@ if menu == "📋 Contagem de Estoque":
     fechado = bool(inv and inv[1] == 'FECHADO')
     if fechado:
         st.warning("🔒 Este inventário está fechado. A contagem não pode ser alterada.")
+    if "resultado_importacao_estoque" in st.session_state:
+        st.success(st.session_state.pop("resultado_importacao_estoque"))
     produtos = listar_produtos_estoque()
     if not produtos:
         st.info("Nenhum produto cadastrado. Use 'Adicionar novo item' ou importe a planilha na aba Inventário e Produtos.")
@@ -1244,6 +1246,8 @@ elif menu == "📦 Inventário e Produtos":
     st.subheader(f"📦 Inventário e Produtos — {NOMES_MESES[mes_ativo]}")
     interface_cadastro_produto()
     interface_excluir_produto()
+    if "resultado_importacao_estoque" in st.session_state:
+        st.success(st.session_state.pop("resultado_importacao_estoque"))
     produtos = listar_produtos_estoque()
     if not produtos:
         with st.expander("📥 Importar produtos da planilha Excel", expanded=True):
@@ -1251,7 +1255,7 @@ elif menu == "📦 Inventário e Produtos":
             if arquivo and st.button("Importar produtos para o Supabase"):
                 try:
                     qtd, repetidos = importar_planilha_estoque(arquivo)
-                    st.success(f"{qtd} produtos importados; {repetidos} já cadastrados foram mantidos.")
+                    st.session_state.resultado_importacao_estoque = f"{qtd} produtos importados; {repetidos} já cadastrados foram mantidos."
                     st.rerun()
                 except Exception as erro:
                     st.error(f"Erro na importação: {erro}")
@@ -1261,7 +1265,7 @@ elif menu == "📦 Inventário e Produtos":
             if arquivo and st.button("Importar itens que ainda não existem"):
                 try:
                     qtd, repetidos = importar_planilha_estoque(arquivo)
-                    st.success(f"{qtd} novos produtos; {repetidos} já cadastrados.")
+                    st.session_state.resultado_importacao_estoque = f"{qtd} novos produtos; {repetidos} já cadastrados."
                     st.rerun()
                 except Exception as erro:
                     st.error(f"Erro na importação: {erro}")
