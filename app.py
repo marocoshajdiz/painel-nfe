@@ -517,6 +517,8 @@ menu = st.sidebar.radio("Módulo:", [
     "📸 Escanear & Alimentar Nota",
     "📝 Lançamentos do Mês",
     "🧠 Regras Inteligentes",
+    "📋 Contagem de Estoque",
+    "📦 Inventário e Produtos",
 ])
 
 # ==============================================================================
@@ -999,3 +1001,236 @@ elif menu.startswith("🧠 Regras"):
         st.dataframe(df_r, use_container_width=True)
     else:
         st.info("Nenhuma regra personalizada ainda. Sempre que corrigir e salvar uma nota, a IA memoriza aqui.")
+
+
+# ======================= INVENTÁRIO SUPABASE =======================
+def listar_produtos_estoque():
+    with conectar_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT id, codigo, produto, categoria, unidade, preco_unitario
+                           FROM produtos_inventario WHERE ativo = TRUE ORDER BY produto, id""")
+            return cur.fetchall()
+
+
+def inventario_do_mes(mes):
+    with conectar_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, status FROM inventarios WHERE mes_referencia=%s", (mes,))
+            return cur.fetchone()
+
+
+def quantidades_do_mes(mes):
+    with conectar_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT ii.produto_id, ii.quantidade FROM inventario_itens ii
+                           JOIN inventarios i ON i.id=ii.inventario_id
+                           WHERE i.mes_referencia=%s""", (mes,))
+            return {int(i): float(q) for i, q in cur.fetchall()}
+
+
+def cadastrar_produto_estoque(nome, unidade, categoria, preco, codigo=None):
+    nome = nome.strip().upper()
+    if not nome or not unidade.strip():
+        raise ValueError("Informe nome e unidade do produto.")
+    if preco < 0:
+        raise ValueError("O preço não pode ser negativo.")
+    with conectar_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT id FROM produtos_inventario
+                           WHERE UPPER(TRIM(produto))=%s AND ativo=TRUE""", (nome,))
+            if cur.fetchone():
+                raise ValueError("Este produto já está cadastrado.")
+            cur.execute("""INSERT INTO produtos_inventario
+                           (codigo, produto, unidade, categoria, preco_unitario, ativo)
+                           VALUES (%s,%s,%s,%s,%s,TRUE)""",
+                        (codigo or None, nome, unidade.strip().upper(), categoria, preco))
+        conn.commit()
+
+
+def salvar_contagem_estoque(mes, quantidades):
+    """Atualiza somente os itens informados, sem zerar produtos não exibidos."""
+    with conectar_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO inventarios (mes_referencia, status)
+                           VALUES (%s, 'ABERTO') ON CONFLICT (mes_referencia) DO NOTHING""", (mes,))
+            cur.execute("SELECT id, status FROM inventarios WHERE mes_referencia=%s FOR UPDATE", (mes,))
+            inv_id, status = cur.fetchone()
+            if status != 'ABERTO':
+                raise ValueError("Inventário fechado. Reabra-o antes de alterar a contagem.")
+            for prod_id, qtd in quantidades.items():
+                cur.execute("""INSERT INTO inventario_itens
+                               (inventario_id, produto_id, quantidade, custo_unitario)
+                               SELECT %s, id, %s, preco_unitario FROM produtos_inventario
+                               WHERE id=%s AND ativo=TRUE
+                               ON CONFLICT (inventario_id, produto_id)
+                               DO UPDATE SET quantidade=EXCLUDED.quantidade,
+                                             custo_unitario=EXCLUDED.custo_unitario""",
+                            (inv_id, qtd, prod_id))
+        conn.commit()
+
+
+def fechar_ou_reabrir(mes, fechar):
+    with conectar_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""UPDATE inventarios SET status=%s,
+                           fechado_em=CASE WHEN %s THEN NOW() ELSE NULL END
+                           WHERE mes_referencia=%s""",
+                        ('FECHADO' if fechar else 'ABERTO', fechar, mes))
+        conn.commit()
+
+
+def importar_planilha_estoque(arquivo):
+    """Importa A=produto, B=unidade, C=preço da planilha Spoleto."""
+    df = pd.read_excel(arquivo, sheet_name=0, header=None, usecols="A:C")
+    validos = []
+    for linha in df.itertuples(index=False, name=None):
+        nome, unidade, preco = linha
+        if pd.isna(nome) or pd.isna(unidade) or pd.isna(preco):
+            continue
+        nome, unidade = str(nome).strip(), str(unidade).strip()
+        valor = converter_numero_br(preco)
+        if not nome or not unidade or unidade.lower() in ('unidade', 'unid', 'r$', 'quant.'):
+            continue
+        if isinstance(preco, str) and not re.search(r"\d", preco):
+            continue
+        if valor < 0:
+            continue
+        validos.append((nome.upper(), unidade.upper(), valor))
+    if not validos:
+        raise ValueError("Nenhum produto válido encontrado nas colunas A, B e C.")
+    inseridos = 0
+    ignorados = 0
+    with conectar_db() as conn:
+        with conn.cursor() as cur:
+            for nome, unidade, preco in validos:
+                cur.execute("SELECT id FROM produtos_inventario WHERE UPPER(TRIM(produto))=%s AND ativo=TRUE", (nome,))
+                if cur.fetchone():
+                    ignorados += 1
+                    continue
+                cur.execute("""INSERT INTO produtos_inventario
+                               (produto, unidade, categoria, preco_unitario, ativo)
+                               VALUES (%s,%s,%s,%s,TRUE)""", (nome, unidade, 'Não classificado', preco))
+                inseridos += 1
+        conn.commit()
+    return inseridos, ignorados
+
+
+def interface_cadastro_produto():
+    with st.expander("➕ Adicionar novo item", expanded=False):
+        with st.form("form_novo_produto_estoque", clear_on_submit=True):
+            nome = st.text_input("Nome do produto")
+            c1, c2 = st.columns(2)
+            unidade = c1.selectbox("Unidade", ["UNIDADE", "KG", "G", "L", "ML", "CX", "PACOTE", "FARDO", "OUTRO"])
+            preco_txt = c2.text_input("Preço unitário (R$)", value="0,00")
+            categoria = st.selectbox("Categoria", ["Não classificado"] + LISTA_7_CATEGORIAS)
+            if st.form_submit_button("Salvar novo produto", type="primary"):
+                try:
+                    cadastrar_produto_estoque(nome, unidade, categoria, converter_numero_br(preco_txt))
+                    st.success("Produto cadastrado! Ele já aparece na contagem e no inventário.")
+                    st.rerun()
+                except Exception as erro:
+                    st.error(f"Não foi possível cadastrar: {erro}")
+
+
+# ======================= TELAS DE ESTOQUE =======================
+if menu == "📋 Contagem de Estoque":
+    st.subheader(f"📋 Contagem de Estoque — {NOMES_MESES[mes_ativo]}")
+    st.caption("Preencha apenas as quantidades. Deixe vazio o que ainda não contou; digite 0 para registrar estoque zerado.")
+    interface_cadastro_produto()
+    inv = inventario_do_mes(mes_ativo)
+    fechado = bool(inv and inv[1] == 'FECHADO')
+    if fechado:
+        st.warning("🔒 Este inventário está fechado. A contagem não pode ser alterada.")
+    produtos = listar_produtos_estoque()
+    if not produtos:
+        st.info("Nenhum produto cadastrado. Use 'Adicionar novo item' ou importe a planilha na aba Inventário e Produtos.")
+    else:
+        busca = st.text_input("🔎 Pesquisar produto", placeholder="Digite parte do nome")
+        exibidos = [p for p in produtos if busca.casefold() in str(p[2]).casefold()]
+        quantidades_atuais = quantidades_do_mes(mes_ativo)
+        st.caption(f"{len(exibidos)} produto(s) exibido(s). Quantidades já salvas aparecem preenchidas.")
+        with st.form(f"contagem_{mes_ativo}_{busca}"):
+            df = pd.DataFrame([{
+                "ID": p[0], "PRODUTO": p[2],
+                "QUANTIDADE": (formatar_numero_br(quantidades_atuais[p[0]]) if p[0] in quantidades_atuais else "")
+            } for p in exibidos])
+            editado = st.data_editor(df, hide_index=True, use_container_width=True, num_rows="fixed",
+                                     disabled=["ID", "PRODUTO"],
+                                     column_config={"ID": None, "PRODUTO": st.column_config.TextColumn("Produto"),
+                                                    "QUANTIDADE": st.column_config.TextColumn("Quantidade (ex.: 2,5)")})
+            salvar = st.form_submit_button("💾 Salvar contagem no inventário", type="primary", disabled=fechado or not exibidos)
+            if salvar:
+                try:
+                    mudancas = {}
+                    for linha in editado.to_dict('records'):
+                        entrada = str(linha['QUANTIDADE'] or '').strip()
+                        if not entrada:
+                            continue
+                        numero = converter_numero_br(entrada)
+                        if numero < 0 or not re.fullmatch(r"[0-9., ]+", entrada):
+                            raise ValueError(f"Quantidade inválida para {linha['PRODUTO']}: {entrada}")
+                        mudancas[int(linha['ID'])] = numero
+                    if not mudancas:
+                        st.warning("Preencha ao menos uma quantidade antes de salvar.")
+                    else:
+                        salvar_contagem_estoque(mes_ativo, mudancas)
+                        st.success(f"{len(mudancas)} quantidade(s) salvas no inventário de {NOMES_MESES[mes_ativo]}!")
+                        st.rerun()
+                except Exception as erro:
+                    st.error(f"Erro ao salvar a contagem: {erro}")
+
+elif menu == "📦 Inventário e Produtos":
+    st.subheader(f"📦 Inventário e Produtos — {NOMES_MESES[mes_ativo]}")
+    interface_cadastro_produto()
+    produtos = listar_produtos_estoque()
+    if not produtos:
+        with st.expander("📥 Importar produtos da planilha Excel", expanded=True):
+            arquivo = st.file_uploader("Planilha de inventário (colunas A: nome, B: unidade, C: preço)", type=["xlsx"], key="importar_estoque")
+            if arquivo and st.button("Importar produtos para o Supabase"):
+                try:
+                    qtd, repetidos = importar_planilha_estoque(arquivo)
+                    st.success(f"{qtd} produtos importados; {repetidos} já cadastrados foram mantidos.")
+                    st.rerun()
+                except Exception as erro:
+                    st.error(f"Erro na importação: {erro}")
+    else:
+        with st.expander("📥 Importar mais produtos da planilha"):
+            arquivo = st.file_uploader("Planilha Excel", type=["xlsx"], key="importar_estoque_adicional")
+            if arquivo and st.button("Importar itens que ainda não existem"):
+                try:
+                    qtd, repetidos = importar_planilha_estoque(arquivo)
+                    st.success(f"{qtd} novos produtos; {repetidos} já cadastrados.")
+                    st.rerun()
+                except Exception as erro:
+                    st.error(f"Erro na importação: {erro}")
+    produtos = listar_produtos_estoque()
+    contagem = quantidades_do_mes(mes_ativo)
+    linhas = []
+    for pid, codigo, nome, cat, unid, preco in produtos:
+        qtd = contagem.get(pid)
+        preco = float(preco or 0)
+        linhas.append({"Produto": nome, "Unidade": unid, "Categoria": cat,
+                       "Preço unitário": preco, "Quantidade": qtd,
+                       "Valor em estoque": round(qtd * preco, 2) if qtd is not None else None})
+    df_inv = pd.DataFrame(linhas)
+    if df_inv.empty:
+        st.info("Cadastre ou importe produtos para começar.")
+    else:
+        st.metric("Valor dos itens contados", f"R$ {formatar_numero_br(df_inv['Valor em estoque'].sum())}")
+        st.dataframe(df_inv, use_container_width=True, hide_index=True)
+        st.download_button("📥 Baixar inventário em CSV", df_inv.to_csv(index=False, sep=';', decimal=',').encode('utf-8-sig'),
+                           file_name=f"inventario_{mes_ativo}.csv", mime='text/csv')
+    inv = inventario_do_mes(mes_ativo)
+    if inv and inv[1] == 'FECHADO':
+        st.success("🔒 Inventário fechado")
+        with st.expander("Reabrir inventário (responsável)"):
+            if st.checkbox("Confirmo que quero permitir novas alterações", key=f"confirmar_reabrir_{mes_ativo}"):
+                if st.button("Reabrir inventário"):
+                    fechar_ou_reabrir(mes_ativo, False)
+                    st.rerun()
+    elif inv:
+        st.info("Inventário aberto. Confira as quantidades antes de fechar.")
+        if st.checkbox("Confirmo que revisei a contagem", key=f"confirmar_fechar_{mes_ativo}"):
+            if st.button("🔒 Fechar inventário"):
+                fechar_ou_reabrir(mes_ativo, True)
+                st.rerun()
