@@ -1149,7 +1149,7 @@ def importar_planilha_estoque(arquivo):
             continue
         nome, unidade = str(nome).strip(), str(unidade).strip()
         valor = 0.0 if pd.isna(preco) or str(preco).strip() == "" else converter_numero_br(preco)
-        if not nome or not unidade or unidade.lower() in ('unidade', 'unid', 'r$', 'quant.'):
+        if not nome or not unidade or unidade.lower() in ('r$', 'quant.') or (nome.upper() in ('PRODUTO', 'DESCRIÇÃO', 'ITEM') and unidade.lower() in ('unidade', 'unid')):
             continue
         if isinstance(preco, str) and preco.strip() and not re.search(r"\d", preco):
             continue
