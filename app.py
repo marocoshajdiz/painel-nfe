@@ -1065,6 +1065,16 @@ def excluir_produto_estoque(produto_id):
         conn.commit()
 
 
+def excluir_todos_produtos_estoque():
+    """Retira todos os produtos das listas ativas, preservando o histórico no banco."""
+    with conectar_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE produtos_inventario SET ativo=FALSE WHERE ativo=TRUE")
+            total = cur.rowcount
+        conn.commit()
+    return total
+
+
 def interface_excluir_produto():
     with st.expander("🗑️ Excluir item cadastrado", expanded=False):
         produtos_exclusao = listar_produtos_estoque()
@@ -1083,6 +1093,18 @@ def interface_excluir_produto():
                 st.rerun()
             except Exception as erro:
                 st.error(f"Não foi possível excluir: {erro}")
+
+        st.divider()
+        st.markdown("**🗑️ Excluir todos os produtos de uma vez**")
+        st.warning("Remove TODOS os produtos das listas de contagem e inventário, inclusive os que possuem histórico. Os registros anteriores ficam preservados no banco. Esta ação afeta todos os meses, não apenas o mês selecionado.")
+        confirmacao = st.text_input('Para confirmar, digite EXCLUIR TUDO', key='confirmar_excluir_todos', placeholder='EXCLUIR TUDO')
+        if st.button('🗑️ Excluir todos os itens', disabled=confirmacao.strip() != 'EXCLUIR TUDO', key='btn_excluir_todos', type='secondary'):
+            try:
+                total = excluir_todos_produtos_estoque()
+                st.success(f'{total} produto(s) removido(s) das listas ativas. Histórico preservado.')
+                st.rerun()
+            except Exception as erro:
+                st.error(f'Não foi possível excluir todos os produtos: {erro}')
 
 
 def salvar_contagem_estoque(mes, quantidades):
