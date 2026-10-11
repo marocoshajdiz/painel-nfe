@@ -155,15 +155,12 @@ st.sidebar.markdown("---")
 
 
 # CMV por inventário: valores calculados, nunca duplicados em ajustes_dre.
-CONTAS_CMV = {
-    "Alimentos (Demais Alimentos + Horte)": "Alimentos",
-    "Bebidas": "Bebidas",
-    "Descartáveis": "Descartáveis",
-}
+CONTAS_CMV = {"CMV Consolidado": "Total"}
 CATEGORIAS_CMV = {
-    "Demais Alimentos": "Alimentos", "Horte": "Alimentos",
+    "Demais Alimentos": "Alimentos", "Horte": "Horte",
     "Bebidas": "Bebidas", "Descartáveis": "Descartáveis",
 }
+GRUPOS_CMV = ("Alimentos", "Horte", "Bebidas", "Descartáveis")
 
 
 def mes_anterior(mes):
@@ -172,16 +169,17 @@ def mes_anterior(mes):
 
 
 def preparar_saldos_iniciais():
-    """Cria uma tabela independente, sem modificar inventários existentes."""
+    """Preserva saldos antigos e permite um único saldo inicial consolidado."""
     with conectar_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""CREATE TABLE IF NOT EXISTS saldos_iniciais_cmv (
                 mes_referencia TEXT NOT NULL,
-                categoria TEXT NOT NULL CHECK (categoria IN ('Alimentos','Bebidas','Descartáveis')),
+                categoria TEXT NOT NULL,
                 valor NUMERIC(15,2) NOT NULL CHECK (valor >= 0),
                 atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 PRIMARY KEY (mes_referencia, categoria)
             )""")
+            cur.execute("""ALTER TABLE saldos_iniciais_cmv DROP CONSTRAINT IF EXISTS saldos_iniciais_cmv_categoria_check""")
         conn.commit()
 
 
@@ -192,21 +190,18 @@ def consultar_saldos_iniciais(mes):
             return {categoria: float(valor) for categoria, valor in cur.fetchall()}
 
 
-def salvar_saldos_iniciais(mes, valores):
-    if set(valores) != {'Alimentos','Bebidas','Descartáveis'}:
-        raise ValueError('Informe as três categorias.')
+def salvar_saldos_iniciais(mes, valor):
+    if not 0 <= valor < float('inf'):
+        raise ValueError('Informe um valor inicial válido e não negativo.')
     with conectar_db() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT status FROM inventarios WHERE mes_referencia=%s FOR UPDATE", (mes,))
             inv = cur.fetchone()
             if inv and inv[0] == 'FECHADO':
                 raise ValueError('Reabra o inventário para alterar o estoque inicial.')
-            for categoria, valor in valores.items():
-                if not 0 <= valor < float('inf'):
-                    raise ValueError('O estoque inicial deve ser um valor válido e não negativo.')
-                cur.execute("""INSERT INTO saldos_iniciais_cmv (mes_referencia,categoria,valor)
-                    VALUES (%s,%s,%s) ON CONFLICT (mes_referencia,categoria)
-                    DO UPDATE SET valor=EXCLUDED.valor, atualizado_em=NOW()""", (mes,categoria,round(valor,2)))
+            cur.execute("""INSERT INTO saldos_iniciais_cmv (mes_referencia,categoria,valor)
+                VALUES (%s,'Total',%s) ON CONFLICT (mes_referencia,categoria)
+                DO UPDATE SET valor=EXCLUDED.valor, atualizado_em=NOW()""", (mes,round(valor,2)))
         conn.commit()
 
 
@@ -217,7 +212,7 @@ def calcular_valor_inventario(cur, inv_id, referencia):
                    FROM produtos_inventario p
                    LEFT JOIN inventario_itens ii ON ii.produto_id=p.id AND ii.inventario_id=%s
                    WHERE p.ativo=TRUE OR ii.id IS NOT NULL""", (inv_id,))
-    totais = {grupo: 0.0 for grupo in CONTAS_CMV.values()}
+    totais = {grupo: 0.0 for grupo in GRUPOS_CMV}
     for nome, categoria, ativo, quantidade, custo, preco in cur.fetchall():
         if categoria not in CATEGORIAS_CMV:
             if ativo and (categoria is None or categoria == 'Não classificado'):
@@ -235,7 +230,7 @@ def calcular_valor_inventario(cur, inv_id, referencia):
 
 
 def apurar_cmv_automatico(mes):
-    """Prefere saldo inicial manual; sem ele, usa inventário anterior fechado."""
+    """CMV consolidado: saldo inicial total + compras elegíveis - estoque final total."""
     anterior = mes_anterior(mes)
     try:
         with conectar_db() as conn:
@@ -246,26 +241,32 @@ def apurar_cmv_automatico(mes):
                 inv = {r[0]:(r[1],r[2]) for r in cur.fetchall()}
                 if mes not in inv or inv[mes][1] != 'FECHADO':
                     return None, f'Feche o inventário de {mes} para apurar o CMV.'
-                if manuais:
-                    if set(manuais) != set(CONTAS_CMV.values()):
-                        return None, 'Preencha os três saldos iniciais manuais.'
-                    inicial = manuais
+                if 'Total' in manuais:
+                    inicial = manuais['Total']
+                elif anterior in inv and inv[anterior][1] == 'FECHADO':
+                    inicial = sum(calcular_valor_inventario(cur, inv[anterior][0], anterior).values())
                 else:
-                    if anterior not in inv or inv[anterior][1] != 'FECHADO':
-                        return None, f'Informe o estoque inicial manual de {mes} ou feche o inventário de {anterior}.'
-                    inicial = calcular_valor_inventario(cur, inv[anterior][0], anterior)
-                final = calcular_valor_inventario(cur, inv[mes][0], mes)
+                    return None, f'Informe o estoque inicial total de {mes} ou feche o inventário de {anterior}.'
+                final_por_grupo = calcular_valor_inventario(cur, inv[mes][0], mes)
+                final = sum(final_por_grupo.values())
                 cur.execute("""SELECT detalhamento,COALESCE(SUM(valor),0)
                                FROM lancamentos_dre WHERE mes_referencia=%s
                                AND detalhamento IN ('Alimentos','Bebidas','Descartáveis')
                                GROUP BY detalhamento""", (mes,))
-                compras = {str(k):float(v) for k,v in cur.fetchall()}
-        valores = {conta:round(inicial[grupo]+compras.get(grupo,0)-final[grupo],2)
-                   for conta,grupo in CONTAS_CMV.items()}
-        return valores,None
+                compras_por_grupo = {str(k):float(v) for k,v in cur.fetchall()}
+                compras = sum(compras_por_grupo.values())
+                # O detalhamento 'Alimentos' inclui Horte: não adicionar Horte novamente.
+                cur.execute("""SELECT COALESCE(SUM(valor),0) FROM lancamentos_dre
+                               WHERE mes_referencia=%s AND classificacao='Horte'
+                               AND detalhamento='Alimentos'""", (mes,))
+                compras_horte = float(cur.fetchone()[0] or 0)
+        return {'CMV Consolidado':round(inicial+compras-final,2),
+                'Compras de Horte':round(compras_horte,2),
+                'Estoque Inicial':round(inicial,2),
+                'Compras Elegíveis':round(compras,2),
+                'Estoque Final':round(final,2)}, None
     except ValueError as erro:
         return None,str(erro)
-
 
 
 preparar_saldos_iniciais()
@@ -654,8 +655,8 @@ if menu.startswith("📊 DRE Spoleto"):
     if aviso_cmv:
         st.info("📦 CMV automático pendente: " + aviso_cmv + " Enquanto isso, permanecem os valores atuais da DRE.")
     else:
-        st.success("📦 CMV calculado automaticamente pelo inventário fechado: alimentos, bebidas e descartáveis.")
-        if any(valor < 0 for valor in cmv_auto.values()):
+        st.success("📦 CMV consolidado calculado pelo inventário fechado: alimentos, Horte, bebidas e descartáveis.")
+        if cmv_auto["CMV Consolidado"] < 0:
             st.warning("Há CMV negativo. Confira compras, quantidades e custos antes de utilizar a DRE.")
 
     CONTAS_DRE_PAINEL = [
@@ -663,9 +664,7 @@ if menu.startswith("📊 DRE Spoleto"):
         ("Faturamento Delivery", None, 0.0),
         ("Imposto Federal", "Imposto Federal", 0.0),
         ("Imposto Estadual", "Imposto Estadual", 0.0),
-        ("Alimentos (Demais Alimentos + Horte)", "Alimentos", 0.0),
-        ("Bebidas", "Bebidas", 0.0),
-        ("Descartáveis", "Descartáveis", 0.0),
+        ("CMV Consolidado", None, 0.0),
         ("Fretes", "Fretes", 0.0),
         ("Aluguel", "Aluguel", 0.0),
         ("Ar condicionado", "Ar Condicionado", 0.0),
@@ -713,7 +712,7 @@ if menu.startswith("📊 DRE Spoleto"):
         val_escaneado = float(somas_escaneadas.get(chave_det, 0.0)) if chave_det else 0.0
         val_ajuste = float(ajustes_banco.get(nome_conta, val_padrao))
         val_final = (cmv_auto[nome_conta] if cmv_auto is not None and nome_conta in CONTAS_CMV
-                     else val_escaneado + val_ajuste)
+                     else (0.0 if nome_conta in CONTAS_CMV else val_escaneado + val_ajuste))
         lista_linhas_editaveis.append({"CONTA": nome_conta, "VALOR (R$)": formatar_numero_br(round(val_final, 2))})
 
     df_base_editavel = pd.DataFrame(lista_linhas_editaveis)
@@ -737,7 +736,7 @@ if menu.startswith("📊 DRE Spoleto"):
             novos_ajustes = {}
             for conta, valor in zip(df_dre_editado["CONTA"], df_dre_editado["VALOR (R$)"]):
                 conta = str(conta)
-                if cmv_auto is not None and conta in CONTAS_CMV:
+                if conta == "CMV Consolidado":
                     continue  # CMV apurado não é ajuste manual.
                 base_nota = float(somas_escaneadas.get(next((det for nome, det, _ in CONTAS_DRE_PAINEL if nome == conta), None), 0.0))
                 novos_ajustes[conta] = converter_numero_br(valor) - base_nota
@@ -759,11 +758,9 @@ if menu.startswith("📊 DRE Spoleto"):
     imp_est = v("Imposto Estadual")
     rec_liquida = venda_bruta - (imp_fed + imp_est)
 
-    cmv_alim = v("Alimentos (Demais Alimentos + Horte)")
-    cmv_beb = v("Bebidas")
-    cmv_desc = v("Descartáveis")
+    cmv_consolidado = cmv_auto["CMV Consolidado"] if cmv_auto else 0.0
     cmv_fret = v("Fretes")
-    total_cmv = cmv_alim + cmv_beb + cmv_desc + cmv_fret
+    total_cmv = cmv_consolidado + cmv_fret
     lucro_bruto = rec_liquida - total_cmv
 
     total_ocup = v("Aluguel") + v("Ar condicionado") + v("Condomínio") + v("Fundo de Promoção") + v("IPTU") + v("Taxas e Outros")
@@ -796,6 +793,7 @@ if menu.startswith("📊 DRE Spoleto"):
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("🔹 Venda Bruta", f"R$ {venda_bruta:,.2f}")
     c2.metric("📦 CMV Total", f"R$ {total_cmv:,.2f}", delta=pct(total_cmv), delta_color="inverse")
+    st.metric("🥬 Compras de Horte (indicador)", f"R$ {formatar_numero_br(cmv_auto['Compras de Horte'])}" if cmv_auto else "Aguardando fechamento")
     c3.metric("🔹 Lucro Bruto", f"R$ {lucro_bruto:,.2f}", delta=pct(lucro_bruto))
     c4.metric("💰 Resultado Final", f"R$ {res_final:,.2f}", delta=pct(res_final))
 
@@ -808,9 +806,8 @@ if menu.startswith("📊 DRE Spoleto"):
         {"CONTA": "🔹 RECEITA LÍQUIDA", "VALOR": rec_liquida, "%": pct(rec_liquida)},
         {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
         {"CONTA": "📦 C M V (Custo de Mercadoria Vendida)", "VALOR": total_cmv, "%": pct(total_cmv)},
-        {"CONTA": "  • Alimentos (Demais Alimentos + Horte)", "VALOR": cmv_alim, "%": pct(cmv_alim)},
-        {"CONTA": "  • Bebidas", "VALOR": cmv_beb, "%": pct(cmv_beb)},
-        {"CONTA": "  • Descartáveis", "VALOR": cmv_desc, "%": pct(cmv_desc)},
+        {"CONTA": "  • CMV Consolidado (Alimentos, Horte, Bebidas e Descartáveis)", "VALOR": cmv_consolidado, "%": pct(cmv_consolidado)},
+        {"CONTA": "  • Compras de Horte (indicador; já incluídas nas compras)", "VALOR": cmv_auto["Compras de Horte"] if cmv_auto else 0.0, "%": pct(cmv_auto["Compras de Horte"] if cmv_auto else 0.0)},
         {"CONTA": "  • Fretes", "VALOR": cmv_fret, "%": pct(cmv_fret)},
         {"CONTA": "🔹 LUCRO BRUTO", "VALOR": lucro_bruto, "%": pct(lucro_bruto)},
         {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
@@ -1449,35 +1446,30 @@ elif menu == "📦 Inventário e Produtos":
     interface_cadastro_produto()
     interface_excluir_produto()
     interface_classificar_estoque()
-    # O saldo inicial manual é por categoria e não altera contagens do mês anterior.
-    with st.expander("💰 Estoque inicial do mês — preenchimento manual", expanded=False):
-        st.caption("Use quando não houver inventário anterior fechado. Valores em R$ por categoria. "
-                   "Quando preenchidos, têm prioridade sobre o mês anterior.")
+    # Saldo inicial único: inclui Alimentos, Horte, Bebidas e Descartáveis.
+    with st.expander("💰 Estoque inicial do mês — valor total", expanded=False):
+        st.caption("Informe apenas o valor total do inventário anterior (Alimentos + Horte + Bebidas + Descartáveis). "
+                   "Se informado, prevalece sobre o inventário anterior fechado.")
         saldos = consultar_saldos_iniciais(mes_ativo)
         inv_estado = inventario_do_mes(mes_ativo)
         bloqueado = bool(inv_estado and inv_estado[1] == 'FECHADO')
         if bloqueado:
-            st.warning("Inventário fechado: reabra para editar o saldo inicial.")
+            st.warning("Inventário fechado: reabra para editar o estoque inicial.")
         with st.form(f"form_saldo_inicial_{mes_ativo}"):
-            campos = {}
-            for grupo in ('Alimentos','Bebidas','Descartáveis'):
-                campos[grupo] = st.text_input(f"Estoque inicial — {grupo} (R$)",
-                    value=formatar_numero_br(saldos[grupo]) if grupo in saldos else "",
-                    placeholder="Ex.: 1.250,00", disabled=bloqueado)
-            if st.form_submit_button("💾 Salvar estoque inicial", disabled=bloqueado):
+            campo = st.text_input("Estoque inicial total (R$)",
+                value=formatar_numero_br(saldos['Total']) if 'Total' in saldos else "",
+                placeholder="Ex.: 8.000,00", disabled=bloqueado)
+            if st.form_submit_button("💾 Salvar estoque inicial total", disabled=bloqueado):
                 try:
-                    if any(not str(v).strip() for v in campos.values()):
-                        raise ValueError("Preencha os três campos, mesmo que o valor seja 0,00.")
-                    if any(not re.fullmatch(r"[0-9., ]+", v.strip()) for v in campos.values()):
-                        raise ValueError("Use somente números, pontos e vírgula.")
-                    valores = {grupo: converter_numero_br(valor) for grupo,valor in campos.items()}
-                    salvar_saldos_iniciais(mes_ativo,valores)
-                    st.success("Estoque inicial salvo no Supabase!")
+                    if not campo.strip() or not re.fullmatch(r"[0-9., ]+", campo.strip()):
+                        raise ValueError("Informe um valor em reais, por exemplo 8.000,00.")
+                    salvar_saldos_iniciais(mes_ativo, converter_numero_br(campo))
+                    st.success("Estoque inicial total salvo no Supabase!")
                     st.rerun()
                 except Exception as erro:
                     st.error(f"Não foi possível salvar: {erro}")
-        if saldos:
-            st.info("Saldo inicial manual registrado para este mês. Ele será utilizado no CMV após o fechamento.")
+        if 'Total' in saldos:
+            st.info("Saldo inicial total registrado. Será utilizado após o fechamento do inventário.")
     if "resultado_importacao_estoque" in st.session_state:
         st.success(st.session_state.pop("resultado_importacao_estoque"))
     produtos = listar_produtos_estoque()
@@ -1526,7 +1518,7 @@ elif menu == "📦 Inventário e Produtos":
             st.warning("CMV ainda pendente: " + aviso_fechado)
         else:
             st.write("**CMV automático da DRE:**")
-            st.dataframe(pd.DataFrame([{"Categoria": CONTAS_CMV[k], "CMV (R$)": v}
+            st.dataframe(pd.DataFrame([{"Indicador": k, "Valor (R$)": v}
                                       for k, v in cmv_fechado.items()]), hide_index=True, use_container_width=True)
         with st.expander("Reabrir inventário (responsável)"):
             if st.checkbox("Confirmo que quero permitir novas alterações", key=f"confirmar_reabrir_{mes_ativo}"):
