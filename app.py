@@ -1181,6 +1181,74 @@ def cadastrar_produto_estoque(nome, unidade, categoria, preco, codigo=None):
         conn.commit()
 
 
+def atualizar_precos_produtos(alteracoes):
+    """Atualiza preços no cadastro; preserva quantidades e demais dados."""
+    if not alteracoes:
+        return 0
+    with conectar_db() as conn:
+        with conn.cursor() as cur:
+            for produto_id, preco in alteracoes:
+                if preco < 0:
+                    raise ValueError("O preço unitário não pode ser negativo.")
+                cur.execute("""UPDATE produtos_inventario SET preco_unitario=%s
+                               WHERE id=%s AND ativo=TRUE""", (round(preco, 6), int(produto_id)))
+                if cur.rowcount != 1:
+                    raise ValueError(f"Produto {produto_id} não encontrado.")
+        conn.commit()
+    return len(alteracoes)
+
+
+def interface_editar_precos():
+    with st.expander("💲 Editar preços dos produtos", expanded=False):
+        st.caption("Altere o preço unitário diretamente na tabela e clique em Salvar preços. "
+                   "Os preços são do cadastro geral e afetam o valor das contagens que os utilizam.")
+        produtos_preco = listar_produtos_estoque()
+        if not produtos_preco:
+            st.info("Nenhum produto cadastrado.")
+            return
+        dados = pd.DataFrame([{
+            "ID": int(pid), "Produto": nome, "Unidade": unidade,
+            "Categoria": categoria, "Preço unitário (R$)": float(preco or 0)
+        } for pid, codigo, nome, categoria, unidade, preco in produtos_preco])
+        st.caption(f"{len(dados)} produtos. Preços zerados: "
+                   f"{int((dados['Preço unitário (R$)'] == 0).sum())}.")
+        with st.form("form_editar_precos_produtos"):
+            editado = st.data_editor(
+                dados, hide_index=True, use_container_width=True, num_rows="fixed",
+                disabled=["ID", "Produto", "Unidade", "Categoria"],
+                column_config={
+                    "ID": None,
+                    "Preço unitário (R$)": st.column_config.NumberColumn(
+                        "Preço unitário (R$)", min_value=0.0, step=0.01,
+                        format="R$ %.2f", required=True)
+                }, key="editor_precos_produtos"
+            )
+            confirmar = st.checkbox("Confirmo que revisei os preços alterados")
+            salvar = st.form_submit_button("💾 Salvar preços alterados")
+        if salvar:
+            if not confirmar:
+                st.warning("Marque a confirmação antes de salvar.")
+                return
+            originais = dict(zip(dados["ID"], dados["Preço unitário (R$)"]))
+            alteracoes = []
+            try:
+                for _, linha in editado.iterrows():
+                    pid = int(linha["ID"])
+                    novo = float(linha["Preço unitário (R$)"])
+                    if not pd.notna(novo) or novo < 0:
+                        raise ValueError("Informe preços válidos e não negativos.")
+                    if abs(novo - originais[pid]) > 0.0000001:
+                        alteracoes.append((pid, novo))
+                if not alteracoes:
+                    st.info("Nenhum preço foi alterado.")
+                    return
+                quantidade = atualizar_precos_produtos(alteracoes)
+                st.success(f"{quantidade} preço(s) atualizado(s) no Supabase!")
+                st.rerun()
+            except Exception as erro:
+                st.error(f"Não foi possível salvar os preços: {erro}")
+
+
 def excluir_produto_estoque(produto_id):
     """Desativa um produto sem apagar contagens históricas ou movimentações."""
     with conectar_db() as conn:
@@ -1454,6 +1522,7 @@ elif menu == "📦 Inventário e Produtos":
     interface_cadastro_produto()
     interface_excluir_produto()
     interface_classificar_estoque()
+    interface_editar_precos()
     # Saldo inicial único: inclui Alimentos, Horte, Bebidas e Descartáveis.
     with st.expander("💰 Estoque inicial do mês — valor total", expanded=False):
         st.caption("Informe apenas o valor total do inventário anterior (Alimentos + Horte + Bebidas + Descartáveis). "
