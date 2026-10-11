@@ -1047,6 +1047,44 @@ def cadastrar_produto_estoque(nome, unidade, categoria, preco, codigo=None):
         conn.commit()
 
 
+def excluir_produto_estoque(produto_id):
+    """Desativa um produto sem apagar contagens históricas ou movimentações."""
+    with conectar_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT produto, ativo FROM produtos_inventario WHERE id=%s FOR UPDATE", (produto_id,))
+            registro = cur.fetchone()
+            if not registro or not registro[1]:
+                raise ValueError("Produto não encontrado ou já excluído.")
+            cur.execute("SELECT EXISTS (SELECT 1 FROM inventario_itens WHERE produto_id=%s)", (produto_id,))
+            possui_contagens = cur.fetchone()[0]
+            cur.execute("SELECT EXISTS (SELECT 1 FROM movimentacoes_estoque WHERE produto_id=%s)", (produto_id,))
+            possui_movimentacoes = cur.fetchone()[0]
+            if possui_contagens or possui_movimentacoes:
+                raise ValueError("Este produto já possui contagens ou movimentações. Para preservar o histórico, não é possível excluí-lo por esta tela.")
+            cur.execute("UPDATE produtos_inventario SET ativo=FALSE WHERE id=%s", (produto_id,))
+        conn.commit()
+
+
+def interface_excluir_produto():
+    with st.expander("🗑️ Excluir item cadastrado", expanded=False):
+        produtos_exclusao = listar_produtos_estoque()
+        if not produtos_exclusao:
+            st.info("Não há produtos para excluir.")
+            return
+        opcoes = {int(p[0]): f"{p[2]} — {p[4]} (ID {p[0]})" for p in produtos_exclusao}
+        escolhido = st.selectbox("Selecione o produto", options=list(opcoes),
+                                 format_func=lambda pid: opcoes[pid], key="produto_para_excluir")
+        st.warning("A exclusão retira o item das próximas contagens. Itens com histórico não podem ser excluídos por esta tela.")
+        confirmar = st.checkbox("Confirmo que quero excluir este produto", key="confirmar_exclusao_produto")
+        if st.button("🗑️ Excluir produto selecionado", disabled=not confirmar, key="btn_excluir_produto"):
+            try:
+                excluir_produto_estoque(escolhido)
+                st.success("Produto excluído da lista de itens ativos.")
+                st.rerun()
+            except Exception as erro:
+                st.error(f"Não foi possível excluir: {erro}")
+
+
 def salvar_contagem_estoque(mes, quantidades):
     """Atualiza somente os itens informados, sem zerar produtos não exibidos."""
     with conectar_db() as conn:
@@ -1137,6 +1175,7 @@ if menu == "📋 Contagem de Estoque":
     st.subheader(f"📋 Contagem de Estoque — {NOMES_MESES[mes_ativo]}")
     st.caption("Preencha apenas as quantidades. Deixe vazio o que ainda não contou; digite 0 para registrar estoque zerado.")
     interface_cadastro_produto()
+    interface_excluir_produto()
     inv = inventario_do_mes(mes_ativo)
     fechado = bool(inv and inv[1] == 'FECHADO')
     if fechado:
@@ -1182,6 +1221,7 @@ if menu == "📋 Contagem de Estoque":
 elif menu == "📦 Inventário e Produtos":
     st.subheader(f"📦 Inventário e Produtos — {NOMES_MESES[mes_ativo]}")
     interface_cadastro_produto()
+    interface_excluir_produto()
     produtos = listar_produtos_estoque()
     if not produtos:
         with st.expander("📥 Importar produtos da planilha Excel", expanded=True):
