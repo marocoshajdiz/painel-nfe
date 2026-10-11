@@ -64,6 +64,7 @@ MAPA_7_CATEGORIAS = {
     "Demais Alimentos": {"dre": "Alimentos", "det": "Alimentos"},
     "Descartáveis": {"dre": "Descartáveis", "det": "Descartáveis"},
     "Limpeza": {"dre": "Material_De_Uso_E_Consumo", "det": "Material De Limpeza"},
+    "Materiais de Uso e Consumo": {"dre": "Material_De_Uso_E_Consumo", "det": "Outros Materiais De Uso E Consumo"},
     "Utensílios": {"dre": "Material_De_Uso_E_Consumo", "det": "Utensílios"},
     "Bebidas": {"dre": "Bebidas", "det": "Bebidas"},
     "Horte": {"dre": "Alimentos", "det": "Alimentos"},
@@ -505,7 +506,7 @@ Retorne apenas JSON válido neste formato:
 
 Cada produto deve corresponder a uma linha real do documento. Use ponto decimal para números.
 Categorias permitidas, escolha exatamente uma:
-["Demais Alimentos", "Descartáveis", "Limpeza", "Utensílios", "Bebidas", "Horte", "Uniformes", "Uniforme", "Alimentação Funcionário"].
+["Demais Alimentos", "Descartáveis", "Limpeza", "Utensílios", "Bebidas", "Horte", "Uniformes", "Uniforme", "Alimentação Funcionário", "Materiais de Uso e Consumo"].
 Use "Horte" para hortifrúti. Não confunda valor total da nota com subtotal dos produtos.
 """
 
@@ -851,7 +852,7 @@ if menu.startswith("📊 DRE Spoleto"):
 # ==============================================================================
 elif menu.startswith("📸 Escanear"):
     st.subheader(f"📸 Escanear Nota Fiscal para o DRE de: {NOMES_MESES[mes_ativo]}")
-    st.info("💡 Classificações: **Demais Alimentos, Descartáveis, Limpeza, Utensílios, Bebidas, Horte, Uniformes, Uniforme e Alimentação Funcionário**.")
+    st.info("💡 Classificações: **Demais Alimentos, Descartáveis, Limpeza, Materiais de Uso e Consumo, Utensílios, Bebidas, Horte, Uniformes, Uniforme e Alimentação Funcionário**.")
 
     ukey = st.session_state.uploader_key
     aba_foto, aba_cam, aba_arq = st.tabs([
@@ -1292,6 +1293,13 @@ def sugerir_categoria_estoque(nome):
     horte = ('ALHO PORO', 'ALHO PORÓ', 'BROCOLIS', 'BRÓCOLIS', 'CEBOLA', 'CEBOLINHA',
              'CENOURA', 'MANJERICÃO', 'MANJERICAO', 'SALSA', 'TOMATE', 'ABOBRINHA',
              'ALECRIN', 'ALFACE', 'ESPINAFRE', 'BERINGELA', 'SALVIA', 'SÁLVIA')
+    uso_consumo = ('BOBINA PDV', 'BOBINA BALANÇA', 'BOBINA BALANCA', 'BOBINA PICOTADA',
+                   'BOBINA PICT', 'ETIQUETA DE VALIDADE', 'ESPONJA ' , 'FILME PVC',
+                   'ROLO PACK FILM', 'PAPEL DE ESCRITÓRIO', 'PAPEL DE ESCRITORIO',
+                   'MATERIAL DE ESCRITÓRIO', 'MATERIAL DE ESCRITORIO', 'BORRIFADOR',
+                   'REDE DE PROTEÇÃO', 'REDE DE PROTECAO', 'TOUCA DESCARTÁVEL',
+                   'TOUCA DESCARTAVEL', 'LUVA LATEX', 'LUVA LÁTEX', 'MOP')
+    if n.startswith(uso_consumo): return 'Materiais de Uso e Consumo'
     if n.startswith(bebidas): return 'Bebidas'
     if n.startswith(limpeza): return 'Limpeza'
     if n.startswith(descartaveis): return 'Descartáveis'
