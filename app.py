@@ -651,10 +651,24 @@ if menu.startswith("📊 DRE Spoleto"):
 
     df_l = obter_lancamentos_mes(mes_ativo)
     somas_escaneadas = df_l.groupby("detalhamento")["valor"].sum().to_dict() if not df_l.empty else {}
+    # Indicadores de compras: independem do fechamento do inventário.
+    # A classificação Horte possui detalhamento Alimentos, portanto não pode
+    # ser somada uma segunda vez ao total de alimentos.
+    categorias_compras = ("Demais Alimentos", "Horte", "Bebidas", "Descartáveis")
+    compras_por_categoria = (
+        df_l[df_l["classificacao"].isin(categorias_compras)]
+        .groupby("classificacao")["valor"].sum().to_dict()
+        if not df_l.empty else {}
+    )
+    compras_alimentos = float(compras_por_categoria.get("Demais Alimentos", 0))
+    compras_horte = float(compras_por_categoria.get("Horte", 0))
+    compras_bebidas = float(compras_por_categoria.get("Bebidas", 0))
+    compras_descartaveis = float(compras_por_categoria.get("Descartáveis", 0))
+    total_compras_cmv = sum((compras_alimentos, compras_horte, compras_bebidas, compras_descartaveis))
     ajustes_banco = obter_ajustes_dre(mes_ativo)
     cmv_auto, aviso_cmv = apurar_cmv_automatico(mes_ativo)
     if aviso_cmv:
-        st.info("📦 CMV automático pendente: " + aviso_cmv + " Enquanto isso, permanecem os valores atuais da DRE.")
+        st.info("📦 CMV automático pendente: " + aviso_cmv + " As compras aparecem abaixo, mas o resultado ainda não inclui o CMV consolidado e é provisório.")
     else:
         st.success("📦 CMV consolidado calculado pelo inventário fechado: alimentos, Horte, bebidas e descartáveis.")
         if cmv_auto["CMV Consolidado"] < 0:
@@ -794,7 +808,17 @@ if menu.startswith("📊 DRE Spoleto"):
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("🔹 Venda Bruta", f"R$ {venda_bruta:,.2f}")
     c2.metric("📦 CMV Total", f"R$ {total_cmv:,.2f}", delta=pct(total_cmv), delta_color="inverse")
-    st.metric("🥬 Compras de Horte (indicador)", f"R$ {formatar_numero_br(cmv_auto['Compras de Horte'])}" if cmv_auto else "Aguardando fechamento")
+    st.metric("🥬 Compras de Horte (indicador)", f"R$ {formatar_numero_br(compras_horte)}")
+    st.caption("As compras são indicadores informativos; o CMV é reconhecido uma única vez após fechar o inventário.")
+    st.markdown("#### 🧾 Compras do mês para composição do CMV")
+    col_a, col_h, col_b, col_d, col_t = st.columns(5)
+    col_a.metric("Alimentos", f"R$ {formatar_numero_br(compras_alimentos)}")
+    col_h.metric("Horte", f"R$ {formatar_numero_br(compras_horte)}")
+    col_b.metric("Bebidas", f"R$ {formatar_numero_br(compras_bebidas)}")
+    col_d.metric("Descartáveis", f"R$ {formatar_numero_br(compras_descartaveis)}")
+    col_t.metric("Total de compras", f"R$ {formatar_numero_br(total_compras_cmv)}")
+    if cmv_auto is None:
+        st.warning("Resultado e lucro bruto provisórios: o CMV do mês ainda não foi apurado. Compras não são automaticamente iguais ao CMV.")
     c3.metric("🔹 Lucro Bruto", f"R$ {lucro_bruto:,.2f}", delta=pct(lucro_bruto))
     c4.metric("💰 Resultado Final", f"R$ {res_final:,.2f}", delta=pct(res_final))
 
@@ -807,8 +831,12 @@ if menu.startswith("📊 DRE Spoleto"):
         {"CONTA": "🔹 RECEITA LÍQUIDA", "VALOR": rec_liquida, "%": pct(rec_liquida)},
         {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
         {"CONTA": "📦 C M V (Custo de Mercadoria Vendida)", "VALOR": total_cmv, "%": pct(total_cmv)},
-        {"CONTA": "  • CMV Consolidado (Alimentos, Horte, Bebidas e Descartáveis)", "VALOR": cmv_consolidado, "%": pct(cmv_consolidado)},
-        {"CONTA": "  • Compras de Horte (indicador; já incluídas nas compras)", "VALOR": cmv_auto["Compras de Horte"] if cmv_auto else 0.0, "%": pct(cmv_auto["Compras de Horte"] if cmv_auto else 0.0)},
+        {"CONTA": "  • CMV Consolidado (pendente de fechamento)" if cmv_auto is None else "  • CMV Consolidado (Alimentos, Horte, Bebidas e Descartáveis)", "VALOR": None if cmv_auto is None else cmv_consolidado, "%": "" if cmv_auto is None else pct(cmv_consolidado)},
+        {"CONTA": "  • Compras de Alimentos (informativo)", "VALOR": compras_alimentos, "%": pct(compras_alimentos)},
+        {"CONTA": "  • Compras de Horte (informativo)", "VALOR": compras_horte, "%": pct(compras_horte)},
+        {"CONTA": "  • Compras de Bebidas (informativo)", "VALOR": compras_bebidas, "%": pct(compras_bebidas)},
+        {"CONTA": "  • Compras de Descartáveis (informativo)", "VALOR": compras_descartaveis, "%": pct(compras_descartaveis)},
+        {"CONTA": "  • TOTAL COMPRAS PARA CMV (informativo; não somar ao CMV)", "VALOR": total_compras_cmv, "%": pct(total_compras_cmv)},
         {"CONTA": "  • Fretes", "VALOR": cmv_fret, "%": pct(cmv_fret)},
         {"CONTA": "🔹 LUCRO BRUTO", "VALOR": lucro_bruto, "%": pct(lucro_bruto)},
         {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
