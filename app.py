@@ -1162,7 +1162,7 @@ if menu.startswith("📊 DRE Spoleto"):
         {"CONTA": '🏆 RESULTADO OPERACIONAL', "VALOR": res_operacional, "%": pct(res_operacional)},
         {"CONTA": '🎁 Total Bonificação', "VALOR": bonificacao, "%": pct(bonificacao)},
         {"CONTA": '🏅 RESULTADO FINAL OPERACIONAL', "VALOR": resultado_final_operacional, "%": pct(resultado_final_operacional)},
-        {"CONTA": '🚗 DESPESAS NÃO OPERACIONAIS', "VALOR": despesas_nao_operacionais, "%": pct(despesas_nao_operacionais)},
+        {"CONTA": "──────── DESPESAS NÃO OPERACIONAIS ────────", "VALOR": None, "%": ""},
         {"CONTA": '  • Carro da Loja', "VALOR": v("Carro da Loja"), "%": pct(v("Carro da Loja"))},
         {"CONTA": '✈️ VIAGENS', "VALOR": total_viagens, "%": pct(total_viagens)},
         {"CONTA": '  • Despesas de Viagens', "VALOR": v("Despesas de Viagens"), "%": pct(v("Despesas de Viagens"))},
@@ -1179,6 +1179,7 @@ if menu.startswith("📊 DRE Spoleto"):
         {"CONTA": '  • Capex', "VALOR": v("Capex"), "%": pct(v("Capex"))},
         {"CONTA": '👤 PRÓ-LABORE', "VALOR": total_pro_labore, "%": pct(total_pro_labore)},
         {"CONTA": '  • Pro Labore', "VALOR": v("Pro Labore"), "%": pct(v("Pro Labore"))},
+        {"CONTA": '🔵 SUBTOTAL DESPESAS NÃO OPERACIONAIS', "VALOR": despesas_nao_operacionais, "%": pct(despesas_nao_operacionais)},
         {"CONTA": '🔴 TOTAL GERAL DE DESPESAS', "VALOR": total_geral_despesas, "%": pct(total_geral_despesas)},
         {"CONTA": '💰 RESULTADO FINAL', "VALOR": res_final, "%": pct(res_final)},
     ]
@@ -1200,6 +1201,11 @@ if menu.startswith("📊 DRE Spoleto"):
         st.dataframe(
             df_spoleto_view, use_container_width=True, height=660,
             hide_index=True, key=f"dre_visualizacao_ao_vivo_{mes_ativo}",
+        )
+        st.markdown(
+            f"**Total despesas operacionais:** R$ {formatar_numero_br(total_despesas_operacionais)}"
+            f"  |  **Subtotal não operacionais:** R$ {formatar_numero_br(despesas_nao_operacionais)}"
+            f"  |  **Total geral:** R$ {formatar_numero_br(total_geral_despesas)}"
         )
 
     with st.expander("🔎 Conferência dos subtotais — veja de onde vem o Total de Despesas"):
