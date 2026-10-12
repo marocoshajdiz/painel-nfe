@@ -45,16 +45,81 @@ if not st.session_state.autenticado:
     tela_login()
     st.stop()
 
-st.sidebar.write(f"👤 Logado como: **{USUARIO_CORRETO}**")
-if st.sidebar.button("🚪 Sair do Sistema"):
-    st.session_state.autenticado = False
-    st.rerun()
-st.sidebar.markdown("---")
+st.sidebar.markdown("""
+<div class="capry-brand">
+  <div class="capry-logo">S P O L E T O</div>
+  <div class="capry-name">C A P R Y</div>
+  <div class="capry-subtitle">Painel de Custos &amp; DRE</div>
+</div>
+<div class="capry-profile">
+  <span class="capry-avatar">👤</span>
+  <span><strong>Olá, administrador</strong><small>Gestão financeira</small></span>
+</div>
+""", unsafe_allow_html=True)
+
+# Visual do menu lateral — não altera cálculos nem consultas ao Supabase.
+st.markdown("""
+<style>
+:root { --capry-navy:#0b1d39; --capry-blue:#2563eb; }
+section[data-testid="stSidebar"] {
+  background:linear-gradient(155deg,#102b51 0%,#0b1d39 52%,#07152c 100%) !important;
+  min-width:320px !important;
+}
+section[data-testid="stSidebar"] > div { background:transparent !important; }
+section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] { padding-top:1.1rem; }
+section[data-testid="stSidebar"] p, section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] span, section[data-testid="stSidebar"] small { color:#edf4ff; }
+.capry-brand { padding:12px 12px 22px; border-bottom:1px solid #ffffff22; margin-bottom:18px; }
+.capry-logo { font-size:23px; letter-spacing:2px; font-weight:800; color:#fff; white-space:nowrap; }
+.capry-name { font-size:12px; letter-spacing:6px; color:#a9c8f9; margin-top:3px; }
+.capry-subtitle { font-size:13px; color:#d7e6ff; margin-top:12px; }
+.capry-profile { display:flex; align-items:center; gap:12px; padding:15px 12px;
+ background:#ffffff12; border:1px solid #ffffff15; border-radius:15px; margin:0 3px 23px; }
+.capry-avatar { display:flex; align-items:center; justify-content:center; width:43px; height:43px;
+ background:#1b4e95; border-radius:13px; font-size:23px; }
+.capry-profile strong { display:block; color:#fff; font-size:14px; }
+.capry-profile small { display:block; color:#b9cbe5; font-size:12px; margin-top:2px; }
+section[data-testid="stSidebar"] [data-testid="stSelectbox"] {
+ background:#ffffff12; border:1px solid #ffffff14; padding:13px 11px 15px; border-radius:15px;
+ margin-bottom:16px;
+}
+section[data-testid="stSidebar"] [data-testid="stSelectbox"] label p { font-weight:650; font-size:13px; }
+section[data-testid="stSidebar"] [data-testid="stSelectbox"] [data-baseweb="select"] > div {
+ background:#f9fbff !important; border-radius:10px !important; }
+section[data-testid="stSidebar"] [data-testid="stSelectbox"] [data-baseweb="select"] * { color:#132746 !important; }
+section[data-testid="stSidebar"] div[role="radiogroup"] { gap:9px; }
+section[data-testid="stSidebar"] div[role="radiogroup"] label {
+ background:#ffffff0d; border:1px solid #ffffff12; border-radius:13px;
+ padding:12px 11px !important; margin:0 !important; min-height:54px;
+ transition:background .15s,border-color .15s; cursor:pointer;
+}
+section[data-testid="stSidebar"] div[role="radiogroup"] label:hover { background:#ffffff1d; border-color:#6ba5ff80; }
+section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked),
+section[data-testid="stSidebar"] div[role="radiogroup"] label:has([aria-checked="true"]) {
+ background:linear-gradient(105deg,#2563ebaa,#123e80); border:1px solid #60a5fa;
+ box-shadow:0 3px 15px #2563eb33;
+}
+section[data-testid="stSidebar"] div[role="radiogroup"] label > div:first-child { display:none !important; }
+section[data-testid="stSidebar"] div[role="radiogroup"] label p { font-size:13px; font-weight:620; line-height:1.45; }
+section[data-testid="stSidebar"] [data-testid="stRadio"] > label p {
+ color:#9fb5d5 !important; font-size:11px; letter-spacing:1.3px; font-weight:750; text-transform:uppercase;
+}
+section[data-testid="stSidebar"] div.stButton > button {
+ background:#ffffff0d !important; border:1px solid #7598c3 !important;
+ color:#fff !important; border-radius:12px !important; width:100%;
+ min-height:46px; font-weight:650; }
+section[data-testid="stSidebar"] div.stButton > button:hover { background:#2563eb44 !important; }
+section[data-testid="stSidebar"] hr { border-color:#ffffff26; }
+/* Botões primários em azul, sem afetar tabelas ou operações. */
+.stButton button[kind="primary"], .stDownloadButton button[kind="primary"] {
+ background:#2563eb !important; border-color:#2563eb !important; }
+</style>
+""", unsafe_allow_html=True)
 
 st.markdown("""
 <style>
 div[data-testid="stCameraInput"] { width: 100% !important; max-width: 900px !important; margin: 0 auto; }
-div[data-testid="stCameraInput"] video { width: 100% !important; height: 70vh !important; min-height: 480px !important; border-radius: 14px; object-fit: cover !important; border: 2px solid #ff4b4b; }
+div[data-testid="stCameraInput"] video { width: 100% !important; height: 70vh !important; min-height: 480px !important; border-radius: 14px; object-fit: cover !important; border: 2px solid #2563eb; }
 div[data-testid="stCameraInput"] button { padding: 0.75rem 1.5rem !important; font-size: 1.1rem !important; border-radius: 10px !important; }
 </style>
 """, unsafe_allow_html=True)
@@ -152,7 +217,7 @@ mes_ativo = st.sidebar.selectbox(
     index=0,
     format_func=lambda m: NOMES_MESES[m],
 )
-st.sidebar.markdown("---")
+
 
 
 # CMV por inventário: valores calculados, nunca duplicados em ajustes_dre.
@@ -641,6 +706,11 @@ menu = st.sidebar.radio("Módulo:", [
     "📋 Contagem de Estoque",
     "📦 Inventário e Produtos",
 ])
+
+st.sidebar.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+if st.sidebar.button("↪  Sair do Sistema", key="capry_sair", use_container_width=True):
+    st.session_state.autenticado = False
+    st.rerun()
 
 # ==============================================================================
 # 1. ABA DO DRE OFICIAL
