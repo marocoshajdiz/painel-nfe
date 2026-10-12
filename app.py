@@ -605,20 +605,51 @@ def avisar_erro_gemini(erro):
 
 
 def chamar_gemini(conteudos, chave):
-    """Repete apenas erros transitórios, com espera crescente e limite de tentativas."""
+    """Usa modelo principal e reservas em falhas temporárias ou modelo indisponível."""
     client = genai.Client(api_key=chave)
-    for tentativa in range(3):
-        try:
-            response = client.models.generate_content(
-                model=MODELO_GEMINI,
-                contents=conteudos,
-                config=types.GenerateContentConfig(response_mime_type="application/json"),
-            )
-            return parse_json_resposta(response.text if response else None)
-        except Exception as erro:
-            if not erro_temporario_gemini(erro) or tentativa == 2:
-                raise
-            time.sleep(min(2 ** (tentativa + 1) + random.uniform(0, 0.5), 8))
+    # A disponibilidade depende da conta e dos modelos liberados pelo Google.
+    modelos = list(dict.fromkeys([
+        MODELO_GEMINI,
+        "gemini-3.6-flash",
+        "gemini-flash-latest",
+    ]))
+    ultimo_erro = None
+    for indice, modelo in enumerate(modelos):
+        for tentativa in range(2):
+            try:
+                response = client.models.generate_content(
+                    model=modelo,
+                    contents=conteudos,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json"
+                    ),
+                )
+                resultado = parse_json_resposta(response.text if response else None)
+                if resultado is not None:
+                    if indice > 0:
+                        st.info("🤖 A leitura foi concluída usando um modelo de IA reserva.")
+                    return resultado
+                # Resposta vazia ou não JSON: não fingir sucesso.
+                ultimo_erro = ValueError("A IA não retornou JSON válido.")
+                break
+            except Exception as erro:
+                ultimo_erro = erro
+                texto_erro = str(erro).upper()
+                modelo_indisponivel = (
+                    "404" in texto_erro or "NOT_FOUND" in texto_erro
+                    or "MODEL NOT FOUND" in texto_erro
+                )
+                if not erro_temporario_gemini(erro) and not modelo_indisponivel:
+                    # Chave inválida, falta de permissão e outras falhas definitivas.
+                    raise
+                if modelo_indisponivel:
+                    break
+                if tentativa == 0:
+                    time.sleep(2 + random.uniform(0, 0.5))
+        # Depois de duas tentativas, passa ao próximo modelo.
+    if ultimo_erro is not None:
+        raise ultimo_erro
+    raise RuntimeError("Nenhum modelo de IA disponível para a leitura.")
 
 
 def processar_multiplas_imagens_com_ia(lista_fotos_bytes, chave):
