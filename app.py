@@ -184,6 +184,21 @@ CLASSIFICACOES_DESPESAS = {
     "Imposto Federal": ("Impostos", "Imposto Federal"),
     "Imposto Estadual": ("Impostos", "Imposto Estadual"),
 }
+# Novas categorias gerenciais do modelo de DRE enviado pelo usuário.
+# A classificação é independente da classificação de estoque/CMV.
+CLASSIFICACOES_NAO_OPERACIONAIS = {
+    'Despesas de Viagens': ("Despesas_Nao_Operacionais", 'Viagens'),
+    'Despesas de Convenção': ("Despesas_Nao_Operacionais", 'Convenção'),
+    'Rateio de Escritório Administrativo': ("Despesas_Nao_Operacionais", 'Rateio de Escritório Administrativo'),
+    'Pessoal - Supervisor e Nutricionista': ("Despesas_Nao_Operacionais", 'Pessoal - Supervisor e Nutricionista'),
+    'Empréstimos Bancário': ("Despesas_Nao_Operacionais", 'Empréstimos Bancário'),
+    'Pronampe': ("Despesas_Nao_Operacionais", 'Pronampe'),
+    'Juros de Empréstimos': ("Despesas_Nao_Operacionais", 'Juros de Empréstimos'),
+    'Empréstimo Folha de Pagamento': ("Despesas_Nao_Operacionais", 'Empréstimo Folha de Pagamento'),
+    'Capex': ("Despesas_Nao_Operacionais", 'Capex'),
+    'Pro Labore': ("Despesas_Nao_Operacionais", 'Pro Labore'),
+}
+CLASSIFICACOES_DESPESAS.update(CLASSIFICACOES_NAO_OPERACIONAIS)
 LISTA_CATEGORIAS_ESTOQUE = list(MAPA_7_CATEGORIAS.keys())
 for nome, (grupo, detalhamento) in CLASSIFICACOES_DESPESAS.items():
     MAPA_7_CATEGORIAS[nome] = {"dre": grupo, "det": detalhamento}
@@ -902,6 +917,17 @@ if menu.startswith("📊 DRE Spoleto"):
         ("Custo Cartão de Débito", "Custo Cartão De Débito", 0.0),
         ("Total Bonificação", None, 0.0),
         ("Carro da Loja", "Carro da Loja", 0.0),
+        ('Despesas de Viagens', 'Viagens', 0.0),
+        ('Despesas de Convenção', 'Convenção', 0.0),
+        ('Rateio de Escritório Administrativo', 'Rateio de Escritório Administrativo', 0.0),
+        ('Pessoal - Supervisor e Nutricionista', 'Pessoal - Supervisor e Nutricionista', 0.0),
+        ('Empréstimos Bancário', 'Empréstimos Bancário', 0.0),
+        ('Pronampe', 'Pronampe', 0.0),
+        ('Juros de Empréstimos', 'Juros de Empréstimos', 0.0),
+        ('Empréstimo Folha de Pagamento', 'Empréstimo Folha de Pagamento', 0.0),
+        ('Capex', 'Capex', 0.0),
+        ('Pro Labore', 'Pro Labore', 0.0),
+
     ]
 
     lista_linhas_editaveis = []
@@ -975,13 +1001,53 @@ if menu.startswith("📊 DRE Spoleto"):
     total_deliv = (v("Comissão agregadores") + v("Custo com entrega (motoqueiros)")) - v("Taxa de entrega arrecadada")
     total_mkt = v("Anúncios/Propagandas") + v("Fundo de Marketing") + v("Royalties")
     total_fin = v("Custo Cartão de Crédito") + v("Custo Cartão de Débito")
-    total_despesas = (
-        imp_fed + imp_est + total_cmv + total_ocup + total_pess +
-        total_util + total_serv + total_mat + total_manut + total_deliv + total_mkt + total_fin
+    # Subtotal calculado apenas a partir dos grupos operacionais.
+    # Não somar as linhas de detalhe nem as compras informativas: elas já estão
+    # refletidas em seus respectivos grupos (ou no CMV, após inventário).
+    grupos_operacionais = {
+        "Impostos": imp_fed + imp_est,
+        "CMV (consolidado + fretes)": total_cmv,
+        "Ocupação": total_ocup,
+        "Pessoal (inclui FGTS)": total_pess,
+        "Utilidades": total_util,
+        "Serviços (inclui Gcom e Contador)": total_serv,
+        "Materiais de uso e consumo": total_mat,
+        "Manutenção": total_manut,
+        "Delivery": total_deliv,
+        "Marketing e franqueador": total_mkt,
+        "Financeiro": total_fin,
+    }
+    total_despesas_operacionais = sum(grupos_operacionais.values())
+    res_operacional = venda_bruta - total_despesas_operacionais
+    bonificacao = v("Total Bonificação")
+    resultado_final_operacional = res_operacional + bonificacao
+
+    total_viagens = v("Despesas de Viagens") + v("Despesas de Convenção")
+    total_administrativas = (
+        v("Rateio de Escritório Administrativo") +
+        v("Pessoal - Supervisor e Nutricionista")
     )
-    res_operacional = venda_bruta - total_despesas
-    despesas_nao_operacionais = v("Carro da Loja")
-    res_final = res_operacional - despesas_nao_operacionais + v("Total Bonificação")
+    total_emprestimos = (
+        v("Empréstimos Bancário") + v("Pronampe") +
+        v("Juros de Empréstimos") + v("Empréstimo Folha de Pagamento")
+    )
+    total_investimentos = v("Capex")
+    total_pro_labore = v("Pro Labore")
+    despesas_nao_operacionais = (
+        v("Carro da Loja") + total_viagens + total_administrativas +
+        total_emprestimos + total_investimentos + total_pro_labore
+    )
+    grupos_nao_operacionais = {
+        "Viagens": total_viagens,
+        "Despesas administrativas": total_administrativas,
+        "Empréstimos": total_emprestimos,
+        "Investimentos": total_investimentos,
+        "Pró-labore": total_pro_labore,
+        "Carro da Loja": v("Carro da Loja"),
+    }
+    despesas_nao_operacionais = sum(grupos_nao_operacionais.values())
+    total_geral_despesas = total_despesas_operacionais + despesas_nao_operacionais
+    res_final = resultado_final_operacional - despesas_nao_operacionais
 
     def pct(val):
         return f"{(val / venda_bruta) * 100:.2f}%" if venda_bruta > 0 else "0.00%"
@@ -1028,6 +1094,7 @@ if menu.startswith("📊 DRE Spoleto"):
         {"CONTA": "  • Aluguel / Outros", "VALOR": total_ocup - v("Condomínio"), "%": pct(total_ocup - v("Condomínio"))},
         {"CONTA": "👥 TOTAL PESSOAL", "VALOR": total_pess, "%": pct(total_pess)},
         {"CONTA": "  • FGTS", "VALOR": v("FGTS"), "%": pct(v("FGTS"))},
+        {"CONTA": "🧾 TOTAL SERVIÇOS", "VALOR": total_serv, "%": pct(total_serv)},
         {"CONTA": "  • Gcom", "VALOR": v("Gcom"), "%": pct(v("Gcom"))},
         {"CONTA": "  • Contador", "VALOR": v("Contador"), "%": pct(v("Contador"))},
         {"CONTA": "💡 TOTAL UTILIDADES", "VALOR": total_util, "%": pct(total_util)},
@@ -1042,15 +1109,59 @@ if menu.startswith("📊 DRE Spoleto"):
         {"CONTA": "📢 MARKETING & FRANQUEADOR", "VALOR": total_mkt, "%": pct(total_mkt)},
         {"CONTA": "💳 CUSTO FINANCEIRO", "VALOR": total_fin, "%": pct(total_fin)},
         {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
-        {"CONTA": "🔴 TOTAL DESPESAS", "VALOR": total_despesas, "%": pct(total_despesas)},
-        {"CONTA": "🏆 RESULTADO OPERACIONAL", "VALOR": res_operacional, "%": pct(res_operacional)},
-        {"CONTA": "🚗 DESPESAS NÃO OPERACIONAIS", "VALOR": despesas_nao_operacionais, "%": pct(despesas_nao_operacionais)},
-        {"CONTA": "  • Carro da Loja", "VALOR": v("Carro da Loja"), "%": pct(v("Carro da Loja"))},
-        {"CONTA": "💰 RESULTADO FINAL LÍQUIDO", "VALOR": res_final, "%": pct(res_final)},
+        {"CONTA": '🔴 TOTAL DESPESAS OPERACIONAIS', "VALOR": total_despesas_operacionais, "%": pct(total_despesas_operacionais)},
+        {"CONTA": '🏆 RESULTADO OPERACIONAL', "VALOR": res_operacional, "%": pct(res_operacional)},
+        {"CONTA": '🎁 Total Bonificação', "VALOR": bonificacao, "%": pct(bonificacao)},
+        {"CONTA": '🏅 RESULTADO FINAL OPERACIONAL', "VALOR": resultado_final_operacional, "%": pct(resultado_final_operacional)},
+        {"CONTA": '🚗 DESPESAS NÃO OPERACIONAIS', "VALOR": despesas_nao_operacionais, "%": pct(despesas_nao_operacionais)},
+        {"CONTA": '  • Carro da Loja', "VALOR": v("Carro da Loja"), "%": pct(v("Carro da Loja"))},
+        {"CONTA": '✈️ VIAGENS', "VALOR": total_viagens, "%": pct(total_viagens)},
+        {"CONTA": '  • Despesas de Viagens', "VALOR": v("Despesas de Viagens"), "%": pct(v("Despesas de Viagens"))},
+        {"CONTA": '  • Despesas de Convenção', "VALOR": v("Despesas de Convenção"), "%": pct(v("Despesas de Convenção"))},
+        {"CONTA": '🗂️ DESPESAS ADMINISTRATIVAS', "VALOR": total_administrativas, "%": pct(total_administrativas)},
+        {"CONTA": '  • Rateio de Escritório Administrativo', "VALOR": v("Rateio de Escritório Administrativo"), "%": pct(v("Rateio de Escritório Administrativo"))},
+        {"CONTA": '  • Pessoal - Supervisor e Nutricionista', "VALOR": v("Pessoal - Supervisor e Nutricionista"), "%": pct(v("Pessoal - Supervisor e Nutricionista"))},
+        {"CONTA": '🏦 EMPRÉSTIMOS', "VALOR": total_emprestimos, "%": pct(total_emprestimos)},
+        {"CONTA": '  • Empréstimos Bancário', "VALOR": v("Empréstimos Bancário"), "%": pct(v("Empréstimos Bancário"))},
+        {"CONTA": '  • Pronampe', "VALOR": v("Pronampe"), "%": pct(v("Pronampe"))},
+        {"CONTA": '  • Juros de Empréstimos', "VALOR": v("Juros de Empréstimos"), "%": pct(v("Juros de Empréstimos"))},
+        {"CONTA": '  • Empréstimo Folha de Pagamento', "VALOR": v("Empréstimo Folha de Pagamento"), "%": pct(v("Empréstimo Folha de Pagamento"))},
+        {"CONTA": '🏗️ INVESTIMENTOS', "VALOR": total_investimentos, "%": pct(total_investimentos)},
+        {"CONTA": '  • Capex', "VALOR": v("Capex"), "%": pct(v("Capex"))},
+        {"CONTA": '👤 PRÓ-LABORE', "VALOR": total_pro_labore, "%": pct(total_pro_labore)},
+        {"CONTA": '  • Pro Labore', "VALOR": v("Pro Labore"), "%": pct(v("Pro Labore"))},
+        {"CONTA": '🔴 TOTAL GERAL DE DESPESAS', "VALOR": total_geral_despesas, "%": pct(total_geral_despesas)},
+        {"CONTA": '💰 RESULTADO FINAL', "VALOR": res_final, "%": pct(res_final)},
     ]
     df_spoleto_view = pd.DataFrame(estrutura_dre_spoleto)
     df_spoleto_view["VALOR"] = df_spoleto_view["VALOR"].apply(lambda x: f"R$ {formatar_numero_br(x)}" if pd.notnull(x) else "")
+    st.caption(
+        "Critério gerencial: o Total Geral de Despesas inclui saídas como amortização "
+        "de empréstimos e Capex, conforme o modelo enviado. Para uma DRE contábil, "
+        "principal de empréstimos e investimentos normalmente não são despesas do período; "
+        "consulte o contador para conciliação. Compras informativas não são somadas ao CMV."
+    )
     st.dataframe(df_spoleto_view, use_container_width=True, height=550)
+
+    with st.expander("🔎 Conferência dos subtotais — veja de onde vem o Total de Despesas"):
+        st.markdown("**Despesas operacionais — composição sem duplicidade**")
+        st.dataframe(
+            pd.DataFrame([
+                {"Grupo": nome, "Valor (R$)": formatar_numero_br(valor)}
+                for nome, valor in grupos_operacionais.items()
+            ]), hide_index=True, use_container_width=True,
+        )
+        st.markdown(f"**Subtotal operacional: R$ {formatar_numero_br(total_despesas_operacionais)}**")
+        st.markdown("**Despesas não operacionais — composição**")
+        st.dataframe(
+            pd.DataFrame([
+                {"Grupo": nome, "Valor (R$)": formatar_numero_br(valor)}
+                for nome, valor in grupos_nao_operacionais.items()
+            ]), hide_index=True, use_container_width=True,
+        )
+        st.markdown(f"**Subtotal não operacional: R$ {formatar_numero_br(despesas_nao_operacionais)}**")
+        st.markdown(f"### Total geral de despesas: R$ {formatar_numero_br(total_geral_despesas)}")
+        st.caption("As compras de estoque são informativas e não são somadas novamente ao CMV.")
 
     st.markdown("### 📥 Baixar Relatório")
     dados_excel = gerar_excel_dre(NOMES_MESES[mes_ativo], pd.DataFrame(estrutura_dre_spoleto), df_l)
