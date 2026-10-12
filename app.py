@@ -12,6 +12,7 @@ import time
 import random
 from datetime import datetime
 import pypdf
+from leitor_fiscal import ler_xml, ler_pdf, ler_imagem_ocr
 
 st.set_page_config(page_title="Painel de Custos & DRE Spoleto - Capry", layout="wide")
 
@@ -1015,6 +1016,8 @@ elif menu.startswith("📸 Escanear"):
         "📁 Arquivo (XML / Excel / PDF)", "✍️ Lançar Nota Manualmente"
     ])
 
+    st.caption("🤖 A IA é sempre a primeira opção. Se não conseguir ler a nota, o leitor fiscal local será acionado automaticamente.")
+
     with aba_manual:
         st.markdown("#### ✍️ Cadastro manual de nota fiscal")
         st.caption(
@@ -1143,7 +1146,18 @@ elif menu.startswith("📸 Escanear"):
                         st.session_state.dados_extraidos = res
                     # Em caso de falha, não cria nota fictícia nem limpa as fotos.
                     else:
-                        st.info("A nota ainda não foi processada. As fotos continuam na fila para uma nova tentativa.")
+                        st.info("A IA não conseguiu ler a nota. Tentando agora o leitor fiscal local (OCR)...")
+                        try:
+                            regras_fallback = carregar_regras()
+                            if len(st.session_state.fotos_acumuladas) != 1:
+                                st.warning("O OCR alternativo trabalha com uma foto por vez. Para evitar duplicidades, envie uma foto única ou use o lançamento manual.")
+                            else:
+                                res_local = ler_imagem_ocr(st.session_state.fotos_acumuladas[0], regras_fallback)
+                                st.session_state.dados_extraidos = res_local
+                                st.success("Leitura alternativa concluída. Confira cuidadosamente os itens, fornecedor e total antes de salvar.")
+                        except Exception as erro_fallback:
+                            st.warning(f"O leitor alternativo também não conseguiu separar os itens: {erro_fallback}")
+                            st.info("As fotos continuam disponíveis. Você pode tentar novamente ou lançar a nota manualmente.")
                 if st.session_state.dados_extraidos:
                     st.rerun()
         with col_desc:
@@ -1218,6 +1232,13 @@ elif menu.startswith("📸 Escanear"):
                         except Exception as e:
                             st.warning(f"Não foi possível extrair texto alternativo do PDF: {e}")
 
+                    if not res_pdf:
+                        st.info("A IA não conseguiu ler o PDF. Tentando extração fiscal local...")
+                        try:
+                            res_pdf = ler_pdf(bytes_pdf, carregar_regras())
+                            st.warning("Leitura local: confira todos os itens e compare o total com a nota original antes de salvar.")
+                        except Exception as erro_fallback:
+                            st.warning(f"Leitor fiscal local não concluiu a leitura: {erro_fallback}")
                     if res_pdf:
                         st.session_state.dados_extraidos = res_pdf
                         st.success(f"PDF lido: {len(res_pdf['itens'])} produto(s) identificado(s).")
