@@ -140,7 +140,56 @@ MAPA_7_CATEGORIAS = {
     "Uniforme": {"dre": "Material_De_Uso_E_Consumo", "det": "Uniformes"},
     "Alimentação Funcionário": {"dre": "Benefícios", "det": "Benefícios"},
 }
+# Classificações adicionais para notas manuais e notas interpretadas pela IA.
+# Não incluir CMV consolidado, totais, receitas nem bonificações: são indicadores
+# ou valores calculados, e não despesas de itens de notas fiscais.
+CLASSIFICACOES_DESPESAS = {
+    "FGTS": ("Pessoal", "FGTS"),
+    "Gcom": ("Serviços", "Gcom"),
+    "Contador": ("Serviços", "Contador"),
+    "Carro da Loja": ("Despesas_Nao_Operacionais", "Carro da Loja"),
+    "Fretes": ("CMV", "Fretes"),
+    "Aluguel": ("Ocupação", "Aluguel"),
+    "Ar condicionado": ("Ocupação", "Ar Condicionado"),
+    "Condomínio": ("Ocupação", "Condomínio"),
+    "Fundo de Promoção": ("Ocupação", "Fundo De Promoção"),
+    "IPTU": ("Ocupação", "Iptu"),
+    "Taxas e Outros": ("Ocupação", "Taxas E Outros"),
+    "Salário": ("Pessoal", "Salário"),
+    "Adiantamento": ("Pessoal", "Adiantamento"),
+    "Encargos": ("Pessoal", "Encargos"),
+    "Férias": ("Pessoal", "Férias"),
+    "13 salário": ("Pessoal", "13 Salário"),
+    "Provisões": ("Pessoal", "Provisões"),
+    "Rescisão": ("Pessoal", "Rescisão"),
+    "Outros (pessoal)": ("Pessoal", "Outros (pessoal)"),
+    "Água e Esgoto": ("Utilidades", "Água E Esgoto"),
+    "Energia Elétrica": ("Utilidades", "Energia Elétrica"),
+    "Gás": ("Utilidades", "Gás"),
+    "Internet": ("Utilidades", "Internet"),
+    "Telefone": ("Utilidades", "Telefone"),
+    "Outros (utilidades)": ("Utilidades", "Outros (utilidades)"),
+    "Serviços": ("Serviços", "Serviços"),
+    "Terceiros": ("Serviços", "Terceiros"),
+    "Material de Escritório": ("Material_De_Uso_E_Consumo", "Material De Escritório"),
+    "Serviço - Manutenção e Reparos": ("Manutenção", "Serviço - Manutenção E Reparos"),
+    "Material - Manutenção e Reparos": ("Manutenção", "Material - Manutenção E Reparos"),
+    "Comissão agregadores": ("Delivery", "Comissão Agregadores"),
+    "Custo com entrega (motoqueiros)": ("Delivery", "Custo Com Entrega (Motoqueiros)"),
+    "Anúncios/Propagandas": ("Marketing", "Anúncios/Propagandas"),
+    "Fundo de Marketing": ("Marketing", "Fundo De Marketing"),
+    "Royalties": ("Marketing", "Royalties"),
+    "Custo Cartão de Crédito": ("Financeiro", "Custo Cartão De Crédito"),
+    "Custo Cartão de Débito": ("Financeiro", "Custo Cartão De Débito"),
+    "Imposto Federal": ("Impostos", "Imposto Federal"),
+    "Imposto Estadual": ("Impostos", "Imposto Estadual"),
+}
+LISTA_CATEGORIAS_ESTOQUE = list(MAPA_7_CATEGORIAS.keys())
+for nome, (grupo, detalhamento) in CLASSIFICACOES_DESPESAS.items():
+    MAPA_7_CATEGORIAS[nome] = {"dre": grupo, "det": detalhamento}
+
 LISTA_7_CATEGORIAS = list(MAPA_7_CATEGORIAS.keys())
+
 
 
 def formatar_numero_br(valor):
@@ -573,8 +622,9 @@ Retorne apenas JSON válido neste formato:
 }
 
 Cada produto deve corresponder a uma linha real do documento. Use ponto decimal para números.
-Categorias permitidas, escolha exatamente uma:
-["Demais Alimentos", "Descartáveis", "Limpeza", "Utensílios", "Bebidas", "Horte", "Uniformes", "Uniforme", "Alimentação Funcionário", "Materiais de Uso e Consumo"].
+Categorias permitidas: utilize apenas uma classificação da lista disponibilizada
+pelo aplicativo. Para itens de alimentação, bebidas e descartáveis, mantenha as
+categorias de compras correspondentes.
 Use "Horte" para hortifrúti. Não confunda valor total da nota com subtotal dos produtos.
 """
 
@@ -819,6 +869,7 @@ if menu.startswith("📊 DRE Spoleto"):
         ("Adiantamento", "Adiantamento", 0.0),
         ("Benefícios (Alimentação Funcionários)", "Benefícios", 0.0),
         ("Encargos", "Encargos", 0.0),
+        ("FGTS", "FGTS", 0.0),
         ("Férias", "Férias", 0.0),
         ("13 salário", "13 Salário", 0.0),
         ("Provisões", "Provisões", 0.0),
@@ -832,6 +883,8 @@ if menu.startswith("📊 DRE Spoleto"):
         ("Outros (utilidades)", "Outros (utilidades)", 0.0),
         ("Serviços", "Serviços", 0.0),
         ("Terceiros", "Terceiros", 0.0),
+        ("Gcom", "Gcom", 0.0),
+        ("Contador", "Contador", 0.0),
         ("Material de Escritório", "Material De Escritório", 0.0),
         ("Material de Limpeza", "Material De Limpeza", 0.0),
         ("Uniformes", "Uniformes", 0.0),
@@ -848,6 +901,7 @@ if menu.startswith("📊 DRE Spoleto"):
         ("Custo Cartão de Crédito", "Custo Cartão De Crédito", 0.0),
         ("Custo Cartão de Débito", "Custo Cartão De Débito", 0.0),
         ("Total Bonificação", None, 0.0),
+        ("Carro da Loja", "Carro da Loja", 0.0),
     ]
 
     lista_linhas_editaveis = []
@@ -909,10 +963,10 @@ if menu.startswith("📊 DRE Spoleto"):
     total_ocup = v("Aluguel") + v("Ar condicionado") + v("Condomínio") + v("Fundo de Promoção") + v("IPTU") + v("Taxas e Outros")
     total_pess = (
         v("Salário") + v("Adiantamento") + v("Benefícios (Alimentação Funcionários)") +
-        v("Encargos") + v("Férias") + v("13 salário") + v("Provisões") + v("Rescisão") + v("Outros (pessoal)")
+        v("Encargos") + v("FGTS") + v("Férias") + v("13 salário") + v("Provisões") + v("Rescisão") + v("Outros (pessoal)")
     )
     total_util = v("Água e Esgoto") + v("Energia Elétrica") + v("Gás") + v("Internet") + v("Telefone") + v("Outros (utilidades)")
-    total_serv = v("Serviços") + v("Terceiros")
+    total_serv = v("Serviços") + v("Terceiros") + v("Gcom") + v("Contador")
     total_mat = (
         v("Material de Escritório") + v("Material de Limpeza") + v("Uniformes") +
         v("Utensílios") + v("Outros Materiais de Uso e Consumo")
@@ -926,7 +980,8 @@ if menu.startswith("📊 DRE Spoleto"):
         total_util + total_serv + total_mat + total_manut + total_deliv + total_mkt + total_fin
     )
     res_operacional = venda_bruta - total_despesas
-    res_final = res_operacional + v("Total Bonificação")
+    despesas_nao_operacionais = v("Carro da Loja")
+    res_final = res_operacional - despesas_nao_operacionais + v("Total Bonificação")
 
     def pct(val):
         return f"{(val / venda_bruta) * 100:.2f}%" if venda_bruta > 0 else "0.00%"
@@ -972,6 +1027,9 @@ if menu.startswith("📊 DRE Spoleto"):
         {"CONTA": "  • Condomínio", "VALOR": v("Condomínio"), "%": pct(v("Condomínio"))},
         {"CONTA": "  • Aluguel / Outros", "VALOR": total_ocup - v("Condomínio"), "%": pct(total_ocup - v("Condomínio"))},
         {"CONTA": "👥 TOTAL PESSOAL", "VALOR": total_pess, "%": pct(total_pess)},
+        {"CONTA": "  • FGTS", "VALOR": v("FGTS"), "%": pct(v("FGTS"))},
+        {"CONTA": "  • Gcom", "VALOR": v("Gcom"), "%": pct(v("Gcom"))},
+        {"CONTA": "  • Contador", "VALOR": v("Contador"), "%": pct(v("Contador"))},
         {"CONTA": "💡 TOTAL UTILIDADES", "VALOR": total_util, "%": pct(total_util)},
         {"CONTA": "  • Gás", "VALOR": v("Gás"), "%": pct(v("Gás"))},
         {"CONTA": "  • Energia Elétrica", "VALOR": v("Energia Elétrica"), "%": pct(v("Energia Elétrica"))},
@@ -986,6 +1044,8 @@ if menu.startswith("📊 DRE Spoleto"):
         {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
         {"CONTA": "🔴 TOTAL DESPESAS", "VALOR": total_despesas, "%": pct(total_despesas)},
         {"CONTA": "🏆 RESULTADO OPERACIONAL", "VALOR": res_operacional, "%": pct(res_operacional)},
+        {"CONTA": "🚗 DESPESAS NÃO OPERACIONAIS", "VALOR": despesas_nao_operacionais, "%": pct(despesas_nao_operacionais)},
+        {"CONTA": "  • Carro da Loja", "VALOR": v("Carro da Loja"), "%": pct(v("Carro da Loja"))},
         {"CONTA": "💰 RESULTADO FINAL LÍQUIDO", "VALOR": res_final, "%": pct(res_final)},
     ]
     df_spoleto_view = pd.DataFrame(estrutura_dre_spoleto)
@@ -1662,12 +1722,12 @@ def interface_classificar_estoque():
         if not produtos_class:
             st.info('Importe os produtos antes de classificá-los.')
             return
-        categorias_validas = ['Não classificado'] + LISTA_7_CATEGORIAS
+        categorias_validas = ['Não classificado'] + LISTA_CATEGORIAS_ESTOQUE
         linhas_class = []
         for pid, codigo, nome, categoria, unidade, preco in produtos_class:
             sugestao = sugerir_categoria_estoque(nome)
             linhas_class.append({'ID': int(pid), 'Produto': nome, 'Categoria atual': categoria or 'Não classificado',
-                                 'Nova categoria': categoria if categoria in LISTA_7_CATEGORIAS else sugestao})
+                                 'Nova categoria': categoria if categoria in LISTA_CATEGORIAS_ESTOQUE else sugestao})
         df_class = pd.DataFrame(linhas_class)
         with st.form('form_classificacao_inventario'):
             revisado = st.data_editor(df_class, hide_index=True, use_container_width=True,
@@ -1682,7 +1742,7 @@ def interface_classificar_estoque():
                 else:
                     try:
                         alteracoes = [(str(linha['Nova categoria']), int(linha['ID'])) for linha in revisado.to_dict('records')
-                                      if linha['Nova categoria'] in LISTA_7_CATEGORIAS]
+                                      if linha['Nova categoria'] in LISTA_CATEGORIAS_ESTOQUE]
                         with conectar_db() as conn:
                             with conn.cursor() as cur:
                                 cur.executemany('UPDATE produtos_inventario SET categoria=%s WHERE id=%s AND ativo=TRUE', alteracoes)
@@ -1736,7 +1796,7 @@ def interface_cadastro_produto():
             c1, c2 = st.columns(2)
             unidade = c1.selectbox("Unidade", ["UNIDADE", "KG", "G", "L", "ML", "CX", "PACOTE", "FARDO", "OUTRO"])
             preco_txt = c2.text_input("Preço unitário (R$)", value="0,00")
-            categoria = st.selectbox("Categoria", ["Não classificado"] + LISTA_7_CATEGORIAS)
+            categoria = st.selectbox("Categoria", ["Não classificado"] + LISTA_CATEGORIAS_ESTOQUE)
             if st.form_submit_button("Salvar novo produto", type="primary"):
                 try:
                     cadastrar_produto_estoque(nome, unidade, categoria, converter_numero_br(preco_txt))
