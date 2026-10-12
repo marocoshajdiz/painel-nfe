@@ -4,6 +4,8 @@ import pandas as pd
 from google import genai
 from google.genai import types
 import json
+import math
+import hashlib
 import psycopg2
 from urllib.parse import urlsplit
 import io
@@ -404,48 +406,93 @@ def apurar_cmv_automatico(mes):
 
 preparar_saldos_iniciais()
 
+def validar_nota_para_gravacao(valor_total, lista_produtos):
+    """Valida dados conferidos pelo operador antes de qualquer INSERT."""
+    try:
+        total = float(valor_total)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("total inválido: informe um valor numérico válido.")
+    if not math.isfinite(total) or total <= 0:
+        raise ValueError("O total inválido deve ser maior que zero e finito.")
+    if not isinstance(lista_produtos, list) or not lista_produtos:
+        raise ValueError("A nota precisa conter pelo menos um item.")
+    normalizados = []
+    for indice, item in enumerate(lista_produtos, 1):
+        if not isinstance(item, dict):
+            raise ValueError(f"Item {indice} inválido.")
+        categoria = str(item.get("Categoria", item.get("Classificacao", ""))).strip()
+        if categoria not in MAPA_7_CATEGORIAS:
+            raise ValueError(f"Revise a classificação do item {indice}: {categoria or 'não informada'}.")
+        nome = str(item.get("Produto", "")).strip()
+        if not nome:
+            raise ValueError(f"Informe o produto do item {indice}.")
+        valor_bruto = item.get("TotalItem", item.get("Total do Item (R$)"))
+        try:
+            valor = float(valor_bruto)
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError(f"Valor inválido no item {indice}.")
+        if not math.isfinite(valor) or valor <= 0:
+            raise ValueError(f"Valor inválido no item {indice}: deve ser maior que zero.")
+        normalizados.append((nome.upper(), categoria, round(valor, 2)))
+    soma = round(sum(x[2] for x in normalizados), 2)
+    if abs(soma - round(total, 2)) > 0.01:
+        raise ValueError("O total da nota não confere com a soma dos itens. Revise antes de lançar.")
+    return total, normalizados
+
+
 def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_produtos):
+    total, normalizados = validar_nota_para_gravacao(valor_total, lista_produtos)
+    # Assinatura estável para bloquear uma segunda gravação do mesmo conjunto de itens.
+    assinatura = json.dumps({"mes": mes_ref, "cnpj": str(cnpj).strip(),
+                            "total": round(total, 2), "itens": sorted(normalizados)},
+                           ensure_ascii=False, sort_keys=True)
+    chave = hashlib.sha256(assinatura.encode("utf-8")).hexdigest()
     conn = conectar_db()
     try:
         cursor = conn.cursor()
+        # Lock transacional impede dois operadores de gravarem simultaneamente a mesma nota.
+        cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (chave,))
+        cursor.execute("""SELECT valor_total, itens_json, cnpj FROM notas
+                          WHERE mes_referencia=%s AND cnpj=%s AND valor_total=%s""",
+                       (mes_ref, cnpj, total))
+        for valor_antigo, itens_antigos, cnpj_antigo in cursor.fetchall():
+            try:
+                antigos = json.loads(itens_antigos) if isinstance(itens_antigos, str) else itens_antigos
+                _, itens_norm_antigos = validar_nota_para_gravacao(valor_antigo, antigos)
+                if sorted(itens_norm_antigos) == sorted(normalizados):
+                    raise ValueError("Esta nota já foi lançada neste mês. Verifique o histórico.")
+            except ValueError as erro:
+                if "já foi lançada" in str(erro):
+                    raise
+                # Notas históricas incompletas não devem impedir lançamentos novos.
+                continue
         data_registo = datetime.now().strftime("%Y-%m-%d %H:%M")
         itens_json = json.dumps(lista_produtos, ensure_ascii=False)
-        cursor.execute("""
-            INSERT INTO notas (mes_referencia, data_registo, razao_social, cnpj, valor_total, itens_json)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """, (mes_ref, data_registo, razao_social, cnpj, valor_total, itens_json))
-
-        df_temp = pd.DataFrame(lista_produtos)
-        if not df_temp.empty:
-            col_tot = "TotalItem" if "TotalItem" in df_temp.columns else "Total do Item (R$)"
-            col_cat = "Categoria" if "Categoria" in df_temp.columns else "Classificacao"
-            if col_tot in df_temp.columns and col_cat in df_temp.columns:
-                df_temp[col_tot] = pd.to_numeric(df_temp[col_tot], errors="coerce").fillna(0)
-                totais = df_temp.groupby(col_cat)[col_tot].sum().to_dict()
-                data_hoje = datetime.now().strftime("%Y-%m-%d")
-
-                for cat_nome, valor in totais.items():
-                    if valor > 0:
-                        cfg = MAPA_7_CATEGORIAS.get(cat_nome, {"dre": "Alimentos", "det": "Alimentos"})
-                        cursor.execute("""
-                            INSERT INTO lancamentos_dre
-                            (mes_referencia, data, fornecedor, descricao, valor, dre, classificacao, detalhamento)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                        """, (
-                            mes_ref, data_hoje, razao_social.upper(), str(cat_nome).upper(),
-                            float(valor), cfg["dre"], cat_nome, cfg["det"]
-                        ))
-
-                for item in lista_produtos:
-                    prod = str(item.get("Produto", "")).strip().upper()
-                    categoria = str(item.get(col_cat, "")).strip()
-                    if prod and categoria in LISTA_7_CATEGORIAS:
-                        cursor.execute("""
-                            INSERT INTO regras_classificacao (produto, categoria)
-                            VALUES (%s, %s)
-                            ON CONFLICT(produto) DO UPDATE SET categoria=excluded.categoria
-                        """, (prod, categoria))
+        cursor.execute("""INSERT INTO notas
+            (mes_referencia, data_registo, razao_social, cnpj, valor_total, itens_json)
+            VALUES (%s, %s, %s, %s, %s, %s)""",
+            (mes_ref, data_registo, razao_social, cnpj, total, itens_json))
+        totais = {}
+        for _, categoria, valor in normalizados:
+            totais[categoria] = totais.get(categoria, 0.0) + valor
+        data_hoje = datetime.now().strftime("%Y-%m-%d")
+        for cat_nome, valor in totais.items():
+            cfg = MAPA_7_CATEGORIAS[cat_nome]
+            cursor.execute("""INSERT INTO lancamentos_dre
+                (mes_referencia, data, fornecedor, descricao, valor, dre, classificacao, detalhamento)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                (mes_ref, data_hoje, razao_social.upper(), cat_nome.upper(),
+                 round(valor, 2), cfg["dre"], cat_nome, cfg["det"]))
+        for item in lista_produtos:
+            prod = str(item.get("Produto", "")).strip().upper()
+            categoria = str(item.get("Categoria", item.get("Classificacao", ""))).strip()
+            cursor.execute("""INSERT INTO regras_classificacao (produto, categoria)
+                VALUES (%s, %s) ON CONFLICT(produto)
+                DO UPDATE SET categoria=excluded.categoria""", (prod, categoria))
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -840,7 +887,7 @@ if st.sidebar.button("↪  Sair do Sistema", key="capry_sair", use_container_wid
 # ==============================================================================
 if menu.startswith("📊 DRE Spoleto"):
     st.subheader(f"📊 Demonstrativo de Resultados (DRE) — {NOMES_MESES[mes_ativo]}")
-    st.write("Insira e ajuste os valores de Condomínio, Gás, Energia, Aluguel e Salários diretamente na tabela abaixo.")
+    st.write("Insira e ajuste os valores de todas as contas diretamente na tabela abaixo. Os subtotais e resultados serão recalculados.")
 
     df_l = obter_lancamentos_mes(mes_ativo)
     somas_escaneadas = df_l.groupby("detalhamento")["valor"].sum().to_dict() if not df_l.empty else {}
@@ -861,7 +908,7 @@ if menu.startswith("📊 DRE Spoleto"):
     ajustes_banco = obter_ajustes_dre(mes_ativo)
     cmv_auto, aviso_cmv = apurar_cmv_automatico(mes_ativo)
     if aviso_cmv:
-        st.info("📦 CMV automático pendente: " + aviso_cmv + " As compras aparecem abaixo, mas o resultado ainda não inclui o CMV consolidado e é provisório.")
+        st.info("📦 CMV automático pendente: " + aviso_cmv + " Até o fechamento, compras e fretes são considerados provisoriamente no resultado.")
     else:
         st.success("📦 CMV consolidado calculado pelo inventário fechado: alimentos, Horte, bebidas e descartáveis.")
         if cmv_auto["CMV Consolidado"] < 0:
@@ -1032,7 +1079,10 @@ if menu.startswith("📊 DRE Spoleto"):
 
     cmv_consolidado = cmv_auto["CMV Consolidado"] if cmv_auto else 0.0
     cmv_fret = v("Fretes")
-    total_cmv = cmv_consolidado + cmv_fret
+    # Enquanto o inventário não estiver fechado, as compras são uma
+    # aproximação gerencial do CMV; não apresentamos lucro bruto inflado.
+    cmv_para_resultado = cmv_consolidado if cmv_auto is not None else total_compras_cmv
+    total_cmv = cmv_para_resultado + cmv_fret
     lucro_bruto = rec_liquida - total_cmv
 
     total_ocup = v("Aluguel") + v("Ar condicionado") + v("Condomínio") + v("Fundo de Promoção") + v("IPTU") + v("Taxas e Outros")
@@ -1108,9 +1158,10 @@ if menu.startswith("📊 DRE Spoleto"):
     st.write("### 📈 Visão Consolidada em Tempo Real")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("🔹 Venda Bruta", f"R$ {venda_bruta:,.2f}")
-    c2.metric("📦 CMV Total", f"R$ {total_cmv:,.2f}", delta=pct(total_cmv), delta_color="inverse")
+    c2.metric("📦 CMV consolidado" if cmv_auto is not None else "📦 Compras + fretes (provisório)",
+              f"R$ {formatar_numero_br(total_cmv)}", delta=pct(total_cmv), delta_color="inverse")
     st.metric("🥬 Compras de Horte (indicador)", f"R$ {formatar_numero_br(compras_horte)}")
-    st.caption("As compras são indicadores informativos; o CMV é reconhecido uma única vez após fechar o inventário.")
+    st.caption("Antes do fechamento, compras + fretes substituem provisoriamente o CMV no resultado; depois, usa-se somente o CMV consolidado + fretes.")
     st.markdown("#### 🧾 Compras do mês para composição do CMV")
     col_a, col_h, col_b, col_d, col_t = st.columns(5)
     col_a.metric("Alimentos", f"R$ {formatar_numero_br(compras_alimentos)}")
@@ -1119,7 +1170,7 @@ if menu.startswith("📊 DRE Spoleto"):
     col_d.metric("Descartáveis", f"R$ {formatar_numero_br(compras_descartaveis)}")
     col_t.metric("Total de compras", f"R$ {formatar_numero_br(total_compras_cmv)}")
     if cmv_auto is None:
-        st.warning("Resultado e lucro bruto provisórios: o CMV do mês ainda não foi apurado. Compras não são automaticamente iguais ao CMV.")
+        st.warning("Resultado e lucro bruto provisórios: usamos compras + fretes como estimativa do CMV até fechar o inventário. Compras não são necessariamente iguais ao custo das mercadorias vendidas.")
     c3.metric("🔹 Lucro Bruto", f"R$ {lucro_bruto:,.2f}", delta=pct(lucro_bruto))
     c4.metric("💰 Resultado Final", f"R$ {res_final:,.2f}", delta=pct(res_final))
 
@@ -1131,7 +1182,7 @@ if menu.startswith("📊 DRE Spoleto"):
         {"CONTA": "(-) Imposto Estadual", "VALOR": imp_est, "%": pct(imp_est)},
         {"CONTA": "🔹 RECEITA LÍQUIDA", "VALOR": rec_liquida, "%": pct(rec_liquida)},
         {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
-        {"CONTA": "📦 C M V (Custo de Mercadoria Vendida)", "VALOR": total_cmv, "%": pct(total_cmv)},
+        {"CONTA": "📦 C M V (Custo de Mercadoria Vendida)" if cmv_auto is not None else "📦 COMPRAS + FRETES (CMV provisório)", "VALOR": total_cmv, "%": pct(total_cmv)},
         {"CONTA": "  • CMV Consolidado (pendente de fechamento)" if cmv_auto is None else "  • CMV Consolidado (Alimentos, Horte, Bebidas e Descartáveis)", "VALOR": None if cmv_auto is None else cmv_consolidado, "%": "" if cmv_auto is None else pct(cmv_consolidado)},
         {"CONTA": "  • Compras de Alimentos (informativo)", "VALOR": compras_alimentos, "%": pct(compras_alimentos)},
         {"CONTA": "  • Compras de Horte (informativo)", "VALOR": compras_horte, "%": pct(compras_horte)},
@@ -1452,10 +1503,18 @@ elif menu.startswith("📸 Escanear"):
                         })
                     if not itens_x:
                         raise ValueError("Nenhum produto foi encontrado no XML.")
+                    total_xml = numero_seguro(tot.get("vNF"))
+                    soma_produtos_xml = round(sum(item["TotalItem"] for item in itens_x), 2)
+                    if abs(total_xml - soma_produtos_xml) > 0.01:
+                        st.warning(
+                            f"O total fiscal do XML (R$ {formatar_numero_br(total_xml)}) difere "
+                            f"da soma dos produtos (R$ {formatar_numero_br(soma_produtos_xml)}). "
+                            "Confira descontos, fretes e outros valores antes de confirmar."
+                        )
                     st.session_state.dados_extraidos = {
                         "razao_social": emit.get("xNome", "Fornecedor não identificado"),
                         "cnpj": emit.get("CNPJ") or emit.get("CPF") or "Não informado",
-                        "valor_total": numero_seguro(tot.get("vNF")),
+                        "valor_total": total_xml,
                         "itens": itens_x,
                     }
                     st.rerun()
@@ -1592,23 +1651,34 @@ elif menu.startswith("📸 Escanear"):
         col_save_det, col_canc = st.columns([2, 1])
         with col_save_det:
             if st.button(f"🚀 Confirmar & Lançar no DRE ({NOMES_MESES[mes_ativo]})", type="primary", use_container_width=True):
-                linhas_validas = df_edit[(df_edit["Produto"] != "") & (df_edit["TotalItem"] > 0)]
+                linhas_preenchidas = df_edit[df_edit["Produto"] != ""].copy()
+                linhas_validas = linhas_preenchidas[linhas_preenchidas["TotalItem"] > 0]
                 if linhas_validas.empty:
                     st.warning("⚠️ Insira ao menos um produto com valor maior que R$ 0,00.")
+                elif len(linhas_validas) != len(linhas_preenchidas):
+                    st.error("Há produtos com subtotal zerado ou inválido. Corrija todos antes de gravar a nota.")
+                elif not linhas_validas["Categoria"].isin(LISTA_7_CATEGORIAS).all():
+                    st.error("Revise as classificações dos produtos antes de gravar.")
                 else:
                     # Só salva linhas identificadas e com valor positivo.
                     lista_salvar = linhas_validas[colunas_padrao].to_dict(orient="records")
                     total_salvar = float(linhas_validas["TotalItem"].sum())
-                    salvar_nota_e_lancar_dre(
-                        mes_ref=mes_ativo,
-                        razao_social=fornec_input.strip() or "Fornecedor não identificado",
-                        cnpj=cnpj_input.strip() or "Não informado",
-                        valor_total=total_salvar,
-                        lista_produtos=lista_salvar,
-                    )
-                    st.success(f"✅ {len(lista_salvar)} produto(s) lançados no DRE de {NOMES_MESES[mes_ativo]}!")
-                    resetar_processamento_nota()
-                    st.rerun()
+                    try:
+                        salvar_nota_e_lancar_dre(
+                            mes_ref=mes_ativo,
+                            razao_social=fornec_input.strip() or "Fornecedor não identificado",
+                            cnpj=cnpj_input.strip() or "Não informado",
+                            valor_total=total_salvar,
+                            lista_produtos=lista_salvar,
+                        )
+                    except ValueError as erro:
+                        st.error(f"Nota não lançada: {erro}")
+                    except Exception:
+                        st.error("Não foi possível gravar a nota. Os dados conferidos foram mantidos; tente novamente após verificar a conexão.")
+                    else:
+                        st.success(f"✅ {len(lista_salvar)} produto(s) lançados no DRE de {NOMES_MESES[mes_ativo]}!")
+                        resetar_processamento_nota()
+                        st.rerun()
         with col_canc:
             if st.button("❌ Descartar Nota", use_container_width=True):
                 resetar_processamento_nota()
@@ -1638,17 +1708,31 @@ elif menu.startswith("📝 Lançamentos"):
         with c_sel:
             id_del = st.selectbox("Selecione o lançamento pelo ID:", df_lanc["id"].tolist())
         with c_del:
-            st.write("")
-            if st.button("Eliminar Lançamento", type="secondary", use_container_width=True):
+            confirmar_exclusao = st.checkbox(
+                "Confirmo a exclusão deste lançamento",
+                key=f"confirmar_exclusao_{mes_ativo}_{id_del}",
+            )
+            st.caption("A nota fiscal original será preservada. A exclusão altera os totais da DRE e pode afetar o CMV.")
+            if st.button("Eliminar Lançamento", type="secondary", use_container_width=True,
+                         disabled=not confirmar_exclusao):
                 conn = conectar_db()
                 try:
                     with conn.cursor() as cursor:
-                        cursor.execute("DELETE FROM lancamentos_dre WHERE id = %s", (int(id_del),))
+                        cursor.execute("DELETE FROM lancamentos_dre WHERE id = %s AND mes_referencia = %s",
+                                       (int(id_del), mes_ativo))
+                        removidos = cursor.rowcount
                     conn.commit()
+                except Exception:
+                    conn.rollback()
+                    st.error("Não foi possível excluir o lançamento.")
+                else:
+                    if removidos:
+                        st.warning(f"Lançamento #{id_del} removido do DRE. A nota original permanece no histórico.")
+                    else:
+                        st.info("O lançamento não foi encontrado neste mês.")
+                    st.rerun()
                 finally:
                     conn.close()
-                st.warning(f"Lançamento #{id_del} removido do DRE.")
-                st.rerun()
 
 # ==============================================================================
 # 4. ABA DE REGRAS INTELIGENTES
@@ -1861,6 +1945,13 @@ def salvar_contagem_estoque(mes, quantidades):
 def fechar_ou_reabrir(mes, fechar):
     with conectar_db() as conn:
         with conn.cursor() as cur:
+            cur.execute("SELECT id, status FROM inventarios WHERE mes_referencia=%s FOR UPDATE", (mes,))
+            registro = cur.fetchone()
+            if not registro:
+                raise ValueError("Não há inventário cadastrado para este mês.")
+            if fechar:
+                # Confere contagem e custo dos itens ativos antes de permitir o fechamento.
+                calcular_valor_inventario(cur, registro[0], mes)
             cur.execute("""UPDATE inventarios SET status=%s,
                            fechado_em=CASE WHEN %s THEN NOW() ELSE NULL END
                            WHERE mes_referencia=%s""",
