@@ -953,6 +953,56 @@ if menu.startswith("📊 DRE Spoleto"):
         key=f"editor_dre_{mes_ativo}_v{qtd_lanc}",
     )
 
+    # Resumo reativo: o Streamlit recalcula quando a edição de uma célula é
+    # confirmada (Enter ou clique fora). Não é necessário clicar em Salvar.
+    valores_ao_vivo = {
+        str(linha["CONTA"]): converter_numero_br(linha["VALOR (R$)"])
+        for _, linha in df_dre_editado.iterrows()
+    }
+    def valor_ao_vivo(nome):
+        return float(valores_ao_vivo.get(nome, 0.0) or 0.0)
+
+    grupos_operacionais_ao_vivo = {
+        "Impostos": ["Imposto Federal", "Imposto Estadual"],
+        "Ocupação": ["Aluguel", "Ar condicionado", "Condomínio", "Fundo de Promoção", "IPTU", "Taxas e Outros"],
+        "Pessoal": ["Salário", "Adiantamento", "Benefícios (Alimentação Funcionários)", "Encargos", "FGTS", "Férias", "13 salário", "Provisões", "Rescisão", "Outros (pessoal)"],
+        "Utilidades": ["Água e Esgoto", "Energia Elétrica", "Gás", "Internet", "Telefone", "Outros (utilidades)"],
+        "Serviços": ["Serviços", "Terceiros", "Gcom", "Contador"],
+        "Materiais de uso e consumo": ["Material de Escritório", "Material de Limpeza", "Uniformes", "Utensílios", "Outros Materiais de Uso e Consumo"],
+        "Manutenção": ["Serviço - Manutenção e Reparos", "Material - Manutenção e Reparos"],
+        "Delivery": ["Comissão agregadores", "Custo com entrega (motoqueiros)"],
+        "Marketing e franqueador": ["Anúncios/Propagandas", "Fundo de Marketing", "Royalties"],
+        "Financeiro": ["Custo Cartão de Crédito", "Custo Cartão de Débito"],
+    }
+    subtotais_ao_vivo = {
+        grupo: sum(valor_ao_vivo(conta) for conta in contas)
+        for grupo, contas in grupos_operacionais_ao_vivo.items()
+    }
+    subtotais_ao_vivo["Delivery"] -= valor_ao_vivo("Taxa de entrega arrecadada")
+    subtotais_ao_vivo["CMV e fretes"] = (
+        float(cmv_auto.get("CMV Consolidado", 0.0)) if cmv_auto else 0.0
+    ) + valor_ao_vivo("Fretes")
+    total_operacional_ao_vivo = sum(subtotais_ao_vivo.values())
+    contas_nao_operacionais_ao_vivo = [
+        "Carro da Loja", "Despesas de Viagens", "Despesas de Convenção",
+        "Rateio de Escritório Administrativo", "Pessoal - Supervisor e Nutricionista",
+        "Empréstimos Bancário", "Pronampe", "Juros de Empréstimos",
+        "Empréstimo Folha de Pagamento", "Capex", "Pro Labore",
+    ]
+    total_nao_operacional_ao_vivo = sum(
+        valor_ao_vivo(conta) for conta in contas_nao_operacionais_ao_vivo
+    )
+    st.markdown("#### 📊 Totais atualizados ao editar")
+    col_op, col_nao, col_geral = st.columns(3)
+    col_op.metric("Despesas operacionais", f"R$ {formatar_numero_br(total_operacional_ao_vivo)}")
+    col_nao.metric("Despesas não operacionais", f"R$ {formatar_numero_br(total_nao_operacional_ao_vivo)}")
+    col_geral.metric("Total geral de despesas", f"R$ {formatar_numero_br(total_operacional_ao_vivo + total_nao_operacional_ao_vivo)}")
+    st.caption(
+        "Os totais mudam quando você confirma a edição de uma célula (Enter ou clique fora). "
+        "Clique em Salvar para gravar os valores no Supabase. "
+        "Compras informativas não entram novamente no total; CMV só entra após o fechamento."
+    )
+
     col_save_dre, _ = st.columns([2, 3])
     with col_save_dre:
         if st.button("💾 Salvar Lançamentos e Ajustes do DRE na Base de Dados", type="primary", use_container_width=True):
@@ -965,6 +1015,7 @@ if menu.startswith("📊 DRE Spoleto"):
                 novos_ajustes[conta] = converter_numero_br(valor) - base_nota
             salvar_ajustes_dre(mes_ativo, novos_ajustes)
             st.success("✅ Valores gravados com sucesso!")
+            st.rerun()
 
     v_map = {str(conta): converter_numero_br(valor) for conta, valor in zip(df_dre_editado["CONTA"], df_dre_editado["VALOR (R$)"])}
     if cmv_auto is not None:
