@@ -953,6 +953,10 @@ if menu.startswith("📊 DRE Spoleto"):
         key=f"editor_dre_{mes_ativo}_v{qtd_lanc}",
     )
 
+    # Reservamos o espaço da própria tabela DRE logo após o editor. O conteúdo
+    # é calculado mais abaixo, mas renderizado aqui em cada rerun do Streamlit.
+    painel_dre_atualizado = st.empty()
+
     # Resumo reativo: o Streamlit recalcula quando a edição de uma célula é
     # confirmada (Enter ou clique fora). Não é necessário clicar em Salvar.
     valores_ao_vivo = {
@@ -992,15 +996,9 @@ if menu.startswith("📊 DRE Spoleto"):
     total_nao_operacional_ao_vivo = sum(
         valor_ao_vivo(conta) for conta in contas_nao_operacionais_ao_vivo
     )
-    st.markdown("#### 📊 Totais atualizados ao editar")
-    col_op, col_nao, col_geral = st.columns(3)
-    col_op.metric("Despesas operacionais", f"R$ {formatar_numero_br(total_operacional_ao_vivo)}")
-    col_nao.metric("Despesas não operacionais", f"R$ {formatar_numero_br(total_nao_operacional_ao_vivo)}")
-    col_geral.metric("Total geral de despesas", f"R$ {formatar_numero_br(total_operacional_ao_vivo + total_nao_operacional_ao_vivo)}")
-    st.caption(
-        "Os totais mudam quando você confirma a edição de uma célula (Enter ou clique fora). "
-        "Clique em Salvar para gravar os valores no Supabase. "
-        "Compras informativas não entram novamente no total; CMV só entra após o fechamento."
+    st.info(
+        "A tabela DRE completa, logo abaixo, atualiza os subtotais e resultados "
+        "quando você confirma uma célula. As alterações só são gravadas ao clicar em Salvar."
     )
 
     col_save_dre, _ = st.columns([2, 3])
@@ -1192,7 +1190,17 @@ if menu.startswith("📊 DRE Spoleto"):
         "principal de empréstimos e investimentos normalmente não são despesas do período; "
         "consulte o contador para conciliação. Compras informativas não são somadas ao CMV."
     )
-    st.dataframe(df_spoleto_view, use_container_width=True, height=550)
+    with painel_dre_atualizado.container():
+        st.markdown("### 📊 DRE atualizada conforme os lançamentos")
+        st.caption(
+            "A própria tabela abaixo é recalculada quando você confirma uma alteração "
+            "na tabela de lançamentos (Enter ou clique fora). "
+            "Para persistir os valores no Supabase, clique em Salvar."
+        )
+        st.dataframe(
+            df_spoleto_view, use_container_width=True, height=660,
+            hide_index=True, key=f"dre_visualizacao_ao_vivo_{mes_ativo}",
+        )
 
     with st.expander("🔎 Conferência dos subtotais — veja de onde vem o Total de Despesas"):
         st.markdown("**Despesas operacionais — composição sem duplicidade**")
