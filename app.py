@@ -983,8 +983,8 @@ if menu.startswith("📊 DRE Spoleto"):
         for grupo, contas in grupos_operacionais_ao_vivo.items()
     }
     subtotais_ao_vivo["Delivery"] -= valor_ao_vivo("Taxa de entrega arrecadada")
-    subtotais_ao_vivo["CMV e fretes"] = (
-        float(cmv_auto.get("CMV Consolidado", 0.0)) if cmv_auto else 0.0
+    subtotais_ao_vivo["Estoque/CMV e fretes"] = (
+        float(cmv_auto.get("CMV Consolidado", 0.0)) if cmv_auto else total_compras_cmv
     ) + valor_ao_vivo("Fretes")
     total_operacional_ao_vivo = sum(subtotais_ao_vivo.values())
     contas_nao_operacionais_ao_vivo = [
@@ -1050,12 +1050,15 @@ if menu.startswith("📊 DRE Spoleto"):
     total_deliv = (v("Comissão agregadores") + v("Custo com entrega (motoqueiros)")) - v("Taxa de entrega arrecadada")
     total_mkt = v("Anúncios/Propagandas") + v("Fundo de Marketing") + v("Royalties")
     total_fin = v("Custo Cartão de Crédito") + v("Custo Cartão de Débito")
-    # Subtotal calculado apenas a partir dos grupos operacionais.
-    # Não somar as linhas de detalhe nem as compras informativas: elas já estão
-    # refletidas em seus respectivos grupos (ou no CMV, após inventário).
+    # Gestão provisória: antes do fechamento do inventário, usar as compras
+    # como referência TEMPORÁRIA de gasto operacional. Após o fechamento,
+    # substituir pelas informações de CMV consolidado, sem duplicar compras.
+    compras_provisorias = total_compras_cmv if cmv_auto is None else 0.0
+    custo_estoque_para_despesas = (cmv_consolidado if cmv_auto is not None else compras_provisorias)
     grupos_operacionais = {
         "Impostos": imp_fed + imp_est,
-        "CMV (consolidado + fretes)": total_cmv,
+        ("CMV consolidado + fretes" if cmv_auto is not None
+         else "Compras do mês (provisório) + fretes"): custo_estoque_para_despesas + cmv_fret,
         "Ocupação": total_ocup,
         "Pessoal (inclui FGTS)": total_pess,
         "Utilidades": total_util,
@@ -1134,7 +1137,10 @@ if menu.startswith("📊 DRE Spoleto"):
         {"CONTA": "  • Compras de Horte (informativo)", "VALOR": compras_horte, "%": pct(compras_horte)},
         {"CONTA": "  • Compras de Bebidas (informativo)", "VALOR": compras_bebidas, "%": pct(compras_bebidas)},
         {"CONTA": "  • Compras de Descartáveis (informativo)", "VALOR": compras_descartaveis, "%": pct(compras_descartaveis)},
-        {"CONTA": "  • TOTAL COMPRAS PARA CMV (informativo; não somar ao CMV)", "VALOR": total_compras_cmv, "%": pct(total_compras_cmv)},
+        {"CONTA": ("  • TOTAL COMPRAS PARA CMV (informativo; já substituído pelo CMV)"
+                    if cmv_auto is not None else
+                    "  • TOTAL COMPRAS DO MÊS (incluído provisoriamente nas despesas)"),
+         "VALOR": total_compras_cmv, "%": pct(total_compras_cmv)},
         {"CONTA": "  • Fretes", "VALOR": cmv_fret, "%": pct(cmv_fret)},
         {"CONTA": "🔹 LUCRO BRUTO", "VALOR": lucro_bruto, "%": pct(lucro_bruto)},
         {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
@@ -1158,7 +1164,9 @@ if menu.startswith("📊 DRE Spoleto"):
         {"CONTA": "📢 MARKETING & FRANQUEADOR", "VALOR": total_mkt, "%": pct(total_mkt)},
         {"CONTA": "💳 CUSTO FINANCEIRO", "VALOR": total_fin, "%": pct(total_fin)},
         {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
-        {"CONTA": '🔴 TOTAL DESPESAS OPERACIONAIS', "VALOR": total_despesas_operacionais, "%": pct(total_despesas_operacionais)},
+        {"CONTA": ('🔴 TOTAL DESPESAS OPERACIONAIS (provisório)' if cmv_auto is None
+                   else '🔴 TOTAL DESPESAS OPERACIONAIS'),
+         "VALOR": total_despesas_operacionais, "%": pct(total_despesas_operacionais)},
         {"CONTA": '🏆 RESULTADO OPERACIONAL', "VALOR": res_operacional, "%": pct(res_operacional)},
         {"CONTA": '🎁 Total Bonificação', "VALOR": bonificacao, "%": pct(bonificacao)},
         {"CONTA": '🏅 RESULTADO FINAL OPERACIONAL', "VALOR": resultado_final_operacional, "%": pct(resultado_final_operacional)},
@@ -1189,7 +1197,8 @@ if menu.startswith("📊 DRE Spoleto"):
         "Critério gerencial: o Total Geral de Despesas inclui saídas como amortização "
         "de empréstimos e Capex, conforme o modelo enviado. Para uma DRE contábil, "
         "principal de empréstimos e investimentos normalmente não são despesas do período; "
-        "consulte o contador para conciliação. Compras informativas não são somadas ao CMV."
+        "consulte o contador para conciliação. Antes do inventário, compras são "
+        "incluídas provisoriamente nas despesas operacionais, sem duplicar o CMV."
     )
     with painel_dre_atualizado.container():
         st.markdown("### 📊 DRE atualizada conforme os lançamentos")
@@ -1226,7 +1235,10 @@ if menu.startswith("📊 DRE Spoleto"):
         )
         st.markdown(f"**Subtotal não operacional: R$ {formatar_numero_br(despesas_nao_operacionais)}**")
         st.markdown(f"### Total geral de despesas: R$ {formatar_numero_br(total_geral_despesas)}")
-        st.caption("As compras de estoque são informativas e não são somadas novamente ao CMV.")
+        st.caption(
+            "Antes de fechar o inventário, as compras entram provisoriamente no total operacional. "
+            "Após o fechamento, o CMV consolidado substitui as compras no cálculo, sem duplicidade."
+        )
 
     st.markdown("### 📥 Baixar Relatório")
     dados_excel = gerar_excel_dre(NOMES_MESES[mes_ativo], pd.DataFrame(estrutura_dre_spoleto), df_l)
