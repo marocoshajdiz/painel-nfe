@@ -953,9 +953,112 @@ elif menu.startswith("📸 Escanear"):
     st.info("💡 Classificações: **Demais Alimentos, Descartáveis, Limpeza, Materiais de Uso e Consumo, Utensílios, Bebidas, Horte, Uniformes, Uniforme e Alimentação Funcionário**.")
 
     ukey = st.session_state.uploader_key
-    aba_foto, aba_cam, aba_arq = st.tabs([
-        "📸 Fotos Nítidas (Telemóvel / Galeria)", "🖥️ Câmara ao Vivo", "📁 Arquivo (XML / Excel / PDF)"
+    aba_foto, aba_cam, aba_arq, aba_manual = st.tabs([
+        "📸 Fotos / Galeria", "🖥️ Câmara ao Vivo",
+        "📁 Arquivo (XML / Excel / PDF)", "✍️ Lançar Nota Manualmente"
     ])
+
+    with aba_manual:
+        st.markdown("#### ✍️ Cadastro manual de nota fiscal")
+        st.caption(
+            "Preencha o fornecedor e os produtos. Você poderá revisar a nota "
+            "antes de gravá-la no Supabase e na DRE."
+        )
+        with st.form(key=f"form_nota_manual_{ukey}"):
+            col_fornec, col_cnpj = st.columns([2, 1])
+            with col_fornec:
+                fornecedor_manual = st.text_input(
+                    "Fornecedor / Emitente *", placeholder="Nome do fornecedor"
+                )
+            with col_cnpj:
+                cnpj_manual = st.text_input(
+                    "CNPJ (opcional)", placeholder="00.000.000/0000-00"
+                )
+
+            st.markdown("**Produtos da nota**")
+            st.caption(
+                "Adicione ou exclua linhas pelo editor. Informe quantidade e preço "
+                "unitário; o subtotal será calculado na revisão quando estiver zerado."
+            )
+            df_manual_base = pd.DataFrame([
+                {
+                    "Produto": "", "Quantidade": 1.0, "Unid": "UN",
+                    "PrecoUnitario": 0.0, "TotalItem": 0.0,
+                    "Categoria": "Demais Alimentos"
+                }
+                for _ in range(3)
+            ])
+            df_manual = st.data_editor(
+                df_manual_base,
+                num_rows="dynamic",
+                use_container_width=True,
+                hide_index=True,
+                key=f"editor_manual_{ukey}",
+                column_config={
+                    "Produto": st.column_config.TextColumn("Produto", required=True),
+                    "Quantidade": st.column_config.NumberColumn(
+                        "Quantidade", min_value=0.0, format="%.3f"
+                    ),
+                    "Unid": st.column_config.TextColumn("Unidade"),
+                    "PrecoUnitario": st.column_config.NumberColumn(
+                        "Preço unitário (R$)", min_value=0.0, format="%.2f"
+                    ),
+                    "TotalItem": st.column_config.NumberColumn(
+                        "Subtotal (R$) — opcional", min_value=0.0, format="%.2f"
+                    ),
+                    "Categoria": st.column_config.SelectboxColumn(
+                        "Classificação", options=LISTA_7_CATEGORIAS, required=True
+                    ),
+                },
+            )
+            preparar_manual = st.form_submit_button(
+                "📋 Revisar nota manual", type="primary", use_container_width=True
+            )
+
+        if preparar_manual:
+            fornecedor_limpo = fornecedor_manual.strip()
+            df_validar = df_manual.copy()
+            df_validar["Produto"] = df_validar["Produto"].fillna("").astype(str).str.strip()
+            df_validar = df_validar[df_validar["Produto"] != ""].copy()
+            for coluna in ("Quantidade", "PrecoUnitario", "TotalItem"):
+                df_validar[coluna] = pd.to_numeric(
+                    df_validar[coluna], errors="coerce"
+                ).fillna(0.0)
+            df_validar["Categoria"] = df_validar["Categoria"].fillna(
+                "Demais Alimentos"
+            )
+            df_validar["Unid"] = df_validar["Unid"].fillna("UN")
+            sem_subtotal = df_validar["TotalItem"] <= 0
+            df_validar.loc[sem_subtotal, "TotalItem"] = (
+                df_validar.loc[sem_subtotal, "Quantidade"]
+                * df_validar.loc[sem_subtotal, "PrecoUnitario"]
+            )
+            if not fornecedor_limpo:
+                st.error("Informe o nome do fornecedor.")
+            elif df_validar.empty:
+                st.error("Inclua pelo menos um produto.")
+            elif (df_validar["TotalItem"] <= 0).any():
+                st.error(
+                    "Todos os produtos precisam ter subtotal maior que zero. "
+                    "Informe quantidade e preço, ou preencha o subtotal."
+                )
+            elif not df_validar["Categoria"].isin(LISTA_7_CATEGORIAS).all():
+                st.error("Revise a classificação dos produtos.")
+            else:
+                st.session_state.dados_extraidos = {
+                    "razao_social": fornecedor_limpo,
+                    "cnpj": cnpj_manual.strip() or "Não informado",
+                    "valor_total": round(float(df_validar["TotalItem"].sum()), 2),
+                    "itens": df_validar[
+                        ["Produto", "Quantidade", "Unid",
+                         "PrecoUnitario", "TotalItem", "Categoria"]
+                    ].to_dict(orient="records"),
+                }
+                st.success(
+                    "Nota manual preparada! Confira a seção 'Resumo da Compra' "
+                    "abaixo e clique em 'Confirmar & Lançar no DRE'."
+                )
+
 
     with aba_foto:
         f_upload = st.file_uploader(
