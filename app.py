@@ -8,6 +8,8 @@ import psycopg2
 from urllib.parse import urlsplit
 import io
 import re
+import time
+import random
 from datetime import datetime
 import pypdf
 
@@ -576,14 +578,47 @@ Use "Horte" para hortifrúti. Não confunda valor total da nota com subtotal dos
 """
 
 
+def erro_temporario_gemini(erro):
+    """Distingue indisponibilidade temporária de erro de configuração."""
+    texto = str(erro).upper()
+    return any(marca in texto for marca in (
+        "503", "UNAVAILABLE", "HIGH DEMAND", "OVERLOADED",
+        "429", "RESOURCE_EXHAUSTED", "RATE LIMIT",
+        "500", "INTERNAL SERVER ERROR", "DEADLINE_EXCEEDED", "504",
+    ))
+
+
+def avisar_erro_gemini(erro):
+    if erro_temporario_gemini(erro):
+        st.warning(
+            "⚠️ O serviço de leitura por IA está temporariamente ocupado "
+            "ou atingiu um limite. As tentativas automáticas não resolveram. "
+            "A foto continua disponível: aguarde alguns minutos e tente novamente, "
+            "ou use a aba 'Lançar Nota Manualmente'."
+        )
+    else:
+        st.error(
+            "Não foi possível processar a nota pela IA. "
+            "Verifique a configuração do modelo e da chave de API. "
+            f"Detalhe técnico: {type(erro).__name__}."
+        )
+
+
 def chamar_gemini(conteudos, chave):
+    """Repete apenas erros transitórios, com espera crescente e limite de tentativas."""
     client = genai.Client(api_key=chave)
-    response = client.models.generate_content(
-        model=MODELO_GEMINI,
-        contents=conteudos,
-        config=types.GenerateContentConfig(response_mime_type="application/json"),
-    )
-    return parse_json_resposta(response.text if response else None)
+    for tentativa in range(3):
+        try:
+            response = client.models.generate_content(
+                model=MODELO_GEMINI,
+                contents=conteudos,
+                config=types.GenerateContentConfig(response_mime_type="application/json"),
+            )
+            return parse_json_resposta(response.text if response else None)
+        except Exception as erro:
+            if not erro_temporario_gemini(erro) or tentativa == 2:
+                raise
+            time.sleep(min(2 ** (tentativa + 1) + random.uniform(0, 0.5), 8))
 
 
 def processar_multiplas_imagens_com_ia(lista_fotos_bytes, chave):
@@ -606,10 +641,7 @@ def processar_multiplas_imagens_com_ia(lista_fotos_bytes, chave):
             return None
         return normalizado
     except Exception as e:
-        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-            st.warning("⚠️ Limite de requisições da IA atingido. Tente novamente mais tarde ou lance os produtos manualmente.")
-        else:
-            st.error(f"Erro ao interpretar as fotos com a IA: {e}")
+        avisar_erro_gemini(e)
         return None
 
 
@@ -628,10 +660,7 @@ def processar_pdf_com_ia(arquivo_bytes, nome_arq, chave):
             return None
         return normalizado
     except Exception as e:
-        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-            st.warning("⚠️ Limite de requisições da IA atingido. Tente novamente mais tarde ou lance os produtos manualmente.")
-        else:
-            st.error(f"Erro ao interpretar o PDF com a IA: {e}")
+        avisar_erro_gemini(e)
         return None
 
 
@@ -653,10 +682,7 @@ def processar_texto_com_ia(texto, nome_arq, chave):
             return None
         return normalizado
     except Exception as e:
-        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-            st.warning("⚠️ Limite de requisições da IA atingido. Tente novamente mais tarde ou lance os produtos manualmente.")
-        else:
-            st.error(f"Erro ao processar o arquivo com a IA: {e}")
+        avisar_erro_gemini(e)
         return None
 
 
@@ -1086,7 +1112,7 @@ elif menu.startswith("📸 Escanear"):
                         st.session_state.dados_extraidos = res
                     # Em caso de falha, não cria nota fictícia nem limpa as fotos.
                     else:
-                        st.warning("A nota não foi carregada. Corrija o arquivo ou tente novamente; as fotos continuam na fila.")
+                        st.info("A nota ainda não foi processada. As fotos continuam na fila para uma nova tentativa.")
                 if st.session_state.dados_extraidos:
                     st.rerun()
         with col_desc:
