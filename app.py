@@ -862,6 +862,9 @@ def chamar_gemini(conteudos, chave):
     inicio = estado.get("gemini_indice_ativo", 0) % len(CHAVES_GEMINI)
     falhas = []
     houve_indisponibilidade = False
+    # Apenas a leitura fiscal exige lista de itens; a classificação de XML
+    # devolve outro formato JSON e não deve passar por esta validação.
+    leitura_fiscal = any(isinstance(c, str) and "Você é um assistente de leitura de documentos fiscais brasileiros" in c for c in conteudos)
 
     for deslocamento in range(len(CHAVES_GEMINI)):
         indice = (inicio + deslocamento) % len(CHAVES_GEMINI)
@@ -899,19 +902,26 @@ def chamar_gemini(conteudos, chave):
                     contents=conteudos,
                     config=types.GenerateContentConfig(response_mime_type="application/json"),
                 )
-                registrar_tentativa_gemini(chave_atual, modelo, "sucesso")
                 resultado = parse_json_resposta(resposta.text if resposta else None)
                 if resultado is None:
-                    raise ValueError("A IA não retornou JSON válido.")
+                    registrar_tentativa_gemini(chave_atual, modelo, "sucesso")
+                    st.warning(f"API {indice + 1}, {modelo}: resposta sem JSON válido. Tentando alternativa.")
+                    falhas.append((indice + 1, modelo, None, "JSON inválido"))
+                    continue
+                if leitura_fiscal:
+                    validado, motivo = validar_e_normalizar_resultado(resultado)
+                    if validado is None:
+                        registrar_tentativa_gemini(chave_atual, modelo, "sucesso")
+                        st.warning(f"API {indice + 1}, {modelo}: {motivo} Tentando outro modelo.")
+                        falhas.append((indice + 1, modelo, None, "Sem produtos"))
+                        continue
+                registrar_tentativa_gemini(chave_atual, modelo, "sucesso")
                 estado["gemini_indice_ativo"] = indice
                 st.success(f"Leitura concluída com API {indice + 1}, modelo {modelo}.")
                 return resultado
             except Exception as erro:
                 codigo = codigo_erro_gemini(erro)
-                # Se a geração retornou resposta mas o JSON era inválido,
-                # a chamada já foi registrada como sucesso de API.
-                if not isinstance(erro, ValueError) or "JSON válido" not in str(erro):
-                    registrar_tentativa_gemini(chave_atual, modelo, "erro", codigo)
+                registrar_tentativa_gemini(chave_atual, modelo, "erro", codigo)
                 descricao = str(erro).upper()
                 falhas.append((indice + 1, modelo, codigo, type(erro).__name__))
                 if codigo == 429 or erro_cota_gemini(erro):
@@ -926,6 +936,9 @@ def chamar_gemini(conteudos, chave):
                 if (codigo in (500, 502, 503, 504)
                         or "TIMEOUT" in descricao
                         or "TIMEOUT" in type(erro).__name__.upper()):
+                    # Curto período de resfriamento evita insistir na mesma
+                    # combinação durante um lote de notas. Não é bloqueio diário.
+                    bloqueios[id_bloqueio] = time.time() + 90
                     houve_indisponibilidade = True
                     st.warning(f"API {indice + 1}, modelo {modelo}: indisponível ({codigo or 'timeout'}).")
                     continue
