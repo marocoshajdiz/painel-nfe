@@ -826,24 +826,32 @@ def codigo_erro_gemini(erro):
         return int(achado.group(1)) if achado else None
 
 
+# Ordem fixa de prioridade para TODAS as quatro chaves.
+MODELOS_GEMINI_PRIORIDADE = (
+    "gemini-3.8-flash",
+    "gemini-3.6-flash",
+    "gemini-3.1-flash-lite",
+)
+
+
 def modelos_disponiveis_gemini(cliente):
-    """Retorna modelos Flash de texto/multimodal que a API lista para a chave."""
-    modelos = []
+    """Seleciona somente os três modelos previstos, na ordem de prioridade.
+
+    A lista oficial evita tentar um nome que a chave não anuncia.
+    """
+    anunciados = set()
     for item in cliente.models.list():
         nome = str(getattr(item, "name", "") or "").removeprefix("models/")
         metodos = (getattr(item, "supported_actions", None)
                    or getattr(item, "supported_generation_methods", None))
         if metodos and not any("generatecontent" in str(m).lower() for m in metodos):
             continue
-        if ("flash" in nome.lower() and "2.5" not in nome
-                and not any(x in nome.lower() for x in
-                            ("image", "tts", "live", "embedding", "audio"))):
-            modelos.append(nome)
-    return sorted(set(modelos), key=lambda m: (0 if m == "gemini-3.8-flash" else 1 if m == "gemini-3.6-flash" else 2, "preview" in m, m))
+        anunciados.add(nome)
+    return [nome for nome in MODELOS_GEMINI_PRIORIDADE if nome in anunciados]
 
 
 def chamar_gemini(conteudos, chave):
-    """Tenta modelos anunciados pelo Google; 429 troca chave, 503 troca modelo.
+    """Tenta 3.8, 3.6 e 3.1 Lite por chave; depois alterna a API.
 
     Sem pausa global: uma falha não impede processar os outros PDFs do lote.
     """
@@ -874,14 +882,13 @@ def chamar_gemini(conteudos, chave):
                 cache[identificador] = {"modelos": modelos, "ate": time.time() + 900}
             except Exception as erro_lista:
                 st.caption(f"API {indice + 1}: não foi possível listar modelos ({type(erro_lista).__name__}).")
-                modelos = ["gemini-3.8-flash", "gemini-3.6-flash"]
+                modelos = list(MODELOS_GEMINI_PRIORIDADE)
         if not modelos:
             st.warning(f"API {indice + 1}: nenhum modelo Flash adequado foi listado.")
             continue
 
-        # Evita insistir no 2.5, que devolveu 404 para essas contas.
-        # Testa no máximo 3 modelos anunciados por chave.
-        for modelo in modelos[:3]:
+        # Ordem fixa: 3.8 -> 3.6 -> 3.1 Lite, para cada API.
+        for modelo in modelos:
             id_bloqueio = f"{identificador}:{modelo}"
             if bloqueios.get(id_bloqueio, 0) > time.time():
                 continue
