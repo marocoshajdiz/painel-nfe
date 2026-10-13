@@ -159,6 +159,7 @@ CLASSIFICACOES_DESPESAS = {
     "IPTU": ("Ocupação", "Iptu"),
     "Taxas e Outros": ("Ocupação", "Taxas E Outros"),
     "Salário": ("Pessoal", "Salário"),
+    "Diárias": ("Pessoal", "Diárias"),
     "Adiantamento": ("Pessoal", "Adiantamento"),
     "Encargos": ("Pessoal", "Encargos"),
     "Férias": ("Pessoal", "Férias"),
