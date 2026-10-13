@@ -232,7 +232,7 @@ def converter_numero_br(valor):
         return float(texto)
     except ValueError:
         return 0.0
-MODELO_GEMINI = "gemini-2.5-flash"
+MODELO_GEMINI = "gemini-3.8-flash"
 
 
 # ----------------- BASE DE DADOS PERSISTENTE (SUPABASE) -----------------
