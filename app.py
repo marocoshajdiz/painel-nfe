@@ -717,19 +717,19 @@ def erro_temporario_gemini(erro):
 
 
 def avisar_erro_gemini(erro):
+    """Exibe código e motivo sem revelar chave de API."""
+    codigo = getattr(erro, "code", None) or getattr(erro, "status_code", None)
+    texto = str(erro)
+    # Oculta credenciais caso o provedor as inclua no detalhe.
+    for chave in CHAVES_GEMINI:
+        texto = texto.replace(chave, "[CHAVE_OCULTA]")
+    texto = re.sub(r"AIza[0-9A-Za-z_-]{20,}", "[CHAVE_OCULTA]", texto)
+    texto = texto[:1000]
     if erro_temporario_gemini(erro):
-        st.warning(
-            "⚠️ O serviço de leitura por IA está temporariamente ocupado "
-            "ou atingiu um limite. As tentativas automáticas não resolveram. "
-            "A foto continua disponível: aguarde alguns minutos e tente novamente, "
-            "ou use a aba 'Lançar Nota Manualmente'."
-        )
+        st.warning("A API Gemini atingiu um limite ou está temporariamente indisponível.")
     else:
-        st.error(
-            "Não foi possível processar a nota pela IA. "
-            "Verifique a configuração do modelo e da chave de API. "
-            f"Detalhe técnico: {type(erro).__name__}."
-        )
+        st.error("A API Gemini rejeitou a solicitação. Veja o diagnóstico abaixo.")
+    st.code(f"Código: {codigo or 'não informado'}\nTipo: {type(erro).__name__}\nDetalhe: {texto}", language="text")
 
 
 def erro_cota_gemini(erro):
@@ -785,8 +785,8 @@ def chamar_gemini(conteudos, chave):
                 ultimo_erro = erro
                 texto = str(erro).upper()
                 if any(x in texto for x in ("404", "NOT_FOUND", "MODEL NOT FOUND")):
-                    # Só neste caso testa o modelo reserva na mesma chave.
-                    continue
+                    # Modelo inválido: trocar a chave não resolve.
+                    raise
                 if erro_cota_gemini(erro):
                     diario = any(x in texto for x in ("PER DAY", "PER_DAY", "DAILY", "REQUESTS_PER_DAY"))
                     bloqueios[identificador] = time.time() + (86400 if diario else 60)
