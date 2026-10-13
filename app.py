@@ -740,87 +740,65 @@ def erro_cota_gemini(erro):
 
 
 def chamar_gemini(conteudos, chave):
-    """Alterna entre as três chaves quando há limite, preservando modelos reserva."""
+    """No máximo uma tentativa por chave; timeout de rede de 25 segundos.
+
+    Só tenta modelos alternativos se o modelo não existir (404).
+    Em 429, timeout ou indisponibilidade passa imediatamente à próxima chave.
+    """
     chaves = CHAVES_GEMINI
-    # Compartilha o estado entre notas do mesmo processamento/sessão.
     bloqueios = st.session_state.setdefault("gemini_bloqueios", {})
     agora = time.time()
     bloqueios = {k: v for k, v in bloqueios.items() if v > agora}
     st.session_state["gemini_bloqueios"] = bloqueios
-
-    modelos = list(dict.fromkeys([
-        MODELO_GEMINI,
-        "gemini-3.6-flash",
-        "gemini-flash-latest",
-    ]))
+    modelos = list(dict.fromkeys([MODELO_GEMINI, "gemini-flash-latest"]))
     inicio = st.session_state.get("gemini_indice_ativo", 0) % len(chaves)
     ultimo_erro = None
 
     for deslocamento in range(len(chaves)):
-        indice_chave = (inicio + deslocamento) % len(chaves)
-        chave_atual = chaves[indice_chave]
+        indice = (inicio + deslocamento) % len(chaves)
+        chave_atual = chaves[indice]
         identificador = hashlib.sha256(chave_atual.encode()).hexdigest()
         if bloqueios.get(identificador, 0) > time.time():
             continue
 
-        cliente = genai.Client(api_key=chave_atual)
-        trocar_chave = False
-        for indice_modelo, modelo in enumerate(modelos):
-            for tentativa in range(2):
-                try:
-                    resposta = cliente.models.generate_content(
-                        model=modelo,
-                        contents=conteudos,
-                        config=types.GenerateContentConfig(
-                            response_mime_type="application/json"
-                        ),
-                    )
-                    resultado = parse_json_resposta(resposta.text if resposta else None)
-                    if resultado is None:
-                        ultimo_erro = ValueError("A IA não retornou JSON válido.")
-                        break
-                    st.session_state["gemini_indice_ativo"] = indice_chave
-                    if indice_chave != inicio:
-                        st.info(f"🔑 Leitura realizada pela API {indice_chave + 1}.")
-                    if indice_modelo > 0:
-                        st.info("🤖 Leitura concluída usando um modelo reserva.")
-                    return resultado
-                except Exception as erro:
-                    ultimo_erro = erro
-                    texto_erro = str(erro).upper()
-                    if erro_cota_gemini(erro):
-                        # Erro por minuto: tenta novamente depois de 60 s.
-                        # Cota diária: evita repetir nesta sessão por 24 h.
-                        diario = any(s in texto_erro for s in (
-                            "PER DAY", "PER_DAY", "DAILY", "REQUESTS_PER_DAY"
-                        ))
-                        espera = 86400 if diario else 60
-                        bloqueios[identificador] = time.time() + espera
-                        st.session_state["gemini_bloqueios"] = bloqueios
-                        st.warning(
-                            f"⚠️ API {indice_chave + 1} atingiu o limite. "
-                            "Tentando outra chave disponível..."
-                        )
-                        trocar_chave = True
-                        break
-                    indisponivel = any(s in texto_erro for s in (
-                        "404", "NOT_FOUND", "MODEL NOT FOUND"
-                    ))
-                    if indisponivel:
-                        break
-                    if not erro_temporario_gemini(erro):
-                        raise
-                    if tentativa == 0:
-                        time.sleep(2 + random.uniform(0, 0.5))
-            if trocar_chave:
+        # timeout em milissegundos; impede espera ilimitada na requisição HTTP.
+        cliente = genai.Client(
+            api_key=chave_atual,
+            http_options=types.HttpOptions(timeout=25000),
+        )
+        for modelo in modelos:
+            try:
+                resposta = cliente.models.generate_content(
+                    model=modelo,
+                    contents=conteudos,
+                    config=types.GenerateContentConfig(response_mime_type="application/json"),
+                )
+                resultado = parse_json_resposta(resposta.text if resposta else None)
+                if resultado is None:
+                    raise ValueError("A IA não retornou JSON válido.")
+                st.session_state["gemini_indice_ativo"] = indice
+                st.caption(f"🔑 Leitura concluída usando API {indice + 1}.")
+                return resultado
+            except Exception as erro:
+                ultimo_erro = erro
+                texto = str(erro).upper()
+                if any(x in texto for x in ("404", "NOT_FOUND", "MODEL NOT FOUND")):
+                    # Só neste caso testa o modelo reserva na mesma chave.
+                    continue
+                if erro_cota_gemini(erro):
+                    diario = any(x in texto for x in ("PER DAY", "PER_DAY", "DAILY", "REQUESTS_PER_DAY"))
+                    bloqueios[identificador] = time.time() + (86400 if diario else 60)
+                    st.session_state["gemini_bloqueios"] = bloqueios
+                elif not erro_temporario_gemini(erro) and not any(
+                    x in texto for x in ("TIMEOUT", "TIMED OUT", "DEADLINE_EXCEEDED")
+                ):
+                    # Erros de credenciais/configuração não são resolvidos por espera.
+                    raise
+                st.warning(f"API {indice + 1} não respondeu. Tentando próxima chave...")
                 break
-
     if ultimo_erro is not None:
         raise ultimo_erro
-    raise RuntimeError(
-        "Todas as chaves Gemini estão temporariamente bloqueadas por limite. "
-        "Aguarde a renovação da cota e tente novamente."
-    )
+    raise RuntimeError("Nenhuma chave Gemini disponível agora. Tente novamente mais tarde.")
 
 
 def processar_multiplas_imagens_com_ia(lista_fotos_bytes, chave):
