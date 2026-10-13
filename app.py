@@ -884,6 +884,111 @@ def avancar_fila_notas():
         st.session_state.pop("nome_nota_ativa", None)
 
 
+def processar_documento_fiscal_individual(doc, api_key):
+    """Processa um arquivo por vez; retorna a nota, sem gravar ou misturar fornecedores."""
+    ext = doc.name.rsplit(".", 1)[-1].lower()
+    resultado_documento = None
+    if ext == "xml":
+        try:
+            data = xmltodict.parse(doc.getvalue())
+            raiz = data.get("nfeProc", data)
+            inf = raiz.get("NFe", {}).get("infNFe", {})
+            if not inf:
+                raise ValueError("O XML não parece conter uma NF-e no formato esperado.")
+            emit = inf.get("emit", {})
+            tot = inf.get("total", {}).get("ICMSTot", {})
+            det = inf.get("det", [])
+            if isinstance(det, dict):
+                det = [det]
+            nomes = [i.get("prod", {}).get("xProd", "") for i in det]
+            mapa = categorizar_nomes_xml(nomes, api_key)
+            itens_x = []
+            for i in det:
+                p = i.get("prod", {})
+                nome = p.get("xProd", "").strip()
+                if not nome:
+                    continue
+                itens_x.append({
+                    "Categoria": mapa.get(nome, "Demais Alimentos"),
+                    "Produto": nome,
+                    "Quantidade": numero_seguro(p.get("qCom")),
+                    "Unid": p.get("uCom", "UN"),
+                    "PrecoUnitario": numero_seguro(p.get("vUnCom")),
+                    "TotalItem": numero_seguro(p.get("vProd")),
+                })
+            if not itens_x:
+                raise ValueError("Nenhum produto foi encontrado no XML.")
+            total_xml = numero_seguro(tot.get("vNF"))
+            soma_produtos_xml = round(sum(item["TotalItem"] for item in itens_x), 2)
+            if abs(total_xml - soma_produtos_xml) > 0.01:
+                st.warning(
+                    f"O total fiscal do XML (R$ {formatar_numero_br(total_xml)}) difere "
+                    f"da soma dos produtos (R$ {formatar_numero_br(soma_produtos_xml)}). "
+                    "Confira descontos, fretes e outros valores antes de confirmar."
+                )
+            resultado_documento = {
+                "razao_social": emit.get("xNome", "Fornecedor não identificado"),
+                "cnpj": emit.get("CNPJ") or emit.get("CPF") or "Não informado",
+                "valor_total": total_xml,
+                "itens": itens_x,
+            }
+            return resultado_documento
+        except Exception as e:
+            st.error(f"Erro ao ler XML: {e}")
+
+    elif ext == "pdf":
+        try:
+            bytes_pdf = doc.getvalue()
+            # Tenta primeiro a leitura direta por visão da IA. Isso também permite PDFs digitalizados.
+            with st.spinner("🤖 Analisando o PDF e extraindo os produtos..."):
+                res_pdf = processar_pdf_com_ia(bytes_pdf, doc.name, api_key)
+
+            # Se o modelo/endpoint não aceitar PDF, tenta o texto extraído como alternativa.
+            if not res_pdf:
+                try:
+                    reader = pypdf.PdfReader(io.BytesIO(bytes_pdf))
+                    texto_pdf = "\n".join(page.extract_text() or "" for page in reader.pages)
+                    if texto_pdf.strip():
+                        with st.spinner("Tentando novamente usando o texto extraído do PDF..."):
+                            res_pdf = processar_texto_com_ia(texto_pdf, doc.name, api_key)
+                except Exception as e:
+                    st.warning(f"Não foi possível extrair texto alternativo do PDF: {e}")
+
+            if not res_pdf:
+                st.info("A IA não conseguiu ler o PDF. Tentando extração fiscal local...")
+                try:
+                    res_pdf = ler_pdf(bytes_pdf, carregar_regras())
+                    st.warning("Leitura local: confira todos os itens e compare o total com a nota original antes de salvar.")
+                except Exception as erro_fallback:
+                    st.warning(f"Leitor fiscal local não concluiu a leitura: {erro_fallback}")
+            if res_pdf:
+                resultado_documento = res_pdf
+                st.success(f"PDF lido: {len(res_pdf['itens'])} produto(s) identificado(s).")
+                return resultado_documento
+            else:
+                st.error("Não foi possível identificar produtos válidos nesse PDF. Nenhum item fictício foi criado. Confira a qualidade do documento e tente novamente.")
+        except Exception as e:
+            st.error(f"Erro ao processar PDF: {e}")
+
+    elif ext in ["xlsx", "xls"]:
+        try:
+            df_planilha = pd.read_excel(doc)
+            if df_planilha.empty:
+                raise ValueError("A planilha está vazia.")
+            texto_excel = df_planilha.head(100).to_string(index=False)
+            res_xl = processar_texto_com_ia(texto_excel, doc.name, api_key)
+            if res_xl:
+                resultado_documento = res_xl
+                st.success(f"Planilha lida: {len(res_xl['itens'])} produto(s) identificado(s).")
+                return resultado_documento
+            else:
+                st.error("Não foi possível identificar produtos válidos na planilha. Nenhum item fictício foi criado.")
+        except Exception as e:
+            st.error(f"Erro ao ler Excel: {e}")
+
+    return resultado_documento
+
+
 # ----------------- NAVEGAÇÃO -----------------
 menu = st.sidebar.radio("Módulo:", [
     f"📊 DRE Spoleto ({NOMES_MESES[mes_ativo]})",
@@ -1522,115 +1627,50 @@ elif menu.startswith("📸 Escanear"):
                 st.rerun()
 
     with aba_arq:
-        doc = st.file_uploader(
-            "Enviar XML da NF-e, PDF ou Excel da Compra:",
-            type=["xml", "xlsx", "xls", "pdf"], key=f"doc_uploader_{ukey}"
+        documentos = st.file_uploader(
+            "Enviar várias notas XML, PDF ou Excel (fornecedores diferentes):",
+            type=["xml", "xlsx", "xls", "pdf"],
+            accept_multiple_files=True,
+            key=f"doc_uploader_{ukey}",
         )
-        if doc and st.button("Processar Arquivo", key=f"btn_doc_{ukey}"):
-            st.session_state.dados_extraidos = None
-            ext = doc.name.rsplit(".", 1)[-1].lower()
-
-            if ext == "xml":
-                try:
-                    data = xmltodict.parse(doc.getvalue())
-                    raiz = data.get("nfeProc", data)
-                    inf = raiz.get("NFe", {}).get("infNFe", {})
-                    if not inf:
-                        raise ValueError("O XML não parece conter uma NF-e no formato esperado.")
-                    emit = inf.get("emit", {})
-                    tot = inf.get("total", {}).get("ICMSTot", {})
-                    det = inf.get("det", [])
-                    if isinstance(det, dict):
-                        det = [det]
-                    nomes = [i.get("prod", {}).get("xProd", "") for i in det]
-                    mapa = categorizar_nomes_xml(nomes, api_key)
-                    itens_x = []
-                    for i in det:
-                        p = i.get("prod", {})
-                        nome = p.get("xProd", "").strip()
-                        if not nome:
-                            continue
-                        itens_x.append({
-                            "Categoria": mapa.get(nome, "Demais Alimentos"),
-                            "Produto": nome,
-                            "Quantidade": numero_seguro(p.get("qCom")),
-                            "Unid": p.get("uCom", "UN"),
-                            "PrecoUnitario": numero_seguro(p.get("vUnCom")),
-                            "TotalItem": numero_seguro(p.get("vProd")),
-                        })
-                    if not itens_x:
-                        raise ValueError("Nenhum produto foi encontrado no XML.")
-                    total_xml = numero_seguro(tot.get("vNF"))
-                    soma_produtos_xml = round(sum(item["TotalItem"] for item in itens_x), 2)
-                    if abs(total_xml - soma_produtos_xml) > 0.01:
-                        st.warning(
-                            f"O total fiscal do XML (R$ {formatar_numero_br(total_xml)}) difere "
-                            f"da soma dos produtos (R$ {formatar_numero_br(soma_produtos_xml)}). "
-                            "Confira descontos, fretes e outros valores antes de confirmar."
+        if documentos:
+            st.caption(
+                f"{len(documentos)} arquivo(s) selecionado(s). Cada arquivo será interpretado "
+                "como uma nota independente, com fornecedor, CNPJ e produtos próprios."
+            )
+            if st.button("🚀 Destrinchar arquivos separadamente", type="primary", key=f"btn_doc_{ukey}"):
+                if st.session_state.dados_extraidos or st.session_state.fila_notas_individuais:
+                    st.warning("Conclua ou descarte a nota em revisão e a fila atual antes de iniciar outro lote.")
+                else:
+                    fila_nova = []
+                    falhas = []
+                    progresso = st.progress(0, text="Preparando leitura dos documentos...")
+                    for indice, documento in enumerate(documentos):
+                        progresso.progress(
+                            indice / len(documentos),
+                            text=f"Lendo documento {indice + 1}/{len(documentos)}: {documento.name}",
                         )
-                    st.session_state.dados_extraidos = {
-                        "razao_social": emit.get("xNome", "Fornecedor não identificado"),
-                        "cnpj": emit.get("CNPJ") or emit.get("CPF") or "Não informado",
-                        "valor_total": total_xml,
-                        "itens": itens_x,
-                    }
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Erro ao ler XML: {e}")
-
-            elif ext == "pdf":
-                try:
-                    bytes_pdf = doc.getvalue()
-                    # Tenta primeiro a leitura direta por visão da IA. Isso também permite PDFs digitalizados.
-                    with st.spinner("🤖 Analisando o PDF e extraindo os produtos..."):
-                        res_pdf = processar_pdf_com_ia(bytes_pdf, doc.name, api_key)
-
-                    # Se o modelo/endpoint não aceitar PDF, tenta o texto extraído como alternativa.
-                    if not res_pdf:
                         try:
-                            reader = pypdf.PdfReader(io.BytesIO(bytes_pdf))
-                            texto_pdf = "\n".join(page.extract_text() or "" for page in reader.pages)
-                            if texto_pdf.strip():
-                                with st.spinner("Tentando novamente usando o texto extraído do PDF..."):
-                                    res_pdf = processar_texto_com_ia(texto_pdf, doc.name, api_key)
-                        except Exception as e:
-                            st.warning(f"Não foi possível extrair texto alternativo do PDF: {e}")
-
-                    if not res_pdf:
-                        st.info("A IA não conseguiu ler o PDF. Tentando extração fiscal local...")
-                        try:
-                            res_pdf = ler_pdf(bytes_pdf, carregar_regras())
-                            st.warning("Leitura local: confira todos os itens e compare o total com a nota original antes de salvar.")
-                        except Exception as erro_fallback:
-                            st.warning(f"Leitor fiscal local não concluiu a leitura: {erro_fallback}")
-                    if res_pdf:
-                        st.session_state.dados_extraidos = res_pdf
-                        st.success(f"PDF lido: {len(res_pdf['itens'])} produto(s) identificado(s).")
+                            resultado = processar_documento_fiscal_individual(documento, api_key)
+                        except Exception as erro:
+                            st.warning(f"Falha ao ler {documento.name}: {type(erro).__name__}.")
+                            resultado = None
+                        if isinstance(resultado, dict) and resultado.get("itens"):
+                            fila_nova.append({"nome": documento.name, "dados": resultado})
+                        else:
+                            falhas.append(documento.name)
+                    progresso.progress(1.0, text="Leitura dos documentos concluída")
+                    st.session_state.falhas_notas_lote = falhas
+                    if fila_nova:
+                        st.session_state.fila_notas_individuais = fila_nova
+                        avancar_fila_notas()
                         st.rerun()
                     else:
-                        st.error("Não foi possível identificar produtos válidos nesse PDF. Nenhum item fictício foi criado. Confira a qualidade do documento e tente novamente.")
-                except Exception as e:
-                    st.error(f"Erro ao processar PDF: {e}")
-
-            elif ext in ["xlsx", "xls"]:
-                try:
-                    df_planilha = pd.read_excel(doc)
-                    if df_planilha.empty:
-                        raise ValueError("A planilha está vazia.")
-                    texto_excel = df_planilha.head(100).to_string(index=False)
-                    res_xl = processar_texto_com_ia(texto_excel, doc.name, api_key)
-                    if res_xl:
-                        st.session_state.dados_extraidos = res_xl
-                        st.success(f"Planilha lida: {len(res_xl['itens'])} produto(s) identificado(s).")
-                        st.rerun()
-                    else:
-                        st.error("Não foi possível identificar produtos válidos na planilha. Nenhum item fictício foi criado.")
-                except Exception as e:
-                    st.error(f"Erro ao ler Excel: {e}")
+                        st.error("Nenhum documento pôde ser lido. Nenhuma nota foi gravada.")
 
     # ----------------- REVISÃO DA NOTA -----------------
     if st.session_state.falhas_notas_lote:
-        st.warning("Fotos que precisam de nova leitura individual: " + ", ".join(st.session_state.falhas_notas_lote))
+        st.warning("Arquivos/fotos que precisam de nova leitura individual: " + ", ".join(st.session_state.falhas_notas_lote))
     if st.session_state.dados_extraidos and st.session_state.get("nome_nota_ativa"):
         st.info("📄 Revisando: **" + st.session_state["nome_nota_ativa"] + "** — "
                 + str(len(st.session_state.fila_notas_individuais))
