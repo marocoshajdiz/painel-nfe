@@ -13,6 +13,7 @@ import re
 import time
 import random
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import pypdf
 from leitor_fiscal import ler_xml, ler_pdf, ler_imagem_ocr
 
@@ -581,6 +582,83 @@ if not CHAVES_GEMINI:
     st.error("Configure pelo menos uma chave GEMINI_API_KEY_1 a GEMINI_API_KEY_4 nos Secrets.")
     st.stop()
 
+# Contagem persistente das tentativas feitas PELO APLICATIVO (não é a cota oficial do Google).
+def preparar_historico_gemini():
+    """Cria a tabela no Supabase, sem alterar as tabelas financeiras."""
+    if st.session_state.get("gemini_historico_pronto"):
+        return True
+    try:
+        with conectar_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""CREATE TABLE IF NOT EXISTS gemini_uso_app (
+                    id BIGSERIAL PRIMARY KEY,
+                    criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    chave_hash TEXT NOT NULL,
+                    modelo TEXT NOT NULL,
+                    resultado TEXT NOT NULL,
+                    codigo_erro INTEGER
+                )""")
+                cur.execute("""CREATE INDEX IF NOT EXISTS idx_gemini_uso_app_data
+                               ON gemini_uso_app (criado_em)""")
+        st.session_state["gemini_historico_pronto"] = True
+        return True
+    except Exception:
+        return False
+
+
+def registrar_tentativa_gemini(chave, modelo, resultado, codigo=None):
+    """Nunca grava a chave real, apenas seu hash. Falha no registro não impede leitura."""
+    if not preparar_historico_gemini():
+        return
+    try:
+        with conectar_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""INSERT INTO gemini_uso_app
+                    (chave_hash, modelo, resultado, codigo_erro)
+                    VALUES (%s, %s, %s, %s)""",
+                    (hashlib.sha256(chave.encode()).hexdigest(), modelo, resultado, codigo))
+    except Exception:
+        pass
+
+
+def mostrar_contador_gemini():
+    with st.sidebar.expander("📊 Consumo das APIs Gemini", expanded=False):
+        st.caption("Tentativas registradas por este aplicativo no dia de hoje (horário de Brasília). Não é o consumo total oficial do Google.")
+        if not preparar_historico_gemini():
+            st.warning("Não foi possível preparar o histórico no Supabase. Confira as permissões de criação de tabelas.")
+            return
+        hoje = datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+        inicio = datetime(hoje.year, hoje.month, hoje.day, tzinfo=ZoneInfo("America/Sao_Paulo"))
+        from datetime import timedelta
+        fim = inicio + timedelta(days=1)
+        try:
+            with conectar_db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""SELECT chave_hash, modelo,
+                            COUNT(*) AS tentativas,
+                            COUNT(*) FILTER (WHERE resultado='sucesso') AS sucessos,
+                            COUNT(*) FILTER (WHERE codigo_erro=429) AS limites
+                        FROM gemini_uso_app
+                        WHERE criado_em >= %s AND criado_em < %s
+                        GROUP BY chave_hash, modelo
+                        ORDER BY chave_hash, modelo""", (inicio, fim))
+                    registros = cur.fetchall()
+        except Exception:
+            st.warning("Não foi possível consultar o histórico das APIs.")
+            return
+        mapa = {hashlib.sha256(k.encode()).hexdigest(): f"API {i+1}" for i,k in enumerate(CHAVES_GEMINI)}
+        linhas = [{"API": mapa.get(h, "Chave anterior"), "Modelo": m,
+                   "Tentativas": int(t), "Sucessos": int(s), "Erros 429": int(l)}
+                  for h,m,t,s,l in registros]
+        if linhas:
+            st.dataframe(pd.DataFrame(linhas), hide_index=True, use_container_width=True)
+            st.metric("Tentativas hoje", sum(x["Tentativas"] for x in linhas))
+            st.metric("Leituras IA bem-sucedidas", sum(x["Sucessos"] for x in linhas))
+        else:
+            st.info("Nenhuma chamada de geração registrada hoje.")
+        st.caption("O contador começa após instalar esta versão. Para ver cotas e uso de outros aplicativos, consulte o Google AI Studio. Uma tentativa pode falhar sem consumir a cota diária; não é um medidor de saldo restante.")
+
+
 # Mantém compatibilidade com as chamadas existentes de todas as abas.
 api_key = CHAVES_GEMINI[0]
 
@@ -813,6 +891,7 @@ def chamar_gemini(conteudos, chave):
                     contents=conteudos,
                     config=types.GenerateContentConfig(response_mime_type="application/json"),
                 )
+                registrar_tentativa_gemini(chave_atual, modelo, "sucesso")
                 resultado = parse_json_resposta(resposta.text if resposta else None)
                 if resultado is None:
                     raise ValueError("A IA não retornou JSON válido.")
@@ -821,6 +900,10 @@ def chamar_gemini(conteudos, chave):
                 return resultado
             except Exception as erro:
                 codigo = codigo_erro_gemini(erro)
+                # Se a geração retornou resposta mas o JSON era inválido,
+                # a chamada já foi registrada como sucesso de API.
+                if not isinstance(erro, ValueError) or "JSON válido" not in str(erro):
+                    registrar_tentativa_gemini(chave_atual, modelo, "erro", codigo)
                 descricao = str(erro).upper()
                 falhas.append((indice + 1, modelo, codigo, type(erro).__name__))
                 if codigo == 429 or erro_cota_gemini(erro):
@@ -1087,6 +1170,8 @@ menu = st.sidebar.radio("Módulo:", [
     "📋 Contagem de Estoque",
     "📦 Inventário e Produtos",
 ])
+
+mostrar_contador_gemini()
 
 st.sidebar.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
 if st.sidebar.button("↪  Sair do Sistema", key="capry_sair", use_container_width=True):
