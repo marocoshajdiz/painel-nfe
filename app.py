@@ -859,12 +859,29 @@ if "dados_extraidos" not in st.session_state:
     st.session_state.dados_extraidos = None
 if "uploader_key" not in st.session_state:
     st.session_state.uploader_key = 0
+if "fila_notas_individuais" not in st.session_state:
+    st.session_state.fila_notas_individuais = []
+if "falhas_notas_lote" not in st.session_state:
+    st.session_state.falhas_notas_lote = []
 
 
 def resetar_processamento_nota():
     st.session_state.fotos_acumuladas = []
     st.session_state.dados_extraidos = None
     st.session_state.uploader_key += 1
+
+
+def avancar_fila_notas():
+    """Abre a próxima nota já extraída; nunca mistura fornecedores ou itens."""
+    fila = st.session_state.fila_notas_individuais
+    if fila:
+        proxima = fila.pop(0)
+        st.session_state.dados_extraidos = proxima["dados"]
+        st.session_state["nome_nota_ativa"] = proxima["nome"]
+        st.session_state.uploader_key += 1
+    else:
+        resetar_processamento_nota()
+        st.session_state.pop("nome_nota_ativa", None)
 
 
 # ----------------- NAVEGAÇÃO -----------------
@@ -1420,13 +1437,53 @@ elif menu.startswith("📸 Escanear"):
 
 
     with aba_foto:
+        st.markdown("**Escolha como as fotos devem ser interpretadas:**")
+        modo_fotos = st.radio(
+            "Organização das fotos",
+            ["Notas diferentes (uma nota por foto)", "Uma única nota com várias páginas"],
+            horizontal=True, key="modo_fotos_nota",
+        )
         f_upload = st.file_uploader(
-            "Fotos do cupom/nota:", type=["jpg", "jpeg", "png", "webp"],
+            "Selecione as fotos dos cupons/notas:", type=["jpg", "jpeg", "png", "webp"],
             accept_multiple_files=True, key=f"file_uploader_{ukey}"
         )
-        if f_upload and st.button("➕ Adicionar fotos à fila", key=f"btn_add_f_{ukey}"):
+        if f_upload and modo_fotos.startswith("Notas diferentes"):
+            st.caption(f"{len(f_upload)} nota(s) selecionada(s). Cada imagem será lida separadamente, sem juntar supermercados.")
+            if st.button("🚀 Destrinchar todas as notas separadamente", type="primary", key=f"btn_lote_{ukey}"):
+                if st.session_state.dados_extraidos or st.session_state.fila_notas_individuais:
+                    st.warning("Conclua ou descarte a nota em revisão e a fila atual antes de iniciar outro lote.")
+                else:
+                    fila_nova = []
+                    falhas = []
+                    progresso = st.progress(0, text="Iniciando leitura das notas...")
+                    regras_fallback = None
+                    for idx, arquivo in enumerate(f_upload):
+                        progresso.progress(idx / len(f_upload), text=f"Lendo nota {idx + 1}/{len(f_upload)}: {arquivo.name}")
+                        dados_imagem = arquivo.getvalue()
+                        resultado = processar_multiplas_imagens_com_ia([dados_imagem], api_key)
+                        if not resultado:
+                            try:
+                                if regras_fallback is None:
+                                    regras_fallback = carregar_regras()
+                                resultado = ler_imagem_ocr(dados_imagem, regras_fallback)
+                            except Exception:
+                                resultado = None
+                        if isinstance(resultado, dict) and resultado.get("itens"):
+                            fila_nova.append({"nome": arquivo.name, "dados": resultado})
+                        else:
+                            falhas.append(arquivo.name)
+                    progresso.progress(1.0, text="Leitura do lote concluída")
+                    st.session_state.falhas_notas_lote = falhas
+                    if fila_nova:
+                        st.session_state.fila_notas_individuais = fila_nova
+                        st.session_state.fotos_acumuladas = []
+                        avancar_fila_notas()
+                        st.rerun()
+                    else:
+                        st.error("Nenhuma nota foi identificada. As imagens originais não foram gravadas no banco.")
+        elif f_upload and st.button("➕ Carregar páginas da mesma nota", key=f"btn_add_f_{ukey}"):
             st.session_state.fotos_acumuladas = [f.getvalue() for f in f_upload]
-            st.success(f"{len(f_upload)} foto(s) da nova nota carregada(s)!")
+            st.success(f"{len(f_upload)} página(s) da mesma nota carregada(s)!")
 
     with aba_cam:
         f_cam = st.camera_input("Capturar foto", key=f"cam_input_{ukey}")
@@ -1572,6 +1629,12 @@ elif menu.startswith("📸 Escanear"):
                     st.error(f"Erro ao ler Excel: {e}")
 
     # ----------------- REVISÃO DA NOTA -----------------
+    if st.session_state.falhas_notas_lote:
+        st.warning("Fotos que precisam de nova leitura individual: " + ", ".join(st.session_state.falhas_notas_lote))
+    if st.session_state.dados_extraidos and st.session_state.get("nome_nota_ativa"):
+        st.info("📄 Revisando: **" + st.session_state["nome_nota_ativa"] + "** — "
+                + str(len(st.session_state.fila_notas_individuais))
+                + " nota(s) aguardando. Cada nota será gravada individualmente após sua confirmação.")
     if st.session_state.dados_extraidos:
         dados = st.session_state.dados_extraidos
         st.markdown("---")
@@ -1677,11 +1740,17 @@ elif menu.startswith("📸 Escanear"):
                         st.error("Não foi possível gravar a nota. Os dados conferidos foram mantidos; tente novamente após verificar a conexão.")
                     else:
                         st.success(f"✅ {len(lista_salvar)} produto(s) lançados no DRE de {NOMES_MESES[mes_ativo]}!")
-                        resetar_processamento_nota()
+                        if st.session_state.get("nome_nota_ativa"):
+                            avancar_fila_notas()
+                        else:
+                            resetar_processamento_nota()
                         st.rerun()
         with col_canc:
             if st.button("❌ Descartar Nota", use_container_width=True):
-                resetar_processamento_nota()
+                if st.session_state.get("nome_nota_ativa"):
+                    avancar_fila_notas()
+                else:
+                    resetar_processamento_nota()
                 st.rerun()
 
 # ==============================================================================
