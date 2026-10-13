@@ -561,11 +561,11 @@ def gerar_excel_dre(nome_mes, df_dre_completo, df_lancamentos):
     return output.getvalue()
 
 
-# ----------------- CONFIGURAÇÕES IA (3 CHAVES) -----------------
+# ----------------- CONFIGURAÇÕES IA (4 CHAVES) -----------------
 def carregar_chaves_gemini():
     """Lê chaves dos Secrets sem expor seus valores."""
     chaves = []
-    for nome in ("GEMINI_API_KEY_1", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3"):
+    for nome in ("GEMINI_API_KEY_1", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3", "GEMINI_API_KEY_4"):
         chave = str(st.secrets.get(nome, "")).strip()
         if chave and chave not in chaves:
             chaves.append(chave)
@@ -578,7 +578,7 @@ def carregar_chaves_gemini():
 
 CHAVES_GEMINI = carregar_chaves_gemini()
 if not CHAVES_GEMINI:
-    st.error("Configure GEMINI_API_KEY_1, GEMINI_API_KEY_2 e GEMINI_API_KEY_3 nos Secrets.")
+    st.error("Configure pelo menos uma chave GEMINI_API_KEY_1 a GEMINI_API_KEY_4 nos Secrets.")
     st.stop()
 
 # Mantém compatibilidade com as chamadas existentes de todas as abas.
