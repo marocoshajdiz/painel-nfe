@@ -12,7 +12,7 @@ import io
 import re
 import time
 import random
-from datetime import datetime
+from datetime import datetime, date
 from zoneinfo import ZoneInfo
 import pypdf
 from leitor_fiscal import ler_xml, ler_pdf, ler_imagem_ocr
@@ -442,7 +442,16 @@ def validar_nota_para_gravacao(valor_total, lista_produtos):
     return total, normalizados
 
 
-def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_produtos):
+def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_produtos, data_nota=None):
+    # Data fiscal escolhida pelo operador; se omitida, usa a data atual.
+    if data_nota is None:
+        data_nota = date.today()
+    elif isinstance(data_nota, datetime):
+        data_nota = data_nota.date()
+    elif isinstance(data_nota, str):
+        data_nota = date.fromisoformat(data_nota)
+    if not isinstance(data_nota, date):
+        raise ValueError("Data da nota inválida.")
     total, normalizados = validar_nota_para_gravacao(valor_total, lista_produtos)
     # Assinatura estável para bloquear uma segunda gravação do mesmo conjunto de itens.
     assinatura = json.dumps({"mes": mes_ref, "cnpj": str(cnpj).strip(),
@@ -477,13 +486,13 @@ def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_pro
         totais = {}
         for _, categoria, valor in normalizados:
             totais[categoria] = totais.get(categoria, 0.0) + valor
-        data_hoje = datetime.now().strftime("%Y-%m-%d")
+        data_lancamento = data_nota.isoformat()
         for cat_nome, valor in totais.items():
             cfg = MAPA_7_CATEGORIAS[cat_nome]
             cursor.execute("""INSERT INTO lancamentos_dre
                 (mes_referencia, data, fornecedor, descricao, valor, dre, classificacao, detalhamento)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
-                (mes_ref, data_hoje, razao_social.upper(), cat_nome.upper(),
+                (mes_ref, data_lancamento, razao_social.upper(), cat_nome.upper(),
                  round(valor, 2), cfg["dre"], cat_nome, cfg["det"]))
         for item in lista_produtos:
             prod = str(item.get("Produto", "")).strip().upper()
@@ -1915,6 +1924,17 @@ elif menu.startswith("📸 Escanear"):
         with c_c:
             st.metric("Valor Total Identificado", f"R$ {numero_seguro(dados.get('valor_total')):,.2f}")
 
+        # Data escolhida é usada no lançamento financeiro; o registro de inclusão
+        # continua guardando a data/hora real em notas.data_registo.
+        data_nota_escolhida = st.date_input(
+            "📅 Data da nota fiscal",
+            value=date.today(),
+            format="DD/MM/YYYY",
+            help="Escolha a data da nota. Se não alterar, será usada a data de hoje.",
+            key=f"data_nota_revisao_{ukey}_{st.session_state.get('nome_nota_ativa', 'manual')}",
+        )
+        st.caption("Sem alteração, o lançamento usa a data de hoje. A DRE continua no mês de trabalho selecionado.")
+
         df_itens = pd.DataFrame(dados.get("itens", []))
         colunas_padrao = ["Produto", "Quantidade", "Unid", "PrecoUnitario", "TotalItem", "Categoria"]
         if df_itens.empty:
@@ -2000,6 +2020,7 @@ elif menu.startswith("📸 Escanear"):
                             cnpj=cnpj_input.strip() or "Não informado",
                             valor_total=total_salvar,
                             lista_produtos=lista_salvar,
+                            data_nota=data_nota_escolhida,
                         )
                     except ValueError as erro:
                         st.error(f"Nota não lançada: {erro}")
