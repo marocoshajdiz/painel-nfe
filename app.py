@@ -561,13 +561,28 @@ def gerar_excel_dre(nome_mes, df_dre_completo, df_lancamentos):
     return output.getvalue()
 
 
-# ----------------- CONFIGURAÇÕES IA -----------------
-try:
-    api_key = st.secrets["GEMINI_API_KEY"]
-except Exception:
-    st.error("⚠️ Configure a GEMINI_API_KEY no arquivo .streamlit/secrets.toml.")
+# ----------------- CONFIGURAÇÕES IA (3 CHAVES) -----------------
+def carregar_chaves_gemini():
+    """Lê chaves dos Secrets sem expor seus valores."""
+    chaves = []
+    for nome in ("GEMINI_API_KEY_1", "GEMINI_API_KEY_2", "GEMINI_API_KEY_3"):
+        chave = str(st.secrets.get(nome, "")).strip()
+        if chave and chave not in chaves:
+            chaves.append(chave)
+    # Compatibilidade com a configuração antiga, caso ainda não tenha migrado.
+    if not chaves:
+        antiga = str(st.secrets.get("GEMINI_API_KEY", "")).strip()
+        if antiga:
+            chaves.append(antiga)
+    return chaves
+
+CHAVES_GEMINI = carregar_chaves_gemini()
+if not CHAVES_GEMINI:
+    st.error("Configure GEMINI_API_KEY_1, GEMINI_API_KEY_2 e GEMINI_API_KEY_3 nos Secrets.")
     st.stop()
 
+# Mantém compatibilidade com as chamadas existentes de todas as abas.
+api_key = CHAVES_GEMINI[0]
 
 def parse_json_resposta(texto):
     if not texto:
@@ -717,52 +732,95 @@ def avisar_erro_gemini(erro):
         )
 
 
+def erro_cota_gemini(erro):
+    texto = str(erro).upper()
+    return any(marca in texto for marca in (
+        "429", "RESOURCE_EXHAUSTED", "RATE LIMIT", "QUOTA EXCEEDED"
+    ))
+
+
 def chamar_gemini(conteudos, chave):
-    """Usa modelo principal e reservas em falhas temporárias ou modelo indisponível."""
-    client = genai.Client(api_key=chave)
-    # A disponibilidade depende da conta e dos modelos liberados pelo Google.
+    """Alterna entre as três chaves quando há limite, preservando modelos reserva."""
+    chaves = CHAVES_GEMINI
+    # Compartilha o estado entre notas do mesmo processamento/sessão.
+    bloqueios = st.session_state.setdefault("gemini_bloqueios", {})
+    agora = time.time()
+    bloqueios = {k: v for k, v in bloqueios.items() if v > agora}
+    st.session_state["gemini_bloqueios"] = bloqueios
+
     modelos = list(dict.fromkeys([
         MODELO_GEMINI,
         "gemini-3.6-flash",
         "gemini-flash-latest",
     ]))
+    inicio = st.session_state.get("gemini_indice_ativo", 0) % len(chaves)
     ultimo_erro = None
-    for indice, modelo in enumerate(modelos):
-        for tentativa in range(2):
-            try:
-                response = client.models.generate_content(
-                    model=modelo,
-                    contents=conteudos,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json"
-                    ),
-                )
-                resultado = parse_json_resposta(response.text if response else None)
-                if resultado is not None:
-                    if indice > 0:
-                        st.info("🤖 A leitura foi concluída usando um modelo de IA reserva.")
+
+    for deslocamento in range(len(chaves)):
+        indice_chave = (inicio + deslocamento) % len(chaves)
+        chave_atual = chaves[indice_chave]
+        identificador = hashlib.sha256(chave_atual.encode()).hexdigest()
+        if bloqueios.get(identificador, 0) > time.time():
+            continue
+
+        cliente = genai.Client(api_key=chave_atual)
+        trocar_chave = False
+        for indice_modelo, modelo in enumerate(modelos):
+            for tentativa in range(2):
+                try:
+                    resposta = cliente.models.generate_content(
+                        model=modelo,
+                        contents=conteudos,
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json"
+                        ),
+                    )
+                    resultado = parse_json_resposta(resposta.text if resposta else None)
+                    if resultado is None:
+                        ultimo_erro = ValueError("A IA não retornou JSON válido.")
+                        break
+                    st.session_state["gemini_indice_ativo"] = indice_chave
+                    if indice_chave != inicio:
+                        st.info(f"🔑 Leitura realizada pela API {indice_chave + 1}.")
+                    if indice_modelo > 0:
+                        st.info("🤖 Leitura concluída usando um modelo reserva.")
                     return resultado
-                # Resposta vazia ou não JSON: não fingir sucesso.
-                ultimo_erro = ValueError("A IA não retornou JSON válido.")
+                except Exception as erro:
+                    ultimo_erro = erro
+                    texto_erro = str(erro).upper()
+                    if erro_cota_gemini(erro):
+                        # Erro por minuto: tenta novamente depois de 60 s.
+                        # Cota diária: evita repetir nesta sessão por 24 h.
+                        diario = any(s in texto_erro for s in (
+                            "PER DAY", "PER_DAY", "DAILY", "REQUESTS_PER_DAY"
+                        ))
+                        espera = 86400 if diario else 60
+                        bloqueios[identificador] = time.time() + espera
+                        st.session_state["gemini_bloqueios"] = bloqueios
+                        st.warning(
+                            f"⚠️ API {indice_chave + 1} atingiu o limite. "
+                            "Tentando outra chave disponível..."
+                        )
+                        trocar_chave = True
+                        break
+                    indisponivel = any(s in texto_erro for s in (
+                        "404", "NOT_FOUND", "MODEL NOT FOUND"
+                    ))
+                    if indisponivel:
+                        break
+                    if not erro_temporario_gemini(erro):
+                        raise
+                    if tentativa == 0:
+                        time.sleep(2 + random.uniform(0, 0.5))
+            if trocar_chave:
                 break
-            except Exception as erro:
-                ultimo_erro = erro
-                texto_erro = str(erro).upper()
-                modelo_indisponivel = (
-                    "404" in texto_erro or "NOT_FOUND" in texto_erro
-                    or "MODEL NOT FOUND" in texto_erro
-                )
-                if not erro_temporario_gemini(erro) and not modelo_indisponivel:
-                    # Chave inválida, falta de permissão e outras falhas definitivas.
-                    raise
-                if modelo_indisponivel:
-                    break
-                if tentativa == 0:
-                    time.sleep(2 + random.uniform(0, 0.5))
-        # Depois de duas tentativas, passa ao próximo modelo.
+
     if ultimo_erro is not None:
         raise ultimo_erro
-    raise RuntimeError("Nenhum modelo de IA disponível para a leitura.")
+    raise RuntimeError(
+        "Todas as chaves Gemini estão temporariamente bloqueadas por limite. "
+        "Aguarde a renovação da cota e tente novamente."
+    )
 
 
 def processar_multiplas_imagens_com_ia(lista_fotos_bytes, chave):
