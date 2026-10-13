@@ -697,6 +697,34 @@ def numero_seguro(valor, padrao=0.0):
         return padrao
 
 
+def aplicar_dicionario_classificacoes(dados):
+    """Prioriza regras confirmadas no Supabase sobre sugestões da IA.
+
+    Usa somente correspondência exata normalizada, para não confundir
+    produtos semelhantes de fornecedores diferentes.
+    """
+    if not isinstance(dados, dict) or not isinstance(dados.get("itens"), list):
+        return dados
+    regras = carregar_regras()
+    def normalizar_nome(nome):
+        return " ".join(str(nome or "").upper().split())
+    regras_norm = {normalizar_nome(nome): categoria for nome, categoria in regras.items()
+                   if categoria in LISTA_7_CATEGORIAS}
+    corrigidos = 0
+    for item in dados["itens"]:
+        if not isinstance(item, dict):
+            continue
+        nome = normalizar_nome(item.get("Produto", item.get("produto", "")))
+        categoria = regras_norm.get(nome)
+        if categoria:
+            if item.get("Categoria") != categoria:
+                corrigidos += 1
+            item["Categoria"] = categoria
+    if corrigidos:
+        st.info(f"🧠 Dicionário Inteligente: {corrigidos} classificação(ões) ajustada(s) conforme suas correções salvas.")
+    return dados
+
+
 def validar_e_normalizar_resultado(dados):
     """Valida o JSON da IA e padroniza os itens; não cria itens fictícios."""
     if not isinstance(dados, dict):
@@ -746,12 +774,13 @@ def validar_e_normalizar_resultado(dados):
     if valor_total <= 0 and soma_itens > 0:
         valor_total = soma_itens
 
-    return {
+    dados_normalizados = {
         "razao_social": fornecedor or "Fornecedor não identificado",
         "cnpj": cnpj or "Não informado",
         "valor_total": valor_total,
         "itens": itens_validos,
-    }, None
+    }
+    return aplicar_dicionario_classificacoes(dados_normalizados), None
 
 
 PROMPT_NOTA = """
@@ -1025,8 +1054,11 @@ def processar_texto_com_ia(texto, nome_arq, chave):
 
 def categorizar_nomes_xml(nomes, chave):
     regras = carregar_regras()
-    mapa = {n: regras[n.strip().upper()] for n in nomes if n.strip().upper() in regras}
-    faltam = [n for n in nomes if n.strip().upper() not in regras]
+    regras_norm = {" ".join(str(n).upper().split()): c for n, c in regras.items()
+                   if c in LISTA_7_CATEGORIAS}
+    mapa = {n: regras_norm[" ".join(n.upper().split())] for n in nomes
+            if " ".join(n.upper().split()) in regras_norm}
+    faltam = [n for n in nomes if " ".join(n.upper().split()) not in regras_norm]
     if faltam:
         try:
             prompt = f"""
@@ -1125,7 +1157,7 @@ def processar_documento_fiscal_individual(doc, api_key):
                 "valor_total": total_xml,
                 "itens": itens_x,
             }
-            return resultado_documento
+            return aplicar_dicionario_classificacoes(resultado_documento)
         except Exception as e:
             st.error(f"Erro ao ler XML: {e}")
 
@@ -1155,7 +1187,7 @@ def processar_documento_fiscal_individual(doc, api_key):
                 except Exception as erro_fallback:
                     st.warning(f"Leitor fiscal local não concluiu a leitura: {erro_fallback}")
             if res_pdf:
-                resultado_documento = res_pdf
+                resultado_documento = aplicar_dicionario_classificacoes(res_pdf)
                 st.success(f"PDF lido: {len(res_pdf['itens'])} produto(s) identificado(s).")
                 return resultado_documento
             else:
