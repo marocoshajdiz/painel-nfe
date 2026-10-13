@@ -232,7 +232,7 @@ def converter_numero_br(valor):
         return float(texto)
     except ValueError:
         return 0.0
-MODELO_GEMINI = "gemini-3.8-flash"
+MODELO_GEMINI = "gemini-2.5-flash"
 
 
 # ----------------- BASE DE DADOS PERSISTENTE (SUPABASE) -----------------
@@ -750,9 +750,10 @@ def chamar_gemini(conteudos, chave):
     agora = time.time()
     bloqueios = {k: v for k, v in bloqueios.items() if v > agora}
     st.session_state["gemini_bloqueios"] = bloqueios
-    modelos = list(dict.fromkeys([MODELO_GEMINI, "gemini-flash-latest"]))
+    modelos = [MODELO_GEMINI]
     inicio = st.session_state.get("gemini_indice_ativo", 0) % len(chaves)
     ultimo_erro = None
+    st.session_state["gemini_ultima_falha_servico"] = False
 
     for deslocamento in range(len(chaves)):
         indice = (inicio + deslocamento) % len(chaves)
@@ -764,7 +765,7 @@ def chamar_gemini(conteudos, chave):
         # timeout em milissegundos; impede espera ilimitada na requisição HTTP.
         cliente = genai.Client(
             api_key=chave_atual,
-            http_options=types.HttpOptions(timeout=25000),
+            http_options=types.HttpOptions(timeout=25000, retry_options=types.HttpRetryOptions(attempts=1)),
         )
         for modelo in modelos:
             try:
@@ -777,6 +778,7 @@ def chamar_gemini(conteudos, chave):
                 if resultado is None:
                     raise ValueError("A IA não retornou JSON válido.")
                 st.session_state["gemini_indice_ativo"] = indice
+                st.session_state["gemini_ultima_falha_servico"] = False
                 st.caption(f"🔑 Leitura concluída usando API {indice + 1}.")
                 return resultado
             except Exception as erro:
@@ -794,8 +796,13 @@ def chamar_gemini(conteudos, chave):
                 ):
                     # Erros de credenciais/configuração não são resolvidos por espera.
                     raise
-                st.warning(f"API {indice + 1} não respondeu. Tentando próxima chave...")
+                motivo = (
+                    "limite de uso (429)" if erro_cota_gemini(erro)
+                    else "tempo esgotado ou indisponibilidade temporária"
+                )
+                st.warning(f"API {indice + 1}: {motivo}. Tentando próxima chave...")
                 break
+    st.session_state["gemini_ultima_falha_servico"] = True
     if ultimo_erro is not None:
         raise ultimo_erro
     raise RuntimeError("Nenhuma chave Gemini disponível agora. Tente novamente mais tarde.")
@@ -980,7 +987,7 @@ def processar_documento_fiscal_individual(doc, api_key):
                 res_pdf = processar_pdf_com_ia(bytes_pdf, doc.name, api_key)
 
             # Se o modelo/endpoint não aceitar PDF, tenta o texto extraído como alternativa.
-            if not res_pdf:
+            if not res_pdf and not st.session_state.get("gemini_ultima_falha_servico", False):
                 try:
                     reader = pypdf.PdfReader(io.BytesIO(bytes_pdf))
                     texto_pdf = "\n".join(page.extract_text() or "" for page in reader.pages)
