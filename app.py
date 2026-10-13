@@ -761,7 +761,7 @@ def modelos_disponiveis_gemini(cliente):
                 and not any(x in nome.lower() for x in
                             ("image", "tts", "live", "embedding", "audio"))):
             modelos.append(nome)
-    return sorted(set(modelos), key=lambda m: (m != MODELO_GEMINI, "preview" in m, m))
+    return sorted(set(modelos), key=lambda m: (0 if m == "gemini-3.8-flash" else 1 if m == "gemini-3.6-flash" else 2, "preview" in m, m))
 
 
 def chamar_gemini(conteudos, chave):
@@ -770,7 +770,7 @@ def chamar_gemini(conteudos, chave):
     Sem pausa global: uma falha não impede processar os outros PDFs do lote.
     """
     estado = st.session_state
-    bloqueios = estado.setdefault("gemini_bloqueios", {})
+    bloqueios = estado.setdefault("gemini_bloqueios_por_modelo", {})
     cache = estado.setdefault("gemini_modelos_cache", {})
     inicio = estado.get("gemini_indice_ativo", 0) % len(CHAVES_GEMINI)
     falhas = []
@@ -780,8 +780,6 @@ def chamar_gemini(conteudos, chave):
         indice = (inicio + deslocamento) % len(CHAVES_GEMINI)
         chave_atual = CHAVES_GEMINI[indice]
         identificador = hashlib.sha256(chave_atual.encode()).hexdigest()
-        if bloqueios.get(identificador, 0) > time.time():
-            continue
         cliente = genai.Client(
             api_key=chave_atual,
             http_options=types.HttpOptions(
@@ -798,7 +796,7 @@ def chamar_gemini(conteudos, chave):
                 cache[identificador] = {"modelos": modelos, "ate": time.time() + 900}
             except Exception as erro_lista:
                 st.caption(f"API {indice + 1}: não foi possível listar modelos ({type(erro_lista).__name__}).")
-                modelos = [MODELO_GEMINI]
+                modelos = ["gemini-3.8-flash", "gemini-3.6-flash"]
         if not modelos:
             st.warning(f"API {indice + 1}: nenhum modelo Flash adequado foi listado.")
             continue
@@ -806,6 +804,9 @@ def chamar_gemini(conteudos, chave):
         # Evita insistir no 2.5, que devolveu 404 para essas contas.
         # Testa no máximo 3 modelos anunciados por chave.
         for modelo in modelos[:3]:
+            id_bloqueio = f"{identificador}:{modelo}"
+            if bloqueios.get(id_bloqueio, 0) > time.time():
+                continue
             try:
                 resposta = cliente.models.generate_content(
                     model=modelo,
@@ -825,9 +826,9 @@ def chamar_gemini(conteudos, chave):
                 if codigo == 429 or erro_cota_gemini(erro):
                     diario = any(x in descricao for x in
                                  ("PER DAY", "PER_DAY", "DAILY", "REQUESTS_PER_DAY"))
-                    bloqueios[identificador] = time.time() + (86400 if diario else 65)
-                    st.warning(f"API {indice + 1}: limite 429. Alternando chave.")
-                    break
+                    bloqueios[id_bloqueio] = time.time() + (86400 if diario else 65)
+                    st.warning(f"API {indice + 1}, modelo {modelo}: limite 429. Tentando outro modelo disponível.")
+                    continue
                 if codigo == 404:
                     st.caption(f"API {indice + 1}: {modelo} não está disponível (404).")
                     continue
@@ -850,7 +851,7 @@ def chamar_gemini(conteudos, chave):
                 "Pode haver sobrecarga no Gemini. Tentativas: " + resumo
             )
         raise RuntimeError("Nenhum modelo funcionou. Tentativas: " + resumo)
-    raise RuntimeError("Todas as chaves estão temporariamente bloqueadas por cota (429).")
+    raise RuntimeError("Não há combinações de chave e modelo disponíveis neste momento (cota ou indisponibilidade).")
 
 
 def processar_multiplas_imagens_com_ia(lista_fotos_bytes, chave):
