@@ -160,6 +160,7 @@ CLASSIFICACOES_DESPESAS = {
     "Taxas e Outros": ("Ocupação", "Taxas E Outros"),
     "Salário": ("Pessoal", "Salário"),
     "Vale Transporte": ("Pessoal", "Vale Transporte"),
+    "Farmácia": ("Pessoal", "Farmácia"),
     "Diárias": ("Pessoal", "Diárias"),
     "Adiantamento": ("Pessoal", "Adiantamento"),
     "Encargos": ("Pessoal", "Encargos"),
@@ -1292,6 +1293,7 @@ if menu.startswith("📊 DRE Spoleto"):
         ("Salário", "Salário", 0.0),
         ("Adiantamento", "Adiantamento", 0.0),
         ("Vale Transporte", "Vale Transporte", 0.0),
+        ("Farmácia", "Farmácia", 0.0),
         ("Benefícios (Alimentação Funcionários)", "Benefícios", 0.0),
         ("Encargos", "Encargos", 0.0),
         ("FGTS", "FGTS", 0.0),
@@ -1379,7 +1381,7 @@ if menu.startswith("📊 DRE Spoleto"):
     grupos_operacionais_ao_vivo = {
         "Impostos": ["Imposto Federal", "Imposto Estadual"],
         "Ocupação": ["Aluguel", "Ar condicionado", "Condomínio", "Fundo de Promoção", "IPTU", "Taxas e Outros"],
-        "Pessoal": ["Salário", "Adiantamento", "Vale Transporte", "Benefícios (Alimentação Funcionários)", "Encargos", "FGTS", "Férias", "13 salário", "Provisões", "Rescisão", "Outros (pessoal)"],
+        "Pessoal": ["Salário", "Adiantamento", "Vale Transporte", "Farmácia", "Benefícios (Alimentação Funcionários)", "Encargos", "FGTS", "Férias", "13 salário", "Provisões", "Rescisão", "Outros (pessoal)"],
         "Utilidades": ["Água e Esgoto", "Energia Elétrica", "Gás", "Internet", "Telefone", "Outros (utilidades)"],
         "Serviços": ["Serviços", "Terceiros", "Gcom", "Contador"],
         "Materiais de uso e consumo": ["Material de Escritório", "Material de Limpeza", "Uniformes", "Utensílios", "Outros Materiais de Uso e Consumo"],
@@ -1450,7 +1452,7 @@ if menu.startswith("📊 DRE Spoleto"):
 
     total_ocup = v("Aluguel") + v("Ar condicionado") + v("Condomínio") + v("Fundo de Promoção") + v("IPTU") + v("Taxas e Outros")
     total_pess = (
-        v("Salário") + v("Adiantamento") + v("Vale Transporte") + v("Benefícios (Alimentação Funcionários)") +
+        v("Salário") + v("Adiantamento") + v("Vale Transporte") + v("Farmácia") + v("Benefícios (Alimentação Funcionários)") +
         v("Encargos") + v("FGTS") + v("Férias") + v("13 salário") + v("Provisões") + v("Rescisão") + v("Outros (pessoal)")
     )
     total_util = v("Água e Esgoto") + v("Energia Elétrica") + v("Gás") + v("Internet") + v("Telefone") + v("Outros (utilidades)")
@@ -1562,7 +1564,18 @@ if menu.startswith("📊 DRE Spoleto"):
         {"CONTA": "  • Condomínio", "VALOR": v("Condomínio"), "%": pct(v("Condomínio"))},
         {"CONTA": "  • Aluguel / Outros", "VALOR": total_ocup - v("Condomínio"), "%": pct(total_ocup - v("Condomínio"))},
         {"CONTA": "👥 TOTAL PESSOAL", "VALOR": total_pess, "%": pct(total_pess)},
+        {"CONTA": "  • Salário", "VALOR": v("Salário"), "%": pct(v("Salário"))},
+        {"CONTA": "  • Adiantamento", "VALOR": v("Adiantamento"), "%": pct(v("Adiantamento"))},
+        {"CONTA": "  • Vale Transporte", "VALOR": v("Vale Transporte"), "%": pct(v("Vale Transporte"))},
+        {"CONTA": "  • Farmácia", "VALOR": v("Farmácia"), "%": pct(v("Farmácia"))},
+        {"CONTA": "  • Benefícios (Alimentação Funcionários)", "VALOR": v("Benefícios (Alimentação Funcionários)"), "%": pct(v("Benefícios (Alimentação Funcionários)"))},
+        {"CONTA": "  • Encargos", "VALOR": v("Encargos"), "%": pct(v("Encargos"))},
         {"CONTA": "  • FGTS", "VALOR": v("FGTS"), "%": pct(v("FGTS"))},
+        {"CONTA": "  • Férias", "VALOR": v("Férias"), "%": pct(v("Férias"))},
+        {"CONTA": "  • 13 salário", "VALOR": v("13 salário"), "%": pct(v("13 salário"))},
+        {"CONTA": "  • Provisões", "VALOR": v("Provisões"), "%": pct(v("Provisões"))},
+        {"CONTA": "  • Rescisão", "VALOR": v("Rescisão"), "%": pct(v("Rescisão"))},
+        {"CONTA": "  • Outros (pessoal)", "VALOR": v("Outros (pessoal)"), "%": pct(v("Outros (pessoal)"))},
         {"CONTA": "🧾 TOTAL SERVIÇOS", "VALOR": total_serv, "%": pct(total_serv)},
         {"CONTA": "  • Gcom", "VALOR": v("Gcom"), "%": pct(v("Gcom"))},
         {"CONTA": "  • Contador", "VALOR": v("Contador"), "%": pct(v("Contador"))},
