@@ -1546,6 +1546,59 @@ if menu.startswith("📊 DRE Spoleto"):
     c3.metric("🔹 Lucro Bruto", f"R$ {lucro_bruto:,.2f}", delta=pct(lucro_bruto))
     c4.metric("💰 Resultado Final", f"R$ {res_final:,.2f}", delta=pct(res_final))
 
+    # Painel gráfico: usa exclusivamente os valores já apurados para este mês.
+    st.markdown("### 📊 Painel gráfico gerencial")
+    st.caption(f"Indicadores de {NOMES_MESES[mes_ativo]}. Os gráficos acompanham os valores exibidos na DRE, inclusive alterações ainda não salvas.")
+    graf_esq, graf_dir = st.columns(2, gap="large")
+    with graf_esq:
+        st.markdown("**Distribuição das despesas operacionais**")
+        despesas_grafico = pd.DataFrame([
+            {"Grupo": nome, "Valor (R$)": float(valor)}
+            for nome, valor in grupos_operacionais.items() if float(valor) > 0
+        ])
+        if not despesas_grafico.empty:
+            st.bar_chart(despesas_grafico.set_index("Grupo"), horizontal=True, height=410)
+        else:
+            st.info("Sem despesas operacionais positivas neste mês.")
+    with graf_dir:
+        st.markdown("**Receitas, despesas e resultado**")
+        resumo_grafico = pd.DataFrame([
+            {"Indicador": "Venda bruta", "Valor (R$)": venda_bruta},
+            {"Indicador": "Desp. operacionais", "Valor (R$)": total_despesas_operacionais},
+            {"Indicador": "Desp. não operacionais", "Valor (R$)": despesas_nao_operacionais},
+            {"Indicador": "Resultado final", "Valor (R$)": res_final},
+        ])
+        st.bar_chart(resumo_grafico.set_index("Indicador"), height=410)
+    st.markdown("**👥 Composição das despesas de Pessoal**")
+    contas_pessoal_grafico = [
+        "Salário", "Adiantamento", "Vale Transporte", "Farmácia",
+        "Benefícios (Alimentação Funcionários)", "Encargos", "FGTS",
+        "Férias", "13 salário", "Provisões", "Rescisão", "Diárias", "Outros (pessoal)",
+    ]
+    pessoal_grafico = pd.DataFrame([
+        {"Classificação": nome, "Valor (R$)": v(nome)}
+        for nome in contas_pessoal_grafico if v(nome) > 0
+    ])
+    if not pessoal_grafico.empty:
+        st.bar_chart(pessoal_grafico.set_index("Classificação"), horizontal=True, height=350)
+    else:
+        st.info("Ainda não há despesas de Pessoal para exibir.")
+    st.markdown("**📅 Evolução diária dos lançamentos de despesas**")
+    if not df_l.empty:
+        diario = df_l.copy()
+        diario["data_dia"] = pd.to_datetime(diario["data"], errors="coerce")
+        diario = diario.dropna(subset=["data_dia"])
+        diario = diario[diario["data_dia"].dt.strftime("%Y-%m") == mes_ativo]
+        diario = diario.groupby("data_dia", as_index=False)["valor"].sum().sort_values("data_dia")
+        if not diario.empty:
+            diario = diario.rename(columns={"data_dia": "Data", "valor": "Lançamentos (R$)"})
+            st.line_chart(diario.set_index("Data"), height=290)
+        else:
+            st.info("Sem lançamentos com data válida neste mês.")
+    else:
+        st.info("Sem lançamentos registrados neste mês.")
+    st.caption("O gráfico diário mostra saídas lançadas, não vendas. Para CMV, prevalece a apuração por inventário quando fechado.")
+
     estrutura_dre_spoleto = [
         {"CONTA": "🔹 VENDA BRUTA", "VALOR": venda_bruta, "%": "100.00%"},
         {"CONTA": "  • Faturamento Balcão", "VALOR": fat_balcao, "%": pct(fat_balcao)},
