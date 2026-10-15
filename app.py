@@ -284,13 +284,20 @@ NOMES_MESES = {
     "2027-10": "Outubro / 2027", "2027-11": "Novembro / 2027", "2027-12": "Dezembro / 2027",
 }
 
+# Exige escolha explícita em cada nova sessão: nunca assume setembro ou outro mês.
 mes_ativo = st.sidebar.selectbox(
-    "📅 Mês de Trabalho (DRE):",
-    MESES_DISPONIVEIS,
-    index=0,
+    "📅 Escolha o mês de trabalho (obrigatório):",
+    options=MESES_DISPONIVEIS,
+    index=None,
+    placeholder="Selecione o mês antes de continuar",
     format_func=lambda m: NOMES_MESES[m],
+    key="mes_trabalho_selecionado",
 )
+if mes_ativo is None:
+    st.warning("⚠️ Selecione primeiro o mês de trabalho no menu lateral. Nenhum lançamento pode ser salvo antes disso.")
+    st.stop()
 
+st.sidebar.success(f"📅 Mês selecionado: {NOMES_MESES[mes_ativo]}")
 
 
 # CMV por inventário: valores calculados, nunca duplicados em ajustes_dre.
@@ -2020,8 +2027,22 @@ elif menu.startswith("📸 Escanear"):
 
         st.markdown("---")
         col_save_det, col_canc = st.columns([2, 1])
+        # A confirmação pertence a esta nota e a este mês; outra nota exige nova confirmação.
+        identidade_nota = hashlib.sha256(json.dumps({
+            "mes": mes_ativo,
+            "fornecedor": fornec_input.strip(),
+            "cnpj": cnpj_input.strip(),
+            "data": data_nota_escolhida.isoformat(),
+            "itens": df_edit.to_dict(orient="records"),
+        }, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")).hexdigest()[:20]
+        st.warning(f"⚠️ ATENÇÃO: esta nota será lançada em **{NOMES_MESES[mes_ativo]}**. Confira o mês antes de salvar.")
+        mes_confirmado = st.checkbox(
+            f"Confirmo que quero lançar esta nota em {NOMES_MESES[mes_ativo]}",
+            value=False,
+            key=f"confirmacao_mes_nota_{identidade_nota}",
+        )
         with col_save_det:
-            if st.button(f"🚀 Confirmar & Lançar no DRE ({NOMES_MESES[mes_ativo]})", type="primary", use_container_width=True):
+            if st.button(f"🚀 Confirmar & Lançar no DRE ({NOMES_MESES[mes_ativo]})", type="primary", use_container_width=True, disabled=not mes_confirmado):
                 linhas_preenchidas = df_edit[df_edit["Produto"] != ""].copy()
                 linhas_validas = linhas_preenchidas[linhas_preenchidas["TotalItem"] > 0]
                 if linhas_validas.empty:
