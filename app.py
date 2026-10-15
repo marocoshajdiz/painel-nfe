@@ -1238,6 +1238,7 @@ def processar_documento_fiscal_individual(doc, api_key):
 # ----------------- NAVEGAÇÃO -----------------
 menu = st.sidebar.radio("Módulo:", [
     f"📊 DRE Spoleto ({NOMES_MESES[mes_ativo]})",
+    "📈 Dashboard de Gráficos",
     "📸 Escanear & Alimentar Nota",
     "📝 Lançamentos do Mês",
     "🧠 Regras Inteligentes",
@@ -1255,9 +1256,14 @@ if st.sidebar.button("↪  Sair do Sistema", key="capry_sair", use_container_wid
 # ==============================================================================
 # 1. ABA DO DRE OFICIAL
 # ==============================================================================
-if menu.startswith("📊 DRE Spoleto"):
-    st.subheader(f"📊 Demonstrativo de Resultados (DRE) — {NOMES_MESES[mes_ativo]}")
-    st.write("Insira e ajuste os valores de todas as contas diretamente na tabela abaixo. Os subtotais e resultados serão recalculados.")
+if menu.startswith("📊 DRE Spoleto") or menu == "📈 Dashboard de Gráficos":
+    eh_dashboard = menu == "📈 Dashboard de Gráficos"
+    eh_dre = not eh_dashboard
+    if eh_dashboard:
+        st.subheader(f"📈 Dashboard de Gráficos — {NOMES_MESES[mes_ativo]}")
+    else:
+        st.subheader(f"📊 Demonstrativo de Resultados (DRE) — {NOMES_MESES[mes_ativo]}")
+        st.write("Insira e ajuste os valores de todas as contas diretamente na tabela abaixo. Os subtotais e resultados serão recalculados.")
 
     df_l = obter_lancamentos_mes(mes_ativo)
     somas_escaneadas = df_l.groupby("detalhamento")["valor"].sum().to_dict() if not df_l.empty else {}
@@ -1358,83 +1364,85 @@ if menu.startswith("📊 DRE Spoleto"):
         lista_linhas_editaveis.append({"CONTA": nome_conta, "VALOR (R$)": formatar_numero_br(round(val_final, 2))})
 
     df_base_editavel = pd.DataFrame(lista_linhas_editaveis)
-    st.write("👇 **Tabela de Lançamentos do DRE (digite os valores com vírgula decimal, por exemplo 1.234,56, e depois clique em Salvar):**")
-    qtd_lanc = len(df_l)
-    df_dre_editado = st.data_editor(
-        df_base_editavel,
-        column_config={
-            "CONTA": st.column_config.TextColumn("Conta / Indicador", disabled=True),
-            "VALOR (R$)": st.column_config.TextColumn("VALOR (R$) — padrão 1.234,56", help="O CMV é automático após fechamento; demais valores podem ser editados."),
-        },
-        use_container_width=True,
-        num_rows="fixed",
-        height=520,
-        key=f"editor_dre_{mes_ativo}_v{qtd_lanc}",
-    )
+    if eh_dre:
+        st.write("👇 **Tabela de Lançamentos do DRE (digite os valores com vírgula decimal, por exemplo 1.234,56, e depois clique em Salvar):**")
+        qtd_lanc = len(df_l)
+        df_dre_editado = st.data_editor(
+            df_base_editavel,
+            column_config={
+                "CONTA": st.column_config.TextColumn("Conta / Indicador", disabled=True),
+                "VALOR (R$)": st.column_config.TextColumn("VALOR (R$) — padrão 1.234,56", help="O CMV é automático após fechamento; demais valores podem ser editados."),
+            },
+            use_container_width=True,
+            num_rows="fixed",
+            height=520,
+            key=f"editor_dre_{mes_ativo}_v{qtd_lanc}",
+        )
 
-    # Reservamos o espaço da própria tabela DRE logo após o editor. O conteúdo
-    # é calculado mais abaixo, mas renderizado aqui em cada rerun do Streamlit.
-    painel_dre_atualizado = st.empty()
+        # Reservamos o espaço da própria tabela DRE logo após o editor. O conteúdo
+        # é calculado mais abaixo, mas renderizado aqui em cada rerun do Streamlit.
+        painel_dre_atualizado = st.empty()
 
-    # Resumo reativo: o Streamlit recalcula quando a edição de uma célula é
-    # confirmada (Enter ou clique fora). Não é necessário clicar em Salvar.
-    valores_ao_vivo = {
-        str(linha["CONTA"]): converter_numero_br(linha["VALOR (R$)"])
-        for _, linha in df_dre_editado.iterrows()
-    }
-    def valor_ao_vivo(nome):
-        return float(valores_ao_vivo.get(nome, 0.0) or 0.0)
+        # Resumo reativo: o Streamlit recalcula quando a edição de uma célula é
+        # confirmada (Enter ou clique fora). Não é necessário clicar em Salvar.
+        valores_ao_vivo = {
+            str(linha["CONTA"]): converter_numero_br(linha["VALOR (R$)"])
+            for _, linha in df_dre_editado.iterrows()
+        }
+        def valor_ao_vivo(nome):
+            return float(valores_ao_vivo.get(nome, 0.0) or 0.0)
 
-    grupos_operacionais_ao_vivo = {
-        "Impostos": ["Imposto Federal", "Imposto Estadual"],
-        "Ocupação": ["Aluguel", "Ar condicionado", "Condomínio", "Fundo de Promoção", "IPTU", "Taxas e Outros"],
-        "Pessoal": ["Salário", "Adiantamento", "Vale Transporte", "Farmácia", "Benefícios (Alimentação Funcionários)", "Encargos", "FGTS", "Férias", "13 salário", "Provisões", "Rescisão", "Outros (pessoal)"],
-        "Utilidades": ["Água e Esgoto", "Energia Elétrica", "Gás", "Internet", "Telefone", "Outros (utilidades)"],
-        "Serviços": ["Serviços", "Terceiros", "Gcom", "Contador"],
-        "Materiais de uso e consumo": ["Material de Escritório", "Material de Limpeza", "Uniformes", "Utensílios", "Outros Materiais de Uso e Consumo"],
-        "Manutenção": ["Serviço - Manutenção e Reparos", "Material - Manutenção e Reparos"],
-        "Delivery": ["Comissão agregadores", "Custo com entrega (motoqueiros)"],
-        "Marketing e franqueador": ["Anúncios/Propagandas", "Fundo de Marketing", "Royalties"],
-        "Financeiro": ["Custo Cartão de Crédito", "Custo Cartão de Débito"],
-    }
-    subtotais_ao_vivo = {
-        grupo: sum(valor_ao_vivo(conta) for conta in contas)
-        for grupo, contas in grupos_operacionais_ao_vivo.items()
-    }
-    subtotais_ao_vivo["Delivery"] -= valor_ao_vivo("Taxa de entrega arrecadada")
-    subtotais_ao_vivo["Estoque/CMV e fretes"] = (
-        float(cmv_auto.get("CMV Consolidado", 0.0)) if cmv_auto else total_compras_cmv
-    ) + valor_ao_vivo("Fretes")
-    total_operacional_ao_vivo = sum(subtotais_ao_vivo.values())
-    contas_nao_operacionais_ao_vivo = [
-        "Carro da Loja", "Despesas de Viagens", "Despesas de Convenção",
-        "Rateio de Escritório Administrativo", "Pessoal - Supervisor e Nutricionista",
-        "Empréstimos Bancário", "Pronampe", "Juros de Empréstimos",
-        "Empréstimo Folha de Pagamento", "Capex", "Pro Labore",
-    ]
-    total_nao_operacional_ao_vivo = sum(
-        valor_ao_vivo(conta) for conta in contas_nao_operacionais_ao_vivo
-    )
-    st.info(
-        "A tabela DRE completa, logo abaixo, atualiza os subtotais e resultados "
-        "quando você confirma uma célula. As alterações só são gravadas ao clicar em Salvar."
-    )
+        grupos_operacionais_ao_vivo = {
+            "Impostos": ["Imposto Federal", "Imposto Estadual"],
+            "Ocupação": ["Aluguel", "Ar condicionado", "Condomínio", "Fundo de Promoção", "IPTU", "Taxas e Outros"],
+            "Pessoal": ["Salário", "Adiantamento", "Vale Transporte", "Farmácia", "Benefícios (Alimentação Funcionários)", "Encargos", "FGTS", "Férias", "13 salário", "Provisões", "Rescisão", "Outros (pessoal)"],
+            "Utilidades": ["Água e Esgoto", "Energia Elétrica", "Gás", "Internet", "Telefone", "Outros (utilidades)"],
+            "Serviços": ["Serviços", "Terceiros", "Gcom", "Contador"],
+            "Materiais de uso e consumo": ["Material de Escritório", "Material de Limpeza", "Uniformes", "Utensílios", "Outros Materiais de Uso e Consumo"],
+            "Manutenção": ["Serviço - Manutenção e Reparos", "Material - Manutenção e Reparos"],
+            "Delivery": ["Comissão agregadores", "Custo com entrega (motoqueiros)"],
+            "Marketing e franqueador": ["Anúncios/Propagandas", "Fundo de Marketing", "Royalties"],
+            "Financeiro": ["Custo Cartão de Crédito", "Custo Cartão de Débito"],
+        }
+        subtotais_ao_vivo = {
+            grupo: sum(valor_ao_vivo(conta) for conta in contas)
+            for grupo, contas in grupos_operacionais_ao_vivo.items()
+        }
+        subtotais_ao_vivo["Delivery"] -= valor_ao_vivo("Taxa de entrega arrecadada")
+        subtotais_ao_vivo["Estoque/CMV e fretes"] = (
+            float(cmv_auto.get("CMV Consolidado", 0.0)) if cmv_auto else total_compras_cmv
+        ) + valor_ao_vivo("Fretes")
+        total_operacional_ao_vivo = sum(subtotais_ao_vivo.values())
+        contas_nao_operacionais_ao_vivo = [
+            "Carro da Loja", "Despesas de Viagens", "Despesas de Convenção",
+            "Rateio de Escritório Administrativo", "Pessoal - Supervisor e Nutricionista",
+            "Empréstimos Bancário", "Pronampe", "Juros de Empréstimos",
+            "Empréstimo Folha de Pagamento", "Capex", "Pro Labore",
+        ]
+        total_nao_operacional_ao_vivo = sum(
+            valor_ao_vivo(conta) for conta in contas_nao_operacionais_ao_vivo
+        )
+        st.info(
+            "A tabela DRE completa, logo abaixo, atualiza os subtotais e resultados "
+            "quando você confirma uma célula. As alterações só são gravadas ao clicar em Salvar."
+        )
 
-    col_save_dre, _ = st.columns([2, 3])
-    with col_save_dre:
-        if st.button("💾 Salvar Lançamentos e Ajustes do DRE na Base de Dados", type="primary", use_container_width=True):
-            novos_ajustes = {}
-            for conta, valor in zip(df_dre_editado["CONTA"], df_dre_editado["VALOR (R$)"]):
-                conta = str(conta)
-                if conta == "CMV Consolidado":
-                    continue  # CMV apurado não é ajuste manual.
-                base_nota = float(somas_escaneadas.get(next((det for nome, det, _ in CONTAS_DRE_PAINEL if nome == conta), None), 0.0))
-                novos_ajustes[conta] = converter_numero_br(valor) - base_nota
-            salvar_ajustes_dre(mes_ativo, novos_ajustes)
-            st.success("✅ Valores gravados com sucesso!")
-            st.rerun()
+        col_save_dre, _ = st.columns([2, 3])
+        with col_save_dre:
+            if st.button("💾 Salvar Lançamentos e Ajustes do DRE na Base de Dados", type="primary", use_container_width=True):
+                novos_ajustes = {}
+                for conta, valor in zip(df_dre_editado["CONTA"], df_dre_editado["VALOR (R$)"]):
+                    conta = str(conta)
+                    if conta == "CMV Consolidado":
+                        continue  # CMV apurado não é ajuste manual.
+                    base_nota = float(somas_escaneadas.get(next((det for nome, det, _ in CONTAS_DRE_PAINEL if nome == conta), None), 0.0))
+                    novos_ajustes[conta] = converter_numero_br(valor) - base_nota
+                salvar_ajustes_dre(mes_ativo, novos_ajustes)
+                st.success("✅ Valores gravados com sucesso!")
+                st.rerun()
 
-    v_map = {str(conta): converter_numero_br(valor) for conta, valor in zip(df_dre_editado["CONTA"], df_dre_editado["VALOR (R$)"])}
+    df_valores_calculo = df_base_editavel if eh_dashboard else df_dre_editado
+    v_map = {str(conta): converter_numero_br(valor) for conta, valor in zip(df_valores_calculo["CONTA"], df_valores_calculo["VALOR (R$)"])}
     if cmv_auto is not None:
         v_map.update(cmv_auto)  # A DRE nunca usa edição manual no lugar do CMV fechado.
 
@@ -1526,221 +1534,241 @@ if menu.startswith("📊 DRE Spoleto"):
     def pct(val):
         return f"{(val / venda_bruta) * 100:.2f}%" if venda_bruta > 0 else "0.00%"
 
-    st.markdown("---")
-    st.write("### 📈 Visão Consolidada em Tempo Real")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("🔹 Venda Bruta", f"R$ {venda_bruta:,.2f}")
-    c2.metric("📦 CMV consolidado" if cmv_auto is not None else "📦 Compras + fretes (provisório)",
-              f"R$ {formatar_numero_br(total_cmv)}", delta=pct(total_cmv), delta_color="inverse")
-    st.metric("🥬 Compras de Horte (indicador)", f"R$ {formatar_numero_br(compras_horte)}")
-    st.caption("Antes do fechamento, compras + fretes substituem provisoriamente o CMV no resultado; depois, usa-se somente o CMV consolidado + fretes.")
-    st.markdown("#### 🧾 Compras do mês para composição do CMV")
-    col_a, col_h, col_b, col_d, col_t = st.columns(5)
-    col_a.metric("Alimentos", f"R$ {formatar_numero_br(compras_alimentos)}")
-    col_h.metric("Horte", f"R$ {formatar_numero_br(compras_horte)}")
-    col_b.metric("Bebidas", f"R$ {formatar_numero_br(compras_bebidas)}")
-    col_d.metric("Descartáveis", f"R$ {formatar_numero_br(compras_descartaveis)}")
-    col_t.metric("Total de compras", f"R$ {formatar_numero_br(total_compras_cmv)}")
-    if cmv_auto is None:
-        st.warning("Resultado e lucro bruto provisórios: usamos compras + fretes como estimativa do CMV até fechar o inventário. Compras não são necessariamente iguais ao custo das mercadorias vendidas.")
-    c3.metric("🔹 Lucro Bruto", f"R$ {lucro_bruto:,.2f}", delta=pct(lucro_bruto))
-    c4.metric("💰 Resultado Final", f"R$ {res_final:,.2f}", delta=pct(res_final))
+    if eh_dre:
+        st.markdown("---")
+        st.write("### 📈 Visão Consolidada em Tempo Real")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("🔹 Venda Bruta", f"R$ {venda_bruta:,.2f}")
+        c2.metric("📦 CMV consolidado" if cmv_auto is not None else "📦 Compras + fretes (provisório)",
+                  f"R$ {formatar_numero_br(total_cmv)}", delta=pct(total_cmv), delta_color="inverse")
+        st.metric("🥬 Compras de Horte (indicador)", f"R$ {formatar_numero_br(compras_horte)}")
+        st.caption("Antes do fechamento, compras + fretes substituem provisoriamente o CMV no resultado; depois, usa-se somente o CMV consolidado + fretes.")
+        st.markdown("#### 🧾 Compras do mês para composição do CMV")
+        col_a, col_h, col_b, col_d, col_t = st.columns(5)
+        col_a.metric("Alimentos", f"R$ {formatar_numero_br(compras_alimentos)}")
+        col_h.metric("Horte", f"R$ {formatar_numero_br(compras_horte)}")
+        col_b.metric("Bebidas", f"R$ {formatar_numero_br(compras_bebidas)}")
+        col_d.metric("Descartáveis", f"R$ {formatar_numero_br(compras_descartaveis)}")
+        col_t.metric("Total de compras", f"R$ {formatar_numero_br(total_compras_cmv)}")
+        if cmv_auto is None:
+            st.warning("Resultado e lucro bruto provisórios: usamos compras + fretes como estimativa do CMV até fechar o inventário. Compras não são necessariamente iguais ao custo das mercadorias vendidas.")
+        c3.metric("🔹 Lucro Bruto", f"R$ {lucro_bruto:,.2f}", delta=pct(lucro_bruto))
+        c4.metric("💰 Resultado Final", f"R$ {res_final:,.2f}", delta=pct(res_final))
 
-    # Painel gráfico: usa exclusivamente os valores já apurados para este mês.
-    st.markdown("### 📊 Painel gráfico gerencial")
-    st.caption(f"Indicadores de {NOMES_MESES[mes_ativo]}. Os gráficos acompanham os valores exibidos na DRE, inclusive alterações ainda não salvas.")
-    graf_esq, graf_dir = st.columns(2, gap="large")
-    with graf_esq:
-        st.markdown("**Distribuição das despesas operacionais**")
-        despesas_grafico = pd.DataFrame([
-            {"Grupo": nome, "Valor (R$)": float(valor)}
-            for nome, valor in grupos_operacionais.items() if float(valor) > 0
-        ])
-        if not despesas_grafico.empty:
-            st.bar_chart(despesas_grafico.set_index("Grupo"), horizontal=True, height=410)
+    if eh_dashboard:
+        # Dashboard com gráficos de rosca (Plotly), mantendo dados da DRE.
+        st.markdown("### 📊 Dashboard financeiro")
+        st.caption(f"Distribuição dos valores de {NOMES_MESES[mes_ativo]} — dados da DRE selecionada.")
+        try:
+            import plotly.graph_objects as go
+        except ImportError:
+            st.warning("Para exibir os gráficos de rosca, adicione `plotly` ao requirements.txt e publique novamente.")
         else:
-            st.info("Sem despesas operacionais positivas neste mês.")
-    with graf_dir:
-        st.markdown("**Receitas, despesas e resultado**")
-        resumo_grafico = pd.DataFrame([
-            {"Indicador": "Venda bruta", "Valor (R$)": venda_bruta},
-            {"Indicador": "Desp. operacionais", "Valor (R$)": total_despesas_operacionais},
-            {"Indicador": "Desp. não operacionais", "Valor (R$)": despesas_nao_operacionais},
-            {"Indicador": "Resultado final", "Valor (R$)": res_final},
-        ])
-        st.bar_chart(resumo_grafico.set_index("Indicador"), height=410)
-    st.markdown("**👥 Composição das despesas de Pessoal**")
-    contas_pessoal_grafico = [
-        "Salário", "Adiantamento", "Vale Transporte", "Farmácia",
-        "Benefícios (Alimentação Funcionários)", "Encargos", "FGTS",
-        "Férias", "13 salário", "Provisões", "Rescisão", "Diárias", "Outros (pessoal)",
-    ]
-    pessoal_grafico = pd.DataFrame([
-        {"Classificação": nome, "Valor (R$)": v(nome)}
-        for nome in contas_pessoal_grafico if v(nome) > 0
-    ])
-    if not pessoal_grafico.empty:
-        st.bar_chart(pessoal_grafico.set_index("Classificação"), horizontal=True, height=350)
-    else:
-        st.info("Ainda não há despesas de Pessoal para exibir.")
-    st.markdown("**📅 Evolução diária dos lançamentos de despesas**")
-    if not df_l.empty:
-        diario = df_l.copy()
-        diario["data_dia"] = pd.to_datetime(diario["data"], errors="coerce")
-        diario = diario.dropna(subset=["data_dia"])
-        diario = diario[diario["data_dia"].dt.strftime("%Y-%m") == mes_ativo]
-        diario = diario.groupby("data_dia", as_index=False)["valor"].sum().sort_values("data_dia")
-        if not diario.empty:
-            diario = diario.rename(columns={"data_dia": "Data", "valor": "Lançamentos (R$)"})
-            st.line_chart(diario.set_index("Data"), height=290)
-        else:
-            st.info("Sem lançamentos com data válida neste mês.")
-    else:
-        st.info("Sem lançamentos registrados neste mês.")
-    st.caption("O gráfico diário mostra saídas lançadas, não vendas. Para CMV, prevalece a apuração por inventário quando fechado.")
+            CORES = ["#2563eb", "#06b6d4", "#8b5cf6", "#f59e0b", "#10b981",
+                     "#ef4444", "#6366f1", "#14b8a6", "#f97316", "#a855f7",
+                     "#64748b", "#84cc16", "#ec4899"]
 
-    estrutura_dre_spoleto = [
-        {"CONTA": "🔹 VENDA BRUTA", "VALOR": venda_bruta, "%": "100.00%"},
-        {"CONTA": "  • Faturamento Balcão", "VALOR": fat_balcao, "%": pct(fat_balcao)},
-        {"CONTA": "  • Faturamento Delivery", "VALOR": fat_delivery, "%": pct(fat_delivery)},
-        {"CONTA": "(-) Imposto Federal", "VALOR": imp_fed, "%": pct(imp_fed)},
-        {"CONTA": "(-) Imposto Estadual", "VALOR": imp_est, "%": pct(imp_est)},
-        {"CONTA": "🔹 RECEITA LÍQUIDA", "VALOR": rec_liquida, "%": pct(rec_liquida)},
-        {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
-        {"CONTA": "📦 C M V (Custo de Mercadoria Vendida)" if cmv_auto is not None else "📦 COMPRAS + FRETES (CMV provisório)", "VALOR": total_cmv, "%": pct(total_cmv)},
-        {"CONTA": "  • CMV Consolidado (pendente de fechamento)" if cmv_auto is None else "  • CMV Consolidado (Alimentos, Horte, Bebidas e Descartáveis)", "VALOR": None if cmv_auto is None else cmv_consolidado, "%": "" if cmv_auto is None else pct(cmv_consolidado)},
-        {"CONTA": "  • Compras de Alimentos (informativo)", "VALOR": compras_alimentos, "%": pct(compras_alimentos)},
-        {"CONTA": "  • Compras de Horte (informativo)", "VALOR": compras_horte, "%": pct(compras_horte)},
-        {"CONTA": "  • Compras de Bebidas (informativo)", "VALOR": compras_bebidas, "%": pct(compras_bebidas)},
-        {"CONTA": "  • Compras de Descartáveis (informativo)", "VALOR": compras_descartaveis, "%": pct(compras_descartaveis)},
-        {"CONTA": ("  • TOTAL COMPRAS PARA CMV (informativo; já substituído pelo CMV)"
-                    if cmv_auto is not None else
-                    "  • TOTAL COMPRAS DO MÊS (incluído provisoriamente nas despesas)"),
-         "VALOR": total_compras_cmv, "%": pct(total_compras_cmv)},
-        {"CONTA": "  • Fretes", "VALOR": cmv_fret, "%": pct(cmv_fret)},
-        {"CONTA": "🔹 LUCRO BRUTO", "VALOR": lucro_bruto, "%": pct(lucro_bruto)},
-        {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
-        {"CONTA": "🏢 TOTAL OCUPAÇÃO", "VALOR": total_ocup, "%": pct(total_ocup)},
-        {"CONTA": "  • Condomínio", "VALOR": v("Condomínio"), "%": pct(v("Condomínio"))},
-        {"CONTA": "  • Aluguel / Outros", "VALOR": total_ocup - v("Condomínio"), "%": pct(total_ocup - v("Condomínio"))},
-        {"CONTA": "👥 TOTAL PESSOAL", "VALOR": total_pess, "%": pct(total_pess)},
-        {"CONTA": "  • Salário", "VALOR": v("Salário"), "%": pct(v("Salário"))},
-        {"CONTA": "  • Adiantamento", "VALOR": v("Adiantamento"), "%": pct(v("Adiantamento"))},
-        {"CONTA": "  • Vale Transporte", "VALOR": v("Vale Transporte"), "%": pct(v("Vale Transporte"))},
-        {"CONTA": "  • Farmácia", "VALOR": v("Farmácia"), "%": pct(v("Farmácia"))},
-        {"CONTA": "  • Benefícios (Alimentação Funcionários)", "VALOR": v("Benefícios (Alimentação Funcionários)"), "%": pct(v("Benefícios (Alimentação Funcionários)"))},
-        {"CONTA": "  • Encargos", "VALOR": v("Encargos"), "%": pct(v("Encargos"))},
-        {"CONTA": "  • FGTS", "VALOR": v("FGTS"), "%": pct(v("FGTS"))},
-        {"CONTA": "  • Férias", "VALOR": v("Férias"), "%": pct(v("Férias"))},
-        {"CONTA": "  • 13 salário", "VALOR": v("13 salário"), "%": pct(v("13 salário"))},
-        {"CONTA": "  • Provisões", "VALOR": v("Provisões"), "%": pct(v("Provisões"))},
-        {"CONTA": "  • Rescisão", "VALOR": v("Rescisão"), "%": pct(v("Rescisão"))},
-        {"CONTA": "  • Outros (pessoal)", "VALOR": v("Outros (pessoal)"), "%": pct(v("Outros (pessoal)"))},
-        {"CONTA": "🧾 TOTAL SERVIÇOS", "VALOR": total_serv, "%": pct(total_serv)},
-        {"CONTA": "  • Gcom", "VALOR": v("Gcom"), "%": pct(v("Gcom"))},
-        {"CONTA": "  • Contador", "VALOR": v("Contador"), "%": pct(v("Contador"))},
-        {"CONTA": "💡 TOTAL UTILIDADES", "VALOR": total_util, "%": pct(total_util)},
-        {"CONTA": "  • Gás", "VALOR": v("Gás"), "%": pct(v("Gás"))},
-        {"CONTA": "  • Energia Elétrica", "VALOR": v("Energia Elétrica"), "%": pct(v("Energia Elétrica"))},
-        {"CONTA": "🧹 MATERIAIS DE USO & CONSUMO", "VALOR": total_mat, "%": pct(total_mat)},
-        {"CONTA": "  • Limpeza", "VALOR": v("Material de Limpeza"), "%": pct(v("Material de Limpeza"))},
-        {"CONTA": "  • Utensílios", "VALOR": v("Utensílios"), "%": pct(v("Utensílios"))},
-        {"CONTA": "  • Uniformes", "VALOR": v("Uniformes"), "%": pct(v("Uniformes"))},
-        {"CONTA": "🔧 MANUTENÇÃO", "VALOR": total_manut, "%": pct(total_manut)},
-        {"CONTA": "🛵 DELIVERY", "VALOR": total_deliv, "%": pct(total_deliv)},
-        {"CONTA": "📢 MARKETING & FRANQUEADOR", "VALOR": total_mkt, "%": pct(total_mkt)},
-        {"CONTA": "💳 CUSTO FINANCEIRO", "VALOR": total_fin, "%": pct(total_fin)},
-        {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
-        {"CONTA": ('🔴 TOTAL DESPESAS OPERACIONAIS (provisório)' if cmv_auto is None
-                   else '🔴 TOTAL DESPESAS OPERACIONAIS'),
-         "VALOR": total_despesas_operacionais, "%": pct(total_despesas_operacionais)},
-        {"CONTA": '🏆 RESULTADO OPERACIONAL', "VALOR": res_operacional, "%": pct(res_operacional)},
-        {"CONTA": '🎁 Total Bonificação', "VALOR": bonificacao, "%": pct(bonificacao)},
-        {"CONTA": '🏅 RESULTADO FINAL OPERACIONAL', "VALOR": resultado_final_operacional, "%": pct(resultado_final_operacional)},
-        {"CONTA": "──────── DESPESAS NÃO OPERACIONAIS ────────", "VALOR": None, "%": ""},
-        {"CONTA": '  • Carro da Loja', "VALOR": v("Carro da Loja"), "%": pct(v("Carro da Loja"))},
-        {"CONTA": '✈️ VIAGENS', "VALOR": total_viagens, "%": pct(total_viagens)},
-        {"CONTA": '  • Despesas de Viagens', "VALOR": v("Despesas de Viagens"), "%": pct(v("Despesas de Viagens"))},
-        {"CONTA": '  • Despesas de Convenção', "VALOR": v("Despesas de Convenção"), "%": pct(v("Despesas de Convenção"))},
-        {"CONTA": '🗂️ DESPESAS ADMINISTRATIVAS', "VALOR": total_administrativas, "%": pct(total_administrativas)},
-        {"CONTA": '  • Rateio de Escritório Administrativo', "VALOR": v("Rateio de Escritório Administrativo"), "%": pct(v("Rateio de Escritório Administrativo"))},
-        {"CONTA": '  • Pessoal - Supervisor e Nutricionista', "VALOR": v("Pessoal - Supervisor e Nutricionista"), "%": pct(v("Pessoal - Supervisor e Nutricionista"))},
-        {"CONTA": '🏦 EMPRÉSTIMOS', "VALOR": total_emprestimos, "%": pct(total_emprestimos)},
-        {"CONTA": '  • Empréstimos Bancário', "VALOR": v("Empréstimos Bancário"), "%": pct(v("Empréstimos Bancário"))},
-        {"CONTA": '  • Pronampe', "VALOR": v("Pronampe"), "%": pct(v("Pronampe"))},
-        {"CONTA": '  • Juros de Empréstimos', "VALOR": v("Juros de Empréstimos"), "%": pct(v("Juros de Empréstimos"))},
-        {"CONTA": '  • Empréstimo Folha de Pagamento', "VALOR": v("Empréstimo Folha de Pagamento"), "%": pct(v("Empréstimo Folha de Pagamento"))},
-        {"CONTA": '🏗️ INVESTIMENTOS', "VALOR": total_investimentos, "%": pct(total_investimentos)},
-        {"CONTA": '  • Capex', "VALOR": v("Capex"), "%": pct(v("Capex"))},
-        {"CONTA": '👤 PRÓ-LABORE', "VALOR": total_pro_labore, "%": pct(total_pro_labore)},
-        {"CONTA": '  • Pro Labore', "VALOR": v("Pro Labore"), "%": pct(v("Pro Labore"))},
-        {"CONTA": '🔵 SUBTOTAL DESPESAS NÃO OPERACIONAIS', "VALOR": despesas_nao_operacionais, "%": pct(despesas_nao_operacionais)},
-        {"CONTA": '🔴 TOTAL GERAL DE DESPESAS', "VALOR": total_geral_despesas, "%": pct(total_geral_despesas)},
-        {"CONTA": '💰 RESULTADO FINAL', "VALOR": res_final, "%": pct(res_final)},
-    ]
-    df_spoleto_view = pd.DataFrame(estrutura_dre_spoleto)
-    df_spoleto_view["VALOR"] = df_spoleto_view["VALOR"].apply(lambda x: f"R$ {formatar_numero_br(x)}" if pd.notnull(x) else "")
-    st.caption(
-        "Critério gerencial: o Total Geral de Despesas inclui saídas como amortização "
-        "de empréstimos e Capex, conforme o modelo enviado. Para uma DRE contábil, "
-        "principal de empréstimos e investimentos normalmente não são despesas do período; "
-        "consulte o contador para conciliação. Antes do inventário, compras são "
-        "incluídas provisoriamente nas despesas operacionais, sem duplicar o CMV."
-    )
-    with painel_dre_atualizado.container():
-        st.markdown("### 📊 DRE atualizada conforme os lançamentos")
+            def rosca(titulo, dados, chave="valor", centro="Total", altura=370):
+                positivos = [(str(nome), float(valor)) for nome, valor in dados.items()
+                             if valor is not None and float(valor) > 0]
+                st.markdown(f"**{titulo}**")
+                if not positivos:
+                    st.info("Sem valores positivos para este gráfico no mês selecionado.")
+                    return
+                nomes, valores = zip(*positivos)
+                total = sum(valores)
+                fig = go.Figure(go.Pie(
+                    labels=nomes, values=valores, hole=0.67,
+                    marker=dict(colors=CORES[:len(nomes)], line=dict(color="#ffffff", width=2)),
+                    textinfo="percent", textposition="inside",
+                    hovertemplate="%{label}<extra></extra><br>R$ %{value:,.2f} (%{percent})",
+                    sort=False,
+                ))
+                fig.add_annotation(x=0.5, y=0.54, text=centro, showarrow=False,
+                                   font=dict(size=13, color="#64748b"))
+                fig.add_annotation(x=0.5, y=0.45,
+                                   text=f"R$ {formatar_numero_br(total)}",
+                                   showarrow=False, font=dict(size=19, color="#0f172a"))
+                fig.update_layout(height=altura, margin=dict(l=5, r=5, t=15, b=10),
+                                  paper_bgcolor="rgba(0,0,0,0)",
+                                  font=dict(size=12), showlegend=True,
+                                  legend=dict(orientation="h", y=-0.12, x=0.5, xanchor="center"))
+                st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+            col_g1, col_g2 = st.columns(2, gap="large")
+            with col_g1:
+                rosca("💳 Para onde vai o dinheiro — despesas operacionais",
+                      grupos_operacionais, centro="Despesas")
+            with col_g2:
+                contas_pessoal_grafico = [
+                    "Salário", "Adiantamento", "Vale Transporte", "Farmácia",
+                    "Benefícios (Alimentação Funcionários)", "Encargos", "FGTS",
+                    "Férias", "13 salário", "Provisões", "Rescisão", "Diárias",
+                    "Outros (pessoal)",
+                ]
+                rosca("👥 Composição das despesas de Pessoal",
+                      {nome: v(nome) for nome in contas_pessoal_grafico}, centro="Pessoal")
+
+            col_g3, col_g4 = st.columns(2, gap="large")
+            with col_g3:
+                rosca("🏢 Despesas não operacionais", grupos_nao_operacionais,
+                      centro="Não operacional")
+            with col_g4:
+                rosca("🧾 Compras por tipo",
+                      {"Alimentos (sem Horte)": max(0, compras_alimentos - compras_horte),
+                       "Horte": compras_horte, "Bebidas": compras_bebidas,
+                       "Descartáveis": compras_descartaveis}, centro="Compras")
+
+            st.markdown("#### 📈 Indicadores do mês")
+            ind1, ind2, ind3 = st.columns(3)
+            ind1.metric("Venda bruta", f"R$ {formatar_numero_br(venda_bruta)}")
+            ind2.metric("Despesas totais", f"R$ {formatar_numero_br(total_geral_despesas)}")
+            ind3.metric("Resultado final", f"R$ {formatar_numero_br(res_final)}")
+            st.caption("Os gráficos de rosca mostram apenas valores positivos. O resultado final pode ser negativo e aparece no indicador, não como fatia da rosca.")
+
+    if eh_dre:
+        estrutura_dre_spoleto = [
+            {"CONTA": "🔹 VENDA BRUTA", "VALOR": venda_bruta, "%": "100.00%"},
+            {"CONTA": "  • Faturamento Balcão", "VALOR": fat_balcao, "%": pct(fat_balcao)},
+            {"CONTA": "  • Faturamento Delivery", "VALOR": fat_delivery, "%": pct(fat_delivery)},
+            {"CONTA": "(-) Imposto Federal", "VALOR": imp_fed, "%": pct(imp_fed)},
+            {"CONTA": "(-) Imposto Estadual", "VALOR": imp_est, "%": pct(imp_est)},
+            {"CONTA": "🔹 RECEITA LÍQUIDA", "VALOR": rec_liquida, "%": pct(rec_liquida)},
+            {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
+            {"CONTA": "📦 C M V (Custo de Mercadoria Vendida)" if cmv_auto is not None else "📦 COMPRAS + FRETES (CMV provisório)", "VALOR": total_cmv, "%": pct(total_cmv)},
+            {"CONTA": "  • CMV Consolidado (pendente de fechamento)" if cmv_auto is None else "  • CMV Consolidado (Alimentos, Horte, Bebidas e Descartáveis)", "VALOR": None if cmv_auto is None else cmv_consolidado, "%": "" if cmv_auto is None else pct(cmv_consolidado)},
+            {"CONTA": "  • Compras de Alimentos (informativo)", "VALOR": compras_alimentos, "%": pct(compras_alimentos)},
+            {"CONTA": "  • Compras de Horte (informativo)", "VALOR": compras_horte, "%": pct(compras_horte)},
+            {"CONTA": "  • Compras de Bebidas (informativo)", "VALOR": compras_bebidas, "%": pct(compras_bebidas)},
+            {"CONTA": "  • Compras de Descartáveis (informativo)", "VALOR": compras_descartaveis, "%": pct(compras_descartaveis)},
+            {"CONTA": ("  • TOTAL COMPRAS PARA CMV (informativo; já substituído pelo CMV)"
+                        if cmv_auto is not None else
+                        "  • TOTAL COMPRAS DO MÊS (incluído provisoriamente nas despesas)"),
+             "VALOR": total_compras_cmv, "%": pct(total_compras_cmv)},
+            {"CONTA": "  • Fretes", "VALOR": cmv_fret, "%": pct(cmv_fret)},
+            {"CONTA": "🔹 LUCRO BRUTO", "VALOR": lucro_bruto, "%": pct(lucro_bruto)},
+            {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
+            {"CONTA": "🏢 TOTAL OCUPAÇÃO", "VALOR": total_ocup, "%": pct(total_ocup)},
+            {"CONTA": "  • Condomínio", "VALOR": v("Condomínio"), "%": pct(v("Condomínio"))},
+            {"CONTA": "  • Aluguel / Outros", "VALOR": total_ocup - v("Condomínio"), "%": pct(total_ocup - v("Condomínio"))},
+            {"CONTA": "👥 TOTAL PESSOAL", "VALOR": total_pess, "%": pct(total_pess)},
+            {"CONTA": "  • Salário", "VALOR": v("Salário"), "%": pct(v("Salário"))},
+            {"CONTA": "  • Adiantamento", "VALOR": v("Adiantamento"), "%": pct(v("Adiantamento"))},
+            {"CONTA": "  • Vale Transporte", "VALOR": v("Vale Transporte"), "%": pct(v("Vale Transporte"))},
+            {"CONTA": "  • Farmácia", "VALOR": v("Farmácia"), "%": pct(v("Farmácia"))},
+            {"CONTA": "  • Benefícios (Alimentação Funcionários)", "VALOR": v("Benefícios (Alimentação Funcionários)"), "%": pct(v("Benefícios (Alimentação Funcionários)"))},
+            {"CONTA": "  • Encargos", "VALOR": v("Encargos"), "%": pct(v("Encargos"))},
+            {"CONTA": "  • FGTS", "VALOR": v("FGTS"), "%": pct(v("FGTS"))},
+            {"CONTA": "  • Férias", "VALOR": v("Férias"), "%": pct(v("Férias"))},
+            {"CONTA": "  • 13 salário", "VALOR": v("13 salário"), "%": pct(v("13 salário"))},
+            {"CONTA": "  • Provisões", "VALOR": v("Provisões"), "%": pct(v("Provisões"))},
+            {"CONTA": "  • Rescisão", "VALOR": v("Rescisão"), "%": pct(v("Rescisão"))},
+            {"CONTA": "  • Outros (pessoal)", "VALOR": v("Outros (pessoal)"), "%": pct(v("Outros (pessoal)"))},
+            {"CONTA": "🧾 TOTAL SERVIÇOS", "VALOR": total_serv, "%": pct(total_serv)},
+            {"CONTA": "  • Gcom", "VALOR": v("Gcom"), "%": pct(v("Gcom"))},
+            {"CONTA": "  • Contador", "VALOR": v("Contador"), "%": pct(v("Contador"))},
+            {"CONTA": "💡 TOTAL UTILIDADES", "VALOR": total_util, "%": pct(total_util)},
+            {"CONTA": "  • Gás", "VALOR": v("Gás"), "%": pct(v("Gás"))},
+            {"CONTA": "  • Energia Elétrica", "VALOR": v("Energia Elétrica"), "%": pct(v("Energia Elétrica"))},
+            {"CONTA": "🧹 MATERIAIS DE USO & CONSUMO", "VALOR": total_mat, "%": pct(total_mat)},
+            {"CONTA": "  • Limpeza", "VALOR": v("Material de Limpeza"), "%": pct(v("Material de Limpeza"))},
+            {"CONTA": "  • Utensílios", "VALOR": v("Utensílios"), "%": pct(v("Utensílios"))},
+            {"CONTA": "  • Uniformes", "VALOR": v("Uniformes"), "%": pct(v("Uniformes"))},
+            {"CONTA": "🔧 MANUTENÇÃO", "VALOR": total_manut, "%": pct(total_manut)},
+            {"CONTA": "🛵 DELIVERY", "VALOR": total_deliv, "%": pct(total_deliv)},
+            {"CONTA": "📢 MARKETING & FRANQUEADOR", "VALOR": total_mkt, "%": pct(total_mkt)},
+            {"CONTA": "💳 CUSTO FINANCEIRO", "VALOR": total_fin, "%": pct(total_fin)},
+            {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
+            {"CONTA": ('🔴 TOTAL DESPESAS OPERACIONAIS (provisório)' if cmv_auto is None
+                       else '🔴 TOTAL DESPESAS OPERACIONAIS'),
+             "VALOR": total_despesas_operacionais, "%": pct(total_despesas_operacionais)},
+            {"CONTA": '🏆 RESULTADO OPERACIONAL', "VALOR": res_operacional, "%": pct(res_operacional)},
+            {"CONTA": '🎁 Total Bonificação', "VALOR": bonificacao, "%": pct(bonificacao)},
+            {"CONTA": '🏅 RESULTADO FINAL OPERACIONAL', "VALOR": resultado_final_operacional, "%": pct(resultado_final_operacional)},
+            {"CONTA": "──────── DESPESAS NÃO OPERACIONAIS ────────", "VALOR": None, "%": ""},
+            {"CONTA": '  • Carro da Loja', "VALOR": v("Carro da Loja"), "%": pct(v("Carro da Loja"))},
+            {"CONTA": '✈️ VIAGENS', "VALOR": total_viagens, "%": pct(total_viagens)},
+            {"CONTA": '  • Despesas de Viagens', "VALOR": v("Despesas de Viagens"), "%": pct(v("Despesas de Viagens"))},
+            {"CONTA": '  • Despesas de Convenção', "VALOR": v("Despesas de Convenção"), "%": pct(v("Despesas de Convenção"))},
+            {"CONTA": '🗂️ DESPESAS ADMINISTRATIVAS', "VALOR": total_administrativas, "%": pct(total_administrativas)},
+            {"CONTA": '  • Rateio de Escritório Administrativo', "VALOR": v("Rateio de Escritório Administrativo"), "%": pct(v("Rateio de Escritório Administrativo"))},
+            {"CONTA": '  • Pessoal - Supervisor e Nutricionista', "VALOR": v("Pessoal - Supervisor e Nutricionista"), "%": pct(v("Pessoal - Supervisor e Nutricionista"))},
+            {"CONTA": '🏦 EMPRÉSTIMOS', "VALOR": total_emprestimos, "%": pct(total_emprestimos)},
+            {"CONTA": '  • Empréstimos Bancário', "VALOR": v("Empréstimos Bancário"), "%": pct(v("Empréstimos Bancário"))},
+            {"CONTA": '  • Pronampe', "VALOR": v("Pronampe"), "%": pct(v("Pronampe"))},
+            {"CONTA": '  • Juros de Empréstimos', "VALOR": v("Juros de Empréstimos"), "%": pct(v("Juros de Empréstimos"))},
+            {"CONTA": '  • Empréstimo Folha de Pagamento', "VALOR": v("Empréstimo Folha de Pagamento"), "%": pct(v("Empréstimo Folha de Pagamento"))},
+            {"CONTA": '🏗️ INVESTIMENTOS', "VALOR": total_investimentos, "%": pct(total_investimentos)},
+            {"CONTA": '  • Capex', "VALOR": v("Capex"), "%": pct(v("Capex"))},
+            {"CONTA": '👤 PRÓ-LABORE', "VALOR": total_pro_labore, "%": pct(total_pro_labore)},
+            {"CONTA": '  • Pro Labore', "VALOR": v("Pro Labore"), "%": pct(v("Pro Labore"))},
+            {"CONTA": '🔵 SUBTOTAL DESPESAS NÃO OPERACIONAIS', "VALOR": despesas_nao_operacionais, "%": pct(despesas_nao_operacionais)},
+            {"CONTA": '🔴 TOTAL GERAL DE DESPESAS', "VALOR": total_geral_despesas, "%": pct(total_geral_despesas)},
+            {"CONTA": '💰 RESULTADO FINAL', "VALOR": res_final, "%": pct(res_final)},
+        ]
+        df_spoleto_view = pd.DataFrame(estrutura_dre_spoleto)
+        df_spoleto_view["VALOR"] = df_spoleto_view["VALOR"].apply(lambda x: f"R$ {formatar_numero_br(x)}" if pd.notnull(x) else "")
         st.caption(
-            "A própria tabela abaixo é recalculada quando você confirma uma alteração "
-            "na tabela de lançamentos (Enter ou clique fora). "
-            "Para persistir os valores no Supabase, clique em Salvar."
+            "Critério gerencial: o Total Geral de Despesas inclui saídas como amortização "
+            "de empréstimos e Capex, conforme o modelo enviado. Para uma DRE contábil, "
+            "principal de empréstimos e investimentos normalmente não são despesas do período; "
+            "consulte o contador para conciliação. Antes do inventário, compras são "
+            "incluídas provisoriamente nas despesas operacionais, sem duplicar o CMV."
         )
-        st.dataframe(
-            df_spoleto_view, use_container_width=True, height=660,
-            hide_index=True, key=f"dre_visualizacao_ao_vivo_{mes_ativo}",
-        )
-        st.markdown(
-            f"**Total despesas operacionais:** R$ {formatar_numero_br(total_despesas_operacionais)}"
-            f"  |  **Subtotal não operacionais:** R$ {formatar_numero_br(despesas_nao_operacionais)}"
-            f"  |  **Total geral:** R$ {formatar_numero_br(total_geral_despesas)}"
+        with painel_dre_atualizado.container():
+            st.markdown("### 📊 DRE atualizada conforme os lançamentos")
+            st.caption(
+                "A própria tabela abaixo é recalculada quando você confirma uma alteração "
+                "na tabela de lançamentos (Enter ou clique fora). "
+                "Para persistir os valores no Supabase, clique em Salvar."
+            )
+            st.dataframe(
+                df_spoleto_view, use_container_width=True, height=660,
+                hide_index=True, key=f"dre_visualizacao_ao_vivo_{mes_ativo}",
+            )
+            st.markdown(
+                f"**Total despesas operacionais:** R$ {formatar_numero_br(total_despesas_operacionais)}"
+                f"  |  **Subtotal não operacionais:** R$ {formatar_numero_br(despesas_nao_operacionais)}"
+                f"  |  **Total geral:** R$ {formatar_numero_br(total_geral_despesas)}"
+            )
+
+        with st.expander("🔎 Conferência dos subtotais — veja de onde vem o Total de Despesas"):
+            st.markdown("**Despesas operacionais — composição sem duplicidade**")
+            st.dataframe(
+                pd.DataFrame([
+                    {"Grupo": nome, "Valor (R$)": formatar_numero_br(valor)}
+                    for nome, valor in grupos_operacionais.items()
+                ]), hide_index=True, use_container_width=True,
+            )
+            st.markdown(f"**Subtotal operacional: R$ {formatar_numero_br(total_despesas_operacionais)}**")
+            st.markdown("**Despesas não operacionais — composição**")
+            st.dataframe(
+                pd.DataFrame([
+                    {"Grupo": nome, "Valor (R$)": formatar_numero_br(valor)}
+                    for nome, valor in grupos_nao_operacionais.items()
+                ]), hide_index=True, use_container_width=True,
+            )
+            st.markdown(f"**Subtotal não operacional: R$ {formatar_numero_br(despesas_nao_operacionais)}**")
+            st.markdown(f"### Total geral de despesas: R$ {formatar_numero_br(total_geral_despesas)}")
+            st.caption(
+                "Antes de fechar o inventário, as compras entram provisoriamente no total operacional. "
+                "Após o fechamento, o CMV consolidado substitui as compras no cálculo, sem duplicidade."
+            )
+
+        st.markdown("### 📥 Baixar Relatório")
+        dados_excel = gerar_excel_dre(NOMES_MESES[mes_ativo], pd.DataFrame(estrutura_dre_spoleto), df_l)
+        st.download_button(
+            label="📊 Baixar DRE Atualizado em Excel (.xlsx)",
+            data=dados_excel,
+            file_name=f"DRE_Spoleto_{mes_ativo}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary",
+            use_container_width=True,
         )
 
-    with st.expander("🔎 Conferência dos subtotais — veja de onde vem o Total de Despesas"):
-        st.markdown("**Despesas operacionais — composição sem duplicidade**")
-        st.dataframe(
-            pd.DataFrame([
-                {"Grupo": nome, "Valor (R$)": formatar_numero_br(valor)}
-                for nome, valor in grupos_operacionais.items()
-            ]), hide_index=True, use_container_width=True,
-        )
-        st.markdown(f"**Subtotal operacional: R$ {formatar_numero_br(total_despesas_operacionais)}**")
-        st.markdown("**Despesas não operacionais — composição**")
-        st.dataframe(
-            pd.DataFrame([
-                {"Grupo": nome, "Valor (R$)": formatar_numero_br(valor)}
-                for nome, valor in grupos_nao_operacionais.items()
-            ]), hide_index=True, use_container_width=True,
-        )
-        st.markdown(f"**Subtotal não operacional: R$ {formatar_numero_br(despesas_nao_operacionais)}**")
-        st.markdown(f"### Total geral de despesas: R$ {formatar_numero_br(total_geral_despesas)}")
-        st.caption(
-            "Antes de fechar o inventário, as compras entram provisoriamente no total operacional. "
-            "Após o fechamento, o CMV consolidado substitui as compras no cálculo, sem duplicidade."
-        )
-
-    st.markdown("### 📥 Baixar Relatório")
-    dados_excel = gerar_excel_dre(NOMES_MESES[mes_ativo], pd.DataFrame(estrutura_dre_spoleto), df_l)
-    st.download_button(
-        label="📊 Baixar DRE Atualizado em Excel (.xlsx)",
-        data=dados_excel,
-        file_name=f"DRE_Spoleto_{mes_ativo}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        type="primary",
-        use_container_width=True,
-    )
-
-# ==============================================================================
-# 2. ABA DE ESCANEAR NOTA & ALIMENTAR DRE
-# ==============================================================================
+    # ==============================================================================
+    # 2. ABA DE ESCANEAR NOTA & ALIMENTAR DRE
+    # ==============================================================================
 elif menu.startswith("📸 Escanear"):
     st.subheader(f"📸 Escanear Nota Fiscal para o DRE de: {NOMES_MESES[mes_ativo]}")
     st.info("💡 Classificações: **Demais Alimentos, Descartáveis, Limpeza, Materiais de Uso e Consumo, Utensílios, Bebidas, Horte, Uniformes, Uniforme e Alimentação Funcionário**.")
