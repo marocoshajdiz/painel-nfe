@@ -159,6 +159,7 @@ CLASSIFICACOES_DESPESAS = {
     "IPTU": ("Ocupação", "Iptu"),
     "Taxas e Outros": ("Ocupação", "Taxas E Outros"),
     "Salário": ("Pessoal", "Salário"),
+    "Vale Transporte": ("Pessoal", "Vale Transporte"),
     "Diárias": ("Pessoal", "Diárias"),
     "Adiantamento": ("Pessoal", "Adiantamento"),
     "Encargos": ("Pessoal", "Encargos"),
@@ -442,7 +443,7 @@ def validar_nota_para_gravacao(valor_total, lista_produtos):
     return total, normalizados
 
 
-def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_produtos, data_nota=None):
+def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_produtos, data_nota=None, permitir_repetida=False):
     # Data fiscal escolhida pelo operador; se omitida, usa a data atual.
     if data_nota is None:
         data_nota = date.today()
@@ -461,22 +462,23 @@ def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_pro
     conn = conectar_db()
     try:
         cursor = conn.cursor()
-        # Lock transacional impede dois operadores de gravarem simultaneamente a mesma nota.
-        cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (chave,))
-        cursor.execute("""SELECT valor_total, itens_json, cnpj FROM notas
-                          WHERE mes_referencia=%s AND cnpj=%s AND valor_total=%s""",
-                       (mes_ref, cnpj, total))
-        for valor_antigo, itens_antigos, cnpj_antigo in cursor.fetchall():
-            try:
-                antigos = json.loads(itens_antigos) if isinstance(itens_antigos, str) else itens_antigos
-                _, itens_norm_antigos = validar_nota_para_gravacao(valor_antigo, antigos)
-                if sorted(itens_norm_antigos) == sorted(normalizados):
-                    raise ValueError("Esta nota já foi lançada neste mês. Verifique o histórico.")
-            except ValueError as erro:
-                if "já foi lançada" in str(erro):
-                    raise
-                # Notas históricas incompletas não devem impedir lançamentos novos.
-                continue
+        if not permitir_repetida:
+            # Lock transacional impede dois operadores de gravarem simultaneamente a mesma nota.
+            cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (chave,))
+            cursor.execute("""SELECT valor_total, itens_json, cnpj FROM notas
+                              WHERE mes_referencia=%s AND cnpj=%s AND valor_total=%s""",
+                           (mes_ref, cnpj, total))
+            for valor_antigo, itens_antigos, cnpj_antigo in cursor.fetchall():
+                try:
+                    antigos = json.loads(itens_antigos) if isinstance(itens_antigos, str) else itens_antigos
+                    _, itens_norm_antigos = validar_nota_para_gravacao(valor_antigo, antigos)
+                    if sorted(itens_norm_antigos) == sorted(normalizados):
+                        raise ValueError("Esta nota já foi lançada neste mês. Verifique o histórico.")
+                except ValueError as erro:
+                    if "já foi lançada" in str(erro):
+                        raise
+                    # Notas históricas incompletas não devem impedir lançamentos novos.
+                    continue
         data_registo = datetime.now().strftime("%Y-%m-%d %H:%M")
         itens_json = json.dumps(lista_produtos, ensure_ascii=False)
         cursor.execute("""INSERT INTO notas
@@ -1102,6 +1104,7 @@ if "falhas_notas_lote" not in st.session_state:
 def resetar_processamento_nota():
     st.session_state.fotos_acumuladas = []
     st.session_state.dados_extraidos = None
+    st.session_state.pop("nota_origem_manual", None)
     st.session_state.uploader_key += 1
 
 
@@ -1110,6 +1113,7 @@ def avancar_fila_notas():
     fila = st.session_state.fila_notas_individuais
     if fila:
         proxima = fila.pop(0)
+        st.session_state.pop("nota_origem_manual", None)
         st.session_state.dados_extraidos = proxima["dados"]
         st.session_state["nome_nota_ativa"] = proxima["nome"]
         st.session_state.uploader_key += 1
@@ -1287,6 +1291,7 @@ if menu.startswith("📊 DRE Spoleto"):
         ("Taxas e Outros", "Taxas E Outros", 0.0),
         ("Salário", "Salário", 0.0),
         ("Adiantamento", "Adiantamento", 0.0),
+        ("Vale Transporte", "Vale Transporte", 0.0),
         ("Benefícios (Alimentação Funcionários)", "Benefícios", 0.0),
         ("Encargos", "Encargos", 0.0),
         ("FGTS", "FGTS", 0.0),
@@ -1374,7 +1379,7 @@ if menu.startswith("📊 DRE Spoleto"):
     grupos_operacionais_ao_vivo = {
         "Impostos": ["Imposto Federal", "Imposto Estadual"],
         "Ocupação": ["Aluguel", "Ar condicionado", "Condomínio", "Fundo de Promoção", "IPTU", "Taxas e Outros"],
-        "Pessoal": ["Salário", "Adiantamento", "Benefícios (Alimentação Funcionários)", "Encargos", "FGTS", "Férias", "13 salário", "Provisões", "Rescisão", "Outros (pessoal)"],
+        "Pessoal": ["Salário", "Adiantamento", "Vale Transporte", "Benefícios (Alimentação Funcionários)", "Encargos", "FGTS", "Férias", "13 salário", "Provisões", "Rescisão", "Outros (pessoal)"],
         "Utilidades": ["Água e Esgoto", "Energia Elétrica", "Gás", "Internet", "Telefone", "Outros (utilidades)"],
         "Serviços": ["Serviços", "Terceiros", "Gcom", "Contador"],
         "Materiais de uso e consumo": ["Material de Escritório", "Material de Limpeza", "Uniformes", "Utensílios", "Outros Materiais de Uso e Consumo"],
@@ -1445,7 +1450,7 @@ if menu.startswith("📊 DRE Spoleto"):
 
     total_ocup = v("Aluguel") + v("Ar condicionado") + v("Condomínio") + v("Fundo de Promoção") + v("IPTU") + v("Taxas e Outros")
     total_pess = (
-        v("Salário") + v("Adiantamento") + v("Benefícios (Alimentação Funcionários)") +
+        v("Salário") + v("Adiantamento") + v("Vale Transporte") + v("Benefícios (Alimentação Funcionários)") +
         v("Encargos") + v("FGTS") + v("Férias") + v("13 salário") + v("Provisões") + v("Rescisão") + v("Outros (pessoal)")
     )
     total_util = v("Água e Esgoto") + v("Energia Elétrica") + v("Gás") + v("Internet") + v("Telefone") + v("Outros (utilidades)")
@@ -1762,6 +1767,7 @@ elif menu.startswith("📸 Escanear"):
             elif not df_validar["Categoria"].isin(LISTA_7_CATEGORIAS).all():
                 st.error("Revise a classificação dos produtos.")
             else:
+                st.session_state["nota_origem_manual"] = True
                 st.session_state.dados_extraidos = {
                     "razao_social": fornecedor_limpo,
                     "cnpj": cnpj_manual.strip() or "Não informado",
@@ -1934,6 +1940,8 @@ elif menu.startswith("📸 Escanear"):
             key=f"data_nota_revisao_{ukey}_{st.session_state.get('nome_nota_ativa', 'manual')}",
         )
         st.caption("Sem alteração, o lançamento usa a data de hoje. A DRE continua no mês de trabalho selecionado.")
+        if st.session_state.get("nota_origem_manual", False):
+            st.info("Lançamento manual: compras repetidas do mesmo fornecedor, com igual descrição e valor, são permitidas. Confira a data antes de confirmar.")
 
         df_itens = pd.DataFrame(dados.get("itens", []))
         colunas_padrao = ["Produto", "Quantidade", "Unid", "PrecoUnitario", "TotalItem", "Categoria"]
@@ -2021,6 +2029,7 @@ elif menu.startswith("📸 Escanear"):
                             valor_total=total_salvar,
                             lista_produtos=lista_salvar,
                             data_nota=data_nota_escolhida,
+                            permitir_repetida=st.session_state.get("nota_origem_manual", False),
                         )
                     except ValueError as erro:
                         st.error(f"Nota não lançada: {erro}")
