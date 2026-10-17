@@ -133,6 +133,7 @@ div[data-testid="stCameraInput"] button { padding: 0.75rem 1.5rem !important; fo
 # ----------------- CATEGORIAS DE CLASSIFICAÇÃO MAPEADAS NO DRE -----------------
 MAPA_7_CATEGORIAS = {
     "Demais Alimentos": {"dre": "Alimentos", "det": "Alimentos"},
+    "Pratos da Campanha": {"dre": "Alimentos", "det": "Alimentos"},
     "Descartáveis": {"dre": "Descartáveis", "det": "Descartáveis"},
     "Limpeza": {"dre": "Material_De_Uso_E_Consumo", "det": "Material De Limpeza"},
     "Materiais de Uso e Consumo": {"dre": "Material_De_Uso_E_Consumo", "det": "Outros Materiais De Uso E Consumo"},
@@ -272,12 +273,12 @@ def verificar_banco():
 verificar_banco()
 
 MESES_DISPONIVEIS = [
-    "2026-09", "2026-10", "2026-11", "2026-12",
+    "2026-10", "2026-11", "2026-12",
     "2027-01", "2027-02", "2027-03", "2027-04", "2027-05", "2027-06",
     "2027-07", "2027-08", "2027-09", "2027-10", "2027-11", "2027-12",
 ]
 NOMES_MESES = {
-    "2026-09": "Setembro / 2026", "2026-10": "Outubro / 2026", "2026-11": "Novembro / 2026", "2026-12": "Dezembro / 2026",
+"2026-10": "Outubro / 2026", "2026-11": "Novembro / 2026", "2026-12": "Dezembro / 2026",
     "2027-01": "Janeiro / 2027", "2027-02": "Fevereiro / 2027", "2027-03": "Março / 2027",
     "2027-04": "Abril / 2027", "2027-05": "Maio / 2027", "2027-06": "Junho / 2027",
     "2027-07": "Julho / 2027", "2027-08": "Agosto / 2027", "2027-09": "Setembro / 2027",
@@ -303,7 +304,7 @@ st.sidebar.success(f"📅 Mês selecionado: {NOMES_MESES[mes_ativo]}")
 # CMV por inventário: valores calculados, nunca duplicados em ajustes_dre.
 CONTAS_CMV = {"CMV Consolidado": "Total"}
 CATEGORIAS_CMV = {
-    "Demais Alimentos": "Alimentos", "Horte": "Horte",
+    "Demais Alimentos": "Alimentos", "Pratos da Campanha": "Alimentos", "Horte": "Horte",
     "Bebidas": "Bebidas", "Descartáveis": "Descartáveis",
 }
 GRUPOS_CMV = ("Alimentos", "Horte", "Bebidas", "Descartáveis")
@@ -899,111 +900,119 @@ def modelos_disponiveis_gemini(cliente):
     return [nome for nome in MODELOS_GEMINI_PRIORIDADE if nome in anunciados]
 
 
+def _ranking_gemini():
+    """Historical performance and persisted cooldowns (never store credentials)."""
+    try:
+        with conectar_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""CREATE TABLE IF NOT EXISTS gemini_saude_app (
+                    chave_hash TEXT NOT NULL, modelo TEXT NOT NULL,
+                    ultimo_sucesso TIMESTAMPTZ, bloqueado_ate TIMESTAMPTZ,
+                    sucessos INTEGER NOT NULL DEFAULT 0,
+                    falhas INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY(chave_hash, modelo))""")
+                cur.execute("""SELECT chave_hash, modelo, sucessos, falhas,
+                    COALESCE(EXTRACT(EPOCH FROM ultimo_sucesso),0),
+                    COALESCE(EXTRACT(EPOCH FROM bloqueado_ate),0)
+                    FROM gemini_saude_app""")
+                return {(a,b):(int(c),int(d),float(e),float(f)) for a,b,c,d,e,f in cur.fetchall()}
+    except Exception:
+        return {}
+
+
+def _registrar_saude_gemini(chave, modelo, sucesso, espera=0):
+    identificador = hashlib.sha256(chave.encode()).hexdigest()
+    try:
+        with conectar_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""INSERT INTO gemini_saude_app
+                    (chave_hash,modelo,ultimo_sucesso,bloqueado_ate,sucessos,falhas)
+                    VALUES (%s,%s,CASE WHEN %s THEN NOW() ELSE NULL END,
+                            CASE WHEN %s > 0 THEN NOW()+(%s * INTERVAL '1 second') ELSE NULL END,
+                            %s,%s)
+                    ON CONFLICT(chave_hash,modelo) DO UPDATE SET
+                    ultimo_sucesso=CASE WHEN %s THEN NOW() ELSE gemini_saude_app.ultimo_sucesso END,
+                    bloqueado_ate=CASE WHEN %s > 0 THEN NOW()+(%s * INTERVAL '1 second') ELSE NULL END,
+                    sucessos=gemini_saude_app.sucessos+%s,
+                    falhas=gemini_saude_app.falhas+%s""",
+                    (identificador,modelo,sucesso,espera,espera,int(sucesso),int(not sucesso),
+                     sucesso,espera,espera,int(sucesso),int(not sucesso)))
+    except Exception:
+        pass
+
+
 def chamar_gemini(conteudos, chave):
-    """Tenta 3.8, 3.6 e 3.1 Lite por chave; depois alterna a API.
-
-    Sem pausa global: uma falha não impede processar os outros PDFs do lote.
-    """
+    """Select recently successful available key/model first; remember failures across sessions."""
     estado = st.session_state
-    bloqueios = estado.setdefault("gemini_bloqueios_por_modelo", {})
-    cache = estado.setdefault("gemini_modelos_cache", {})
-    inicio = estado.get("gemini_indice_ativo", 0) % len(CHAVES_GEMINI)
-    falhas = []
-    houve_indisponibilidade = False
-    # Apenas a leitura fiscal exige lista de itens; a classificação de XML
-    # devolve outro formato JSON e não deve passar por esta validação.
-    leitura_fiscal = any(isinstance(c, str) and "Você é um assistente de leitura de documentos fiscais brasileiros" in c for c in conteudos)
-
-    for deslocamento in range(len(CHAVES_GEMINI)):
-        indice = (inicio + deslocamento) % len(CHAVES_GEMINI)
-        chave_atual = CHAVES_GEMINI[indice]
-        identificador = hashlib.sha256(chave_atual.encode()).hexdigest()
-        cliente = genai.Client(
-            api_key=chave_atual,
-            http_options=types.HttpOptions(
-                timeout=20000,
-                retry_options=types.HttpRetryOptions(attempts=1),
-            ),
-        )
-        registro = cache.get(identificador, {})
-        if registro.get("ate", 0) > time.time():
-            modelos = list(registro["modelos"])
-        else:
-            try:
-                modelos = modelos_disponiveis_gemini(cliente)
-                cache[identificador] = {"modelos": modelos, "ate": time.time() + 900}
-            except Exception as erro_lista:
-                st.caption(f"API {indice + 1}: não foi possível listar modelos ({type(erro_lista).__name__}).")
-                modelos = list(MODELOS_GEMINI_PRIORIDADE)
-        if not modelos:
-            st.warning(f"API {indice + 1}: nenhum modelo Flash adequado foi listado.")
-            continue
-
-        # Ordem fixa: 3.8 -> 3.6 -> 3.1 Lite, para cada API.
-        for modelo in modelos:
-            id_bloqueio = f"{identificador}:{modelo}"
-            if bloqueios.get(id_bloqueio, 0) > time.time():
+    cache = estado.setdefault('gemini_modelos_cache', {})
+    bloqueios = estado.setdefault('gemini_bloqueios_por_modelo', {})
+    historico = _ranking_gemini()
+    agora = time.time()
+    leitura_fiscal = any(isinstance(c,str) and 'Você é um assistente de leitura de documentos fiscais brasileiros' in c for c in conteudos)
+    candidatos = []
+    for indice, chave_atual in enumerate(CHAVES_GEMINI):
+        h = hashlib.sha256(chave_atual.encode()).hexdigest()
+        for prioridade, modelo in enumerate(MODELOS_GEMINI_PRIORIDADE):
+            sucessos, falhas, ultimo, bloqueado = historico.get((h,modelo),(0,0,0,0))
+            if max(bloqueado, bloqueios.get(f'{h}:{modelo}',0)) > agora:
                 continue
-            try:
-                resposta = cliente.models.generate_content(
-                    model=modelo,
-                    contents=conteudos,
-                    config=types.GenerateContentConfig(response_mime_type="application/json"),
-                )
-                resultado = parse_json_resposta(resposta.text if resposta else None)
-                if resultado is None:
-                    registrar_tentativa_gemini(chave_atual, modelo, "sucesso")
-                    st.warning(f"API {indice + 1}, {modelo}: resposta sem JSON válido. Tentando alternativa.")
-                    falhas.append((indice + 1, modelo, None, "JSON inválido"))
-                    continue
-                if leitura_fiscal:
-                    validado, motivo = validar_e_normalizar_resultado(resultado)
-                    if validado is None:
-                        registrar_tentativa_gemini(chave_atual, modelo, "sucesso")
-                        st.warning(f"API {indice + 1}, {modelo}: {motivo} Tentando outro modelo.")
-                        falhas.append((indice + 1, modelo, None, "Sem produtos"))
-                        continue
-                registrar_tentativa_gemini(chave_atual, modelo, "sucesso")
-                estado["gemini_indice_ativo"] = indice
-                st.success(f"Leitura concluída com API {indice + 1}, modelo {modelo}.")
-                return resultado
-            except Exception as erro:
-                codigo = codigo_erro_gemini(erro)
-                registrar_tentativa_gemini(chave_atual, modelo, "erro", codigo)
-                descricao = str(erro).upper()
-                falhas.append((indice + 1, modelo, codigo, type(erro).__name__))
-                if codigo == 429 or erro_cota_gemini(erro):
-                    diario = any(x in descricao for x in
-                                 ("PER DAY", "PER_DAY", "DAILY", "REQUESTS_PER_DAY"))
-                    bloqueios[id_bloqueio] = time.time() + (86400 if diario else 65)
-                    st.warning(f"API {indice + 1}, modelo {modelo}: limite 429. Tentando outro modelo disponível.")
-                    continue
-                if codigo == 404:
-                    st.caption(f"API {indice + 1}: {modelo} não está disponível (404).")
-                    continue
-                if (codigo in (500, 502, 503, 504)
-                        or "TIMEOUT" in descricao
-                        or "TIMEOUT" in type(erro).__name__.upper()):
-                    # Curto período de resfriamento evita insistir na mesma
-                    # combinação durante um lote de notas. Não é bloqueio diário.
-                    bloqueios[id_bloqueio] = time.time() + 90
-                    houve_indisponibilidade = True
-                    st.warning(f"API {indice + 1}, modelo {modelo}: indisponível ({codigo or 'timeout'}).")
-                    continue
-                # Erros de permissão/configuração não são tratados como sobrecarga.
-                raise
-
-    if falhas:
-        resumo = "; ".join(
-            f"API {i}/{m}: {cod or tipo}" for i, m, cod, tipo in falhas
-        )
-        if houve_indisponibilidade:
-            raise RuntimeError(
-                "Os modelos testados não responderam. "
-                "Pode haver sobrecarga no Gemini. Tentativas: " + resumo
-            )
-        raise RuntimeError("Nenhum modelo funcionou. Tentativas: " + resumo)
-    raise RuntimeError("Não há combinações de chave e modelo disponíveis neste momento (cota ou indisponibilidade).")
+            # Prioritize recently successful combinations, then lifetime reliability.
+            pontuacao = (int(ultimo > agora-86400)*100000 +
+                         (sucessos/(sucessos+falhas+1))*1000 +
+                         min(ultimo,agora)/1e8 - prioridade*0.1)
+            candidatos.append((-pontuacao,indice,modelo,chave_atual,h))
+    candidatos.sort()
+    falhas_resumo = []
+    for _,indice,modelo,chave_atual,h in candidatos:
+        try:
+            cliente = genai.Client(api_key=chave_atual,
+                http_options=types.HttpOptions(timeout=20000,
+                    retry_options=types.HttpRetryOptions(attempts=1)))
+            # Only request the model list once per key per 15 minutes.
+            registro = cache.get(h,{})
+            if registro.get('ate',0) <= time.time():
+                try:
+                    modelos = modelos_disponiveis_gemini(cliente)
+                    cache[h] = {'modelos':modelos,'ate':time.time()+900}
+                except Exception:
+                    modelos = None  # transient listing failure must not block generation
+            else:
+                modelos = registro.get('modelos')
+            if modelos is not None and modelo not in modelos:
+                _registrar_saude_gemini(chave_atual,modelo,False,86400)
+                continue
+            resposta = cliente.models.generate_content(model=modelo,contents=conteudos,
+                config=types.GenerateContentConfig(response_mime_type='application/json'))
+            resultado = parse_json_resposta(resposta.text if resposta else None)
+            if resultado is None or (leitura_fiscal and validar_e_normalizar_resultado(resultado)[0] is None):
+                registrar_tentativa_gemini(chave_atual,modelo,'erro')
+                _registrar_saude_gemini(chave_atual,modelo,False,120)
+                falhas_resumo.append(f'API {indice+1}/{modelo}: resposta sem itens válidos')
+                continue
+            registrar_tentativa_gemini(chave_atual,modelo,'sucesso')
+            _registrar_saude_gemini(chave_atual,modelo,True)
+            estado['gemini_indice_ativo'] = indice
+            st.success(f'Leitura concluída com API {indice+1}, modelo {modelo}.')
+            return resultado
+        except Exception as erro:
+            codigo = codigo_erro_gemini(erro)
+            registrar_tentativa_gemini(chave_atual,modelo,'erro',codigo)
+            msg = str(erro).upper()
+            if codigo == 429:
+                espera = 86400 if any(t in msg for t in ('PER DAY','PER_DAY','DAILY','REQUESTS_PER_DAY')) else 120
+            elif codigo == 404:
+                espera = 86400
+            elif codigo in (401,403):
+                espera = 3600
+            elif codigo in (500,502,503,504,408) or 'TIMEOUT' in msg:
+                espera = 180
+            else:
+                espera = 60
+            bloqueios[f'{h}:{modelo}'] = time.time()+espera
+            _registrar_saude_gemini(chave_atual,modelo,False,espera)
+            falhas_resumo.append(f'API {indice+1}/{modelo}: {codigo or type(erro).__name__}')
+            st.caption(f'API {indice+1}/{modelo}: indisponível. Tentando próxima opção.')
+    raise RuntimeError('Nenhuma combinação Gemini disponível. ' + '; '.join(falhas_resumo[-8:]))
 
 
 def processar_multiplas_imagens_com_ia(lista_fotos_bytes, chave):
