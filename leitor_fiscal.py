@@ -94,3 +94,49 @@ def _ocr_pil(img):
     for imagem in candidatos:
         for psm in (6,3):
             try: textos.append(pytesseract.image_to_string(imagem,lang='por',config=f'--psm {psm}'))
+            except pytesseract.TesseractError:
+                textos.append(pytesseract.image_to_string(imagem,lang='eng',config=f'--psm {psm}'))
+    return textos
+
+
+def _melhor_texto(textos,regras):
+    candidatos=[]
+    for texto in textos:
+        try:
+            r=interpretar_texto(texto,regras)
+            candidatos.append((len(r['itens']),sum(x['TotalItem'] for x in r['itens']),r))
+        except ValueError: pass
+    if not candidatos: raise ValueError('OCR não identificou produtos com segurança. Verifique se Tesseract está instalado e se a imagem está nítida.')
+    return max(candidatos,key=lambda t:(t[0],t[1]))[2]
+
+
+def ler_pdf(conteudo,regras):
+    import pypdf
+    pdf=pypdf.PdfReader(io.BytesIO(conteudo))
+    if pdf.is_encrypted: raise ValueError('PDF protegido por senha.')
+    textos=['\n'.join((p.extract_text(extraction_mode='layout') or '') for p in pdf.pages[:20])]
+    # Scanned PDF: render pages if PyMuPDF and Tesseract are available.
+    try:
+        import fitz
+        from PIL import Image
+        with fitz.open(stream=conteudo,filetype='pdf') as doc:
+            for pagina in list(doc)[:10]:
+                pix=pagina.get_pixmap(matrix=fitz.Matrix(2,2),alpha=False)
+                imagem=Image.open(io.BytesIO(pix.tobytes('png')))
+                textos.extend(_ocr_pil(imagem))
+    except (ImportError,OSError,RuntimeError):
+        pass
+    return _melhor_texto(textos,regras)
+
+
+def ler_imagem_ocr(conteudo,regras):
+    try:
+        from PIL import Image
+        import pytesseract
+    except ImportError as e:
+        raise ValueError('Instale Pillow e pytesseract e o executável Tesseract no servidor.') from e
+    try:
+        imagem=Image.open(io.BytesIO(conteudo))
+        return _melhor_texto(_ocr_pil(imagem),regras)
+    except pytesseract.TesseractNotFoundError as e:
+        raise ValueError('Tesseract não instalado no sistema operacional do servidor.') from e
