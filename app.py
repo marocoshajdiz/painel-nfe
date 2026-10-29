@@ -1559,12 +1559,35 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
         st.metric("🥬 Compras de Horte (indicador)", f"R$ {formatar_numero_br(compras_horte)}")
         st.caption("Antes do fechamento, compras + fretes substituem provisoriamente o CMV no resultado; depois, usa-se somente o CMV consolidado + fretes.")
         st.markdown("#### 🧾 Compras do mês para composição do CMV")
-        col_a, col_h, col_b, col_d, col_t = st.columns(5)
-        col_a.metric("Alimentos", f"R$ {formatar_numero_br(compras_alimentos)}")
-        col_h.metric("Horte", f"R$ {formatar_numero_br(compras_horte)}")
-        col_b.metric("Bebidas", f"R$ {formatar_numero_br(compras_bebidas)}")
-        col_d.metric("Descartáveis", f"R$ {formatar_numero_br(compras_descartaveis)}")
-        col_t.metric("Total de compras", f"R$ {formatar_numero_br(total_compras_cmv)}")
+        # Cartões responsivos: números completos, sem truncamento do st.metric.
+        st.markdown("""
+        <style>
+        .capry-compras-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:14px;margin:12px 0 20px;}
+        .capry-compra-card {min-width:0;background:#f8faff;border:1px solid #dbe5f2;border-radius:16px;
+          padding:17px 18px;box-shadow:0 3px 12px rgba(13,39,77,.05);}
+        .capry-compra-card .titulo {font-size:13px;font-weight:650;color:#526581;margin-bottom:10px;}
+        .capry-compra-card .valor {font-size:clamp(17px,1.65vw,24px);font-weight:750;color:#102b51;
+          overflow-wrap:anywhere;font-variant-numeric:tabular-nums;line-height:1.25;}
+        .capry-compra-card.total {background:linear-gradient(130deg,#102b51,#1e4a83);border-color:#204b82;}
+        .capry-compra-card.total .titulo {color:#d8e7fa;}
+        .capry-compra-card.total .valor {color:#fff;}
+        @media(max-width:640px){.capry-compras-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}
+          .capry-compra-card{padding:13px 11px;}.capry-compra-card .valor{font-size:17px;}}
+        </style>
+        """, unsafe_allow_html=True)
+        valores_compras = [
+            ("Alimentos", compras_alimentos), ("Horte", compras_horte),
+            ("Bebidas", compras_bebidas), ("Descartáveis", compras_descartaveis),
+            ("Total de compras", total_compras_cmv),
+        ]
+        html_compras = '<div class="capry-compras-grid">'
+        for titulo, valor in valores_compras:
+            classe = ' total' if titulo == 'Total de compras' else ''
+            html_compras += (f'<div class="capry-compra-card{classe}">'
+                             f'<div class="titulo">{titulo}</div>'
+                             f'<div class="valor">R$ {formatar_numero_br(valor)}</div></div>')
+        html_compras += '</div>'
+        st.markdown(html_compras, unsafe_allow_html=True)
         if cmv_auto is None:
             st.warning("Resultado e lucro bruto provisórios: usamos compras + fretes como estimativa do CMV até fechar o inventário. Compras não são necessariamente iguais ao custo das mercadorias vendidas.")
         c3.metric("🔹 Lucro Bruto", f"R$ {lucro_bruto:,.2f}", delta=pct(lucro_bruto))
