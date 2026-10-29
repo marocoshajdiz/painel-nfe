@@ -1735,13 +1735,12 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
             "consulte o contador para conciliação. Antes do inventário, compras são "
             "incluídas provisoriamente nas despesas operacionais, sem duplicar o CMV."
         )
-        with painel_dre_atualizado.container():
+        with st.container():
             st.markdown("### 📊 DRE atualizada conforme os lançamentos")
-            st.caption(
-                "A própria tabela abaixo é recalculada quando você confirma uma alteração "
-                "na tabela de lançamentos (Enter ou clique fora). "
-                "Para persistir os valores no Supabase, clique em Salvar."
-            )
+            if eh_editor:
+                st.caption("Prévia dos valores editados. Clique em Salvar para gravar no Supabase.")
+            else:
+                st.caption("Demonstrativo somente para consulta, atualizado a partir dos lançamentos salvos no mês selecionado.")
             st.dataframe(
                 df_spoleto_view, use_container_width=True, height=660,
                 hide_index=True, key=f"dre_visualizacao_ao_vivo_{mes_ativo}",
