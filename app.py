@@ -1642,11 +1642,6 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
             st.caption("Os gráficos de rosca mostram apenas valores positivos. O resultado final pode ser negativo e aparece no indicador, não como fatia da rosca.")
 
     if eh_dre:
-        st.markdown("### 🏢 Detalhamento de Ocupação")
-        ocupacao_contas = ["Aluguel", "Ar condicionado", "Condomínio", "Fundo de Promoção", "IPTU", "Taxas e Outros"]
-        df_ocupacao = pd.DataFrame([{"Despesa": conta, "Valor (R$)": f"R$ {formatar_numero_br(v(conta))}"} for conta in ocupacao_contas] + [{"Despesa": "TOTAL OCUPAÇÃO", "Valor (R$)": f"R$ {formatar_numero_br(total_ocup)}"}])
-        st.dataframe(df_ocupacao, use_container_width=True, hide_index=True)
-        st.metric("Total de Ocupação", f"R$ {formatar_numero_br(total_ocup)}")
         estrutura_dre_spoleto = [
             {"CONTA": "🔹 VENDA BRUTA", "VALOR": venda_bruta, "%": "100.00%"},
             {"CONTA": "  • Faturamento Balcão", "VALOR": fat_balcao, "%": pct(fat_balcao)},
@@ -1669,8 +1664,12 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
             {"CONTA": "🔹 LUCRO BRUTO", "VALOR": lucro_bruto, "%": pct(lucro_bruto)},
             {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
             {"CONTA": "🏢 TOTAL OCUPAÇÃO", "VALOR": total_ocup, "%": pct(total_ocup)},
+            {"CONTA": "  • Aluguel", "VALOR": v("Aluguel"), "%": pct(v("Aluguel"))},
+            {"CONTA": "  • Ar condicionado", "VALOR": v("Ar condicionado"), "%": pct(v("Ar condicionado"))},
             {"CONTA": "  • Condomínio", "VALOR": v("Condomínio"), "%": pct(v("Condomínio"))},
-            {"CONTA": "  • Aluguel / Outros", "VALOR": total_ocup - v("Condomínio"), "%": pct(total_ocup - v("Condomínio"))},
+            {"CONTA": "  • Fundo de Promoção", "VALOR": v("Fundo de Promoção"), "%": pct(v("Fundo de Promoção"))},
+            {"CONTA": "  • IPTU", "VALOR": v("IPTU"), "%": pct(v("IPTU"))},
+            {"CONTA": "  • Taxas e Outros", "VALOR": v("Taxas e Outros"), "%": pct(v("Taxas e Outros"))},
             {"CONTA": "👥 TOTAL PESSOAL", "VALOR": total_pess, "%": pct(total_pess)},
             {"CONTA": "  • Salário", "VALOR": v("Salário"), "%": pct(v("Salário"))},
             {"CONTA": "  • Adiantamento", "VALOR": v("Adiantamento"), "%": pct(v("Adiantamento"))},
