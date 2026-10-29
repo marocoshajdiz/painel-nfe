@@ -1248,6 +1248,7 @@ def processar_documento_fiscal_individual(doc, api_key):
 menu = st.sidebar.radio("Módulo:", [
     f"📊 DRE Spoleto ({NOMES_MESES[mes_ativo]})",
     "📈 Dashboard de Gráficos",
+    "✍️ Ajustes Manuais da DRE",
     "📸 Escanear & Alimentar Nota",
     "📝 Lançamentos do Mês",
     "🧠 Regras Inteligentes",
@@ -1265,14 +1266,18 @@ if st.sidebar.button("↪  Sair do Sistema", key="capry_sair", use_container_wid
 # ==============================================================================
 # 1. ABA DO DRE OFICIAL
 # ==============================================================================
-if menu.startswith("📊 DRE Spoleto") or menu == "📈 Dashboard de Gráficos":
+if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos", "✍️ Ajustes Manuais da DRE"):
     eh_dashboard = menu == "📈 Dashboard de Gráficos"
-    eh_dre = not eh_dashboard
+    eh_editor = menu == "✍️ Ajustes Manuais da DRE"
+    eh_dre = not eh_dashboard and not eh_editor
     if eh_dashboard:
         st.subheader(f"📈 Dashboard de Gráficos — {NOMES_MESES[mes_ativo]}")
+    elif eh_editor:
+        st.subheader(f"✍️ Ajustes Manuais da DRE — {NOMES_MESES[mes_ativo]}")
+        st.caption("Edite os valores e clique em Salvar. As notas fiscais já lançadas são preservadas; o sistema grava somente a diferença como ajuste.")
     else:
         st.subheader(f"📊 Demonstrativo de Resultados (DRE) — {NOMES_MESES[mes_ativo]}")
-        st.write("Insira e ajuste os valores de todas as contas diretamente na tabela abaixo. Os subtotais e resultados serão recalculados.")
+        st.caption("Demonstrativo de consulta. Para alterar valores, use o módulo Ajustes Manuais da DRE.")
 
     df_l = obter_lancamentos_mes(mes_ativo)
     somas_escaneadas = df_l.groupby("detalhamento")["valor"].sum().to_dict() if not df_l.empty else {}
@@ -1315,6 +1320,7 @@ if menu.startswith("📊 DRE Spoleto") or menu == "📈 Dashboard de Gráficos":
         ("Salário", "Salário", 0.0),
         ("Adiantamento", "Adiantamento", 0.0),
         ("Vale Transporte", "Vale Transporte", 0.0),
+        ("Diárias", "Diárias", 0.0),
         ("Farmácia", "Farmácia", 0.0),
         ("Benefícios (Alimentação Funcionários)", "Benefícios", 0.0),
         ("Encargos", "Encargos", 0.0),
@@ -1373,8 +1379,8 @@ if menu.startswith("📊 DRE Spoleto") or menu == "📈 Dashboard de Gráficos":
         lista_linhas_editaveis.append({"CONTA": nome_conta, "VALOR (R$)": formatar_numero_br(round(val_final, 2))})
 
     df_base_editavel = pd.DataFrame(lista_linhas_editaveis)
-    if eh_dre:
-        st.write("👇 **Tabela de Lançamentos do DRE (digite os valores com vírgula decimal, por exemplo 1.234,56, e depois clique em Salvar):**")
+    if eh_editor:
+        st.write("**Informe os valores no padrão brasileiro (ex.: 1.234,56).**")
         qtd_lanc = len(df_l)
         df_dre_editado = st.data_editor(
             df_base_editavel,
@@ -1404,7 +1410,7 @@ if menu.startswith("📊 DRE Spoleto") or menu == "📈 Dashboard de Gráficos":
         grupos_operacionais_ao_vivo = {
             "Impostos": ["Imposto Federal", "Imposto Estadual"],
             "Ocupação": ["Aluguel", "Ar condicionado", "Condomínio", "Fundo de Promoção", "IPTU", "Taxas e Outros"],
-            "Pessoal": ["Salário", "Adiantamento", "Vale Transporte", "Farmácia", "Benefícios (Alimentação Funcionários)", "Encargos", "FGTS", "Férias", "13 salário", "Provisões", "Rescisão", "Outros (pessoal)"],
+            "Pessoal": ["Salário", "Adiantamento", "Vale Transporte", "Farmácia", "Diárias", "Benefícios (Alimentação Funcionários)", "Encargos", "FGTS", "Férias", "13 salário", "Provisões", "Rescisão", "Outros (pessoal)"],
             "Utilidades": ["Água e Esgoto", "Energia Elétrica", "Gás", "Internet", "Telefone", "Outros (utilidades)"],
             "Serviços": ["Serviços", "Terceiros", "Gcom", "Contador"],
             "Materiais de uso e consumo": ["Material de Escritório", "Material de Limpeza", "Uniformes", "Utensílios", "Outros Materiais de Uso e Consumo"],
@@ -1450,7 +1456,7 @@ if menu.startswith("📊 DRE Spoleto") or menu == "📈 Dashboard de Gráficos":
                 st.success("✅ Valores gravados com sucesso!")
                 st.rerun()
 
-    df_valores_calculo = df_base_editavel if eh_dashboard else df_dre_editado
+    df_valores_calculo = df_dre_editado if eh_editor else df_base_editavel
     v_map = {str(conta): converter_numero_br(valor) for conta, valor in zip(df_valores_calculo["CONTA"], df_valores_calculo["VALOR (R$)"])}
     if cmv_auto is not None:
         v_map.update(cmv_auto)  # A DRE nunca usa edição manual no lugar do CMV fechado.
@@ -1476,7 +1482,7 @@ if menu.startswith("📊 DRE Spoleto") or menu == "📈 Dashboard de Gráficos":
 
     total_ocup = v("Aluguel") + v("Ar condicionado") + v("Condomínio") + v("Fundo de Promoção") + v("IPTU") + v("Taxas e Outros")
     total_pess = (
-        v("Salário") + v("Adiantamento") + v("Vale Transporte") + v("Farmácia") + v("Benefícios (Alimentação Funcionários)") +
+        v("Salário") + v("Adiantamento") + v("Vale Transporte") + v("Farmácia") + v("Diárias") + v("Benefícios (Alimentação Funcionários)") +
         v("Encargos") + v("FGTS") + v("Férias") + v("13 salário") + v("Provisões") + v("Rescisão") + v("Outros (pessoal)")
     )
     total_util = v("Água e Esgoto") + v("Energia Elétrica") + v("Gás") + v("Internet") + v("Telefone") + v("Outros (utilidades)")
@@ -1636,6 +1642,11 @@ if menu.startswith("📊 DRE Spoleto") or menu == "📈 Dashboard de Gráficos":
             st.caption("Os gráficos de rosca mostram apenas valores positivos. O resultado final pode ser negativo e aparece no indicador, não como fatia da rosca.")
 
     if eh_dre:
+        st.markdown("### 🏢 Detalhamento de Ocupação")
+        ocupacao_contas = ["Aluguel", "Ar condicionado", "Condomínio", "Fundo de Promoção", "IPTU", "Taxas e Outros"]
+        df_ocupacao = pd.DataFrame([{"Despesa": conta, "Valor (R$)": f"R$ {formatar_numero_br(v(conta))}"} for conta in ocupacao_contas] + [{"Despesa": "TOTAL OCUPAÇÃO", "Valor (R$)": f"R$ {formatar_numero_br(total_ocup)}"}])
+        st.dataframe(df_ocupacao, use_container_width=True, hide_index=True)
+        st.metric("Total de Ocupação", f"R$ {formatar_numero_br(total_ocup)}")
         estrutura_dre_spoleto = [
             {"CONTA": "🔹 VENDA BRUTA", "VALOR": venda_bruta, "%": "100.00%"},
             {"CONTA": "  • Faturamento Balcão", "VALOR": fat_balcao, "%": pct(fat_balcao)},
