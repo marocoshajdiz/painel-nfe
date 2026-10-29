@@ -1552,11 +1552,44 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
     if eh_dre:
         st.markdown("---")
         st.write("### 📈 Visão Consolidada em Tempo Real")
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("🔹 Venda Bruta", f"R$ {venda_bruta:,.2f}")
-        c2.metric("📦 CMV consolidado" if cmv_auto is not None else "📦 Compras + fretes (provisório)",
-                  f"R$ {formatar_numero_br(total_cmv)}", delta=pct(total_cmv), delta_color="inverse")
-        st.metric("🥬 Compras de Horte (indicador)", f"R$ {formatar_numero_br(compras_horte)}")
+        # Cartões responsivos da visão consolidada, sem truncar valores.
+        st.markdown("""
+        <style>
+        .capry-resumo-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:14px;margin:14px 0 18px;}
+        .capry-resumo-card {min-width:0;border:1px solid #dbe5f2;background:#f8faff;border-radius:16px;
+          padding:18px;box-shadow:0 3px 12px rgba(13,39,77,.05);}
+        .capry-resumo-card .titulo {font-size:13px;font-weight:650;color:#526581;margin-bottom:10px;}
+        .capry-resumo-card .valor {font-size:clamp(19px,1.8vw,27px);font-weight:750;color:#102b51;
+          overflow-wrap:anywhere;line-height:1.25;font-variant-numeric:tabular-nums;}
+        .capry-resumo-card .indicador {display:inline-block;margin-top:10px;padding:4px 9px;
+          border-radius:100px;background:#e4edf9;color:#194679;font-size:12px;font-weight:650;}
+        .capry-resumo-card.destaque {background:linear-gradient(130deg,#102b51,#1e4a83);border-color:#204b82;}
+        .capry-resumo-card.destaque .titulo {color:#d8e7fa;}
+        .capry-resumo-card.destaque .valor {color:white;}
+        .capry-resumo-card.destaque .indicador {background:#ffffff20;color:#fff;}
+        @media(max-width:640px){.capry-resumo-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}
+          .capry-resumo-card{padding:13px 11px;}.capry-resumo-card .valor{font-size:18px;}}
+        @media(max-width:380px){.capry-resumo-grid{grid-template-columns:1fr;}}
+        </style>
+        """, unsafe_allow_html=True)
+        resumo_cards = [
+            ("Venda Bruta", venda_bruta, None, False),
+            ("CMV consolidado" if cmv_auto is not None else "Compras + fretes (provisório)", total_cmv, pct(total_cmv) + " da venda", False),
+            ("Lucro Bruto", lucro_bruto, pct(lucro_bruto) + " da venda", False),
+            ("Resultado Final", res_final, pct(res_final) + " da venda", True),
+            ("Compras de Horte (indicador)", compras_horte, None, False),
+        ]
+        html_resumo = '<div class="capry-resumo-grid">'
+        for titulo, valor, indicador, destaque in resumo_cards:
+            classe = ' destaque' if destaque else ''
+            html_resumo += (f'<div class="capry-resumo-card{classe}">'
+                           f'<div class="titulo">{titulo}</div>'
+                           f'<div class="valor">R$ {formatar_numero_br(valor)}</div>')
+            if indicador:
+                html_resumo += f'<div class="indicador">{indicador}</div>'
+            html_resumo += '</div>'
+        html_resumo += '</div>'
+        st.markdown(html_resumo, unsafe_allow_html=True)
         st.caption("Antes do fechamento, compras + fretes substituem provisoriamente o CMV no resultado; depois, usa-se somente o CMV consolidado + fretes.")
         st.markdown("#### 🧾 Compras do mês para composição do CMV")
         # Cartões responsivos: números completos, sem truncamento do st.metric.
@@ -1590,8 +1623,6 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
         st.markdown(html_compras, unsafe_allow_html=True)
         if cmv_auto is None:
             st.warning("Resultado e lucro bruto provisórios: usamos compras + fretes como estimativa do CMV até fechar o inventário. Compras não são necessariamente iguais ao custo das mercadorias vendidas.")
-        c3.metric("🔹 Lucro Bruto", f"R$ {lucro_bruto:,.2f}", delta=pct(lucro_bruto))
-        c4.metric("💰 Resultado Final", f"R$ {res_final:,.2f}", delta=pct(res_final))
 
     if eh_dashboard:
         # Dashboard com gráficos de rosca (Plotly), mantendo dados da DRE.
