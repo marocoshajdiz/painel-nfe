@@ -191,6 +191,7 @@ CLASSIFICACOES_DESPESAS = {
     "Custo Cartão de Crédito": ("Financeiro", "Custo Cartão De Crédito"),
     "Custo Cartão de Débito": ("Financeiro", "Custo Cartão De Débito"),
     "Taxas Pix": ("Financeiro", "Taxas Pix"),
+    "Taxas Voucher": ("Financeiro", "Taxas Voucher"),
     "Imposto Federal": ("Impostos", "Imposto Federal"),
     "Imposto Estadual": ("Impostos", "Imposto Estadual"),
 }
@@ -1280,7 +1281,7 @@ def salvar_taxas_cartoes(mes, linhas):
         bandeira=str(linha['Bandeira']).strip()
         vendas=converter_numero_br(linha['Vendas (R$)'])
         taxa=converter_numero_br(linha['Taxa (%)'])
-        if modalidade not in ('Crédito','Débito','Pix') or not bandeira or not math.isfinite(vendas) or not math.isfinite(taxa) or vendas<0 or not 0<=taxa<=100:
+        if modalidade not in ('Crédito','Débito','Pix','Voucher','Voucher') or not bandeira or not math.isfinite(vendas) or not math.isfinite(taxa) or vendas<0 or not 0<=taxa<=100:
             raise ValueError('Revise modalidade, bandeira, vendas e taxa (0 a 100%).')
         chave=(modalidade,bandeira.casefold())
         if chave in chaves: raise ValueError('Bandeira repetida na mesma modalidade.')
@@ -1297,7 +1298,7 @@ menu = st.sidebar.radio("Módulo:", [
     f"📊 DRE Spoleto ({NOMES_MESES[mes_ativo]})",
     "📈 Dashboard de Gráficos",
     "✍️ Ajustes Manuais da DRE",
-    "💳 Financeiro — Cartões e Pix",
+    "💳 Financeiro — Cartões, Pix e Voucher",
     "📸 Escanear & Alimentar Nota",
     "📝 Lançamentos do Mês",
     "🧠 Regras Inteligentes",
@@ -1315,9 +1316,9 @@ if st.sidebar.button("↪  Sair do Sistema", key="capry_sair", use_container_wid
 # ==============================================================================
 # 1. ABA DO DRE OFICIAL
 # ==============================================================================
-if menu == "💳 Financeiro — Cartões e Pix":
-    st.title("💳 Financeiro — Cartões e Pix")
-    st.caption(f"Competência: {NOMES_MESES[mes_ativo]}. Registre vendas e taxas de crédito, débito e Pix. As taxas são despesas, não novo faturamento.")
+if menu == "💳 Financeiro — Cartões, Pix e Voucher":
+    st.title("💳 Financeiro — Cartões, Pix e Voucher")
+    st.caption(f"Competência: {NOMES_MESES[mes_ativo]}. Registre vendas e taxas de crédito, débito, Pix e voucher (vale-refeição/alimentação). As taxas são despesas, não novo faturamento.")
     try:
         preparar_taxas_cartoes()
         registros=obter_taxas_cartoes(mes_ativo)
@@ -1326,9 +1327,11 @@ if menu == "💳 Financeiro — Cartões e Pix":
                       for m in ('Crédito','Débito') for b in ('Visa','Mastercard','Elo','Amex')]
         if not any(r['Modalidade']=='Pix' for r in registros):
             registros.append({'Modalidade':'Pix','Bandeira':'Pix (QR Code)','Vendas (R$)':0.0,'Taxa (%)':0.0})
+        if not any(r['Modalidade']=='Voucher' for r in registros):
+            registros.extend([{'Modalidade':'Voucher','Bandeira':b,'Vendas (R$)':0.0,'Taxa (%)':0.0} for b in ('Alelo','Ticket','Pluxee','VR')])
         with st.form(f"form_cartoes_{mes_ativo}"):
             editado=st.data_editor(pd.DataFrame(registros),num_rows="dynamic",hide_index=True,use_container_width=True,
-                column_config={"Modalidade":st.column_config.SelectboxColumn("Modalidade",options=['Crédito','Débito','Pix'],required=True),
+                column_config={"Modalidade":st.column_config.SelectboxColumn("Modalidade",options=['Crédito','Débito','Pix','Voucher'],required=True),
                 "Bandeira":st.column_config.TextColumn("Bandeira",required=True),
                 "Vendas (R$)":st.column_config.NumberColumn("Vendas (R$)",min_value=0.0,format="%.2f",required=True),
                 "Taxa (%)":st.column_config.NumberColumn("Taxa (%)",min_value=0.0,max_value=100.0,format="%.4f",required=True)})
@@ -1342,15 +1345,17 @@ if menu == "💳 Financeiro — Cartões e Pix":
         preview=editado.copy()
         preview['Despesa (R$)']=(preview['Vendas (R$)']*preview['Taxa (%)']/100).round(2)
         st.dataframe(preview,hide_index=True,use_container_width=True)
-        a,b,c,d=st.columns(4)
+        a,b,c,d,e=st.columns(5)
         credito=float(preview.loc[preview['Modalidade']=='Crédito','Despesa (R$)'].sum())
         debito=float(preview.loc[preview['Modalidade']=='Débito','Despesa (R$)'].sum())
         pix=float(preview.loc[preview['Modalidade']=='Pix','Despesa (R$)'].sum())
+        voucher=float(preview.loc[preview['Modalidade']=='Voucher','Despesa (R$)'].sum())
         a.metric('Taxas crédito',f"R$ {formatar_numero_br(credito)}")
         b.metric('Taxas débito',f"R$ {formatar_numero_br(debito)}")
         c.metric('Taxas Pix',f"R$ {formatar_numero_br(pix)}")
-        d.metric('Total estimado',f"R$ {formatar_numero_br(credito+debito+pix)}")
-        st.info('Para Pix, use a modalidade Pix e informe a taxa da instituição (0% quando não houver cobrança). Os valores acima são uma prévia. Clique em Salvar para atualizar a DRE. Taxas já lançadas manualmente devem ser revisadas para evitar duplicidade.')
+        d.metric('Taxas voucher',f"R$ {formatar_numero_br(voucher)}")
+        e.metric('Total estimado',f"R$ {formatar_numero_br(credito+debito+pix+voucher)}")
+        st.info('Para voucher, escolha a modalidade Voucher e informe a operadora (Alelo, Ticket, Pluxee, VR ou outra). Para Pix, use a modalidade Pix e informe a taxa da instituição (0% quando não houver cobrança). Os valores acima são uma prévia. Clique em Salvar para atualizar a DRE. Taxas já lançadas manualmente devem ser revisadas para evitar duplicidade.')
     except Exception as e:
         st.error(f'Não foi possível acessar as taxas de cartões: {type(e).__name__}. Verifique permissões do banco.')
 
@@ -1392,7 +1397,8 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
         st.stop()
     adicionais_cartoes = {'Custo Cartão de Crédito': taxas_cartoes_dre.get('Crédito',0.0),
                           'Custo Cartão de Débito': taxas_cartoes_dre.get('Débito',0.0),
-                          'Taxas Pix': taxas_cartoes_dre.get('Pix',0.0)}
+                          'Taxas Pix': taxas_cartoes_dre.get('Pix',0.0),
+                          'Taxas Voucher': taxas_cartoes_dre.get('Voucher',0.0)}
 
     cmv_auto, aviso_cmv = apurar_cmv_automatico(mes_ativo)
     if aviso_cmv:
@@ -1454,6 +1460,7 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
         ("Custo Cartão de Crédito", "Custo Cartão De Crédito", 0.0),
         ("Custo Cartão de Débito", "Custo Cartão De Débito", 0.0),
         ("Taxas Pix", "Taxas Pix", 0.0),
+        ("Taxas Voucher", "Taxas Voucher", 0.0),
         ("Total Bonificação", None, 0.0),
         ("Carro da Loja", "Carro da Loja", 0.0),
         ('Despesas de Viagens', 'Viagens', 0.0),
@@ -1516,7 +1523,7 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
             "Manutenção": ["Serviço - Manutenção e Reparos", "Material - Manutenção e Reparos"],
             "Delivery": ["Comissão agregadores", "Custo com entrega (motoqueiros)"],
             "Marketing e franqueador": ["Anúncios/Propagandas", "Fundo de Marketing", "Royalties"],
-            "Financeiro": ["Custo Cartão de Crédito", "Custo Cartão de Débito", "Taxas Pix"],
+            "Financeiro": ["Custo Cartão de Crédito", "Custo Cartão de Débito", "Taxas Pix", "Taxas Voucher"],
         }
         subtotais_ao_vivo = {
             grupo: sum(valor_ao_vivo(conta) for conta in contas)
@@ -1593,7 +1600,7 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
     total_manut = v("Serviço - Manutenção e Reparos") + v("Material - Manutenção e Reparos")
     total_deliv = (v("Comissão agregadores") + v("Custo com entrega (motoqueiros)")) - v("Taxa de entrega arrecadada")
     total_mkt = v("Anúncios/Propagandas") + v("Fundo de Marketing") + v("Royalties")
-    total_fin = v("Custo Cartão de Crédito") + v("Custo Cartão de Débito") + v("Taxas Pix")
+    total_fin = v("Custo Cartão de Crédito") + v("Custo Cartão de Débito") + v("Taxas Pix") + v("Taxas Voucher")
     # Gestão provisória: antes do fechamento do inventário, usar as compras
     # como referência TEMPORÁRIA de gasto operacional. Após o fechamento,
     # substituir pelas informações de CMV consolidado, sem duplicar compras.
