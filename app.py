@@ -192,6 +192,7 @@ CLASSIFICACOES_DESPESAS = {
     "Custo Cartão de Débito": ("Financeiro", "Custo Cartão De Débito"),
     "Taxas Pix": ("Financeiro", "Taxas Pix"),
     "Taxas Voucher": ("Financeiro", "Taxas Voucher"),
+    "Mensalidade da Máquina": ("Financeiro", "Mensalidade da Máquina"),
     "Imposto Federal": ("Impostos", "Imposto Federal"),
     "Imposto Estadual": ("Impostos", "Imposto Estadual"),
 }
@@ -1250,6 +1251,7 @@ def processar_documento_fiscal_individual(doc, api_key):
 
 # ----------------- TAXAS DE CARTÕES POR BANDEIRA -----------------
 def preparar_taxas_cartoes():
+    """Vendas mensais; percentuais globais por modalidade e bandeira."""
     with conectar_db() as conn:
         with conn.cursor() as cur:
             cur.execute("""CREATE TABLE IF NOT EXISTS taxas_cartoes_mes (
@@ -1259,18 +1261,39 @@ def preparar_taxas_cartoes():
                 PRIMARY KEY (mes_referencia, modalidade, bandeira),
                 CHECK (vendas >= 0), CHECK (taxa_percentual >= 0 AND taxa_percentual <= 100)
             )""")
+            cur.execute("""CREATE TABLE IF NOT EXISTS taxas_cartoes_padrao (
+                modalidade TEXT NOT NULL, bandeira TEXT NOT NULL,
+                taxa_percentual NUMERIC(9,4) NOT NULL CHECK (taxa_percentual BETWEEN 0 AND 100),
+                PRIMARY KEY (modalidade, bandeira)
+            )""")
+            # Migração não destrutiva: taxa do mês mais recente para cada combinação.
+            cur.execute("""INSERT INTO taxas_cartoes_padrao(modalidade,bandeira,taxa_percentual)
+                SELECT DISTINCT ON (modalidade,bandeira) modalidade,bandeira,taxa_percentual
+                FROM taxas_cartoes_mes ORDER BY modalidade,bandeira,mes_referencia DESC
+                ON CONFLICT (modalidade,bandeira) DO NOTHING""")
 
 def obter_taxas_cartoes(mes):
     with conectar_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT modalidade,bandeira,vendas,taxa_percentual FROM taxas_cartoes_mes WHERE mes_referencia=%s ORDER BY modalidade,bandeira", (mes,))
+            cur.execute("""SELECT p.modalidade,p.bandeira,COALESCE(m.vendas,0),p.taxa_percentual
+                FROM taxas_cartoes_padrao p LEFT JOIN taxas_cartoes_mes m
+                  ON m.modalidade=p.modalidade AND m.bandeira=p.bandeira AND m.mes_referencia=%s
+                UNION ALL
+                SELECT m.modalidade,m.bandeira,m.vendas,m.taxa_percentual
+                FROM taxas_cartoes_mes m WHERE m.mes_referencia=%s
+                  AND NOT EXISTS (SELECT 1 FROM taxas_cartoes_padrao p
+                    WHERE p.modalidade=m.modalidade AND p.bandeira=m.bandeira)
+                ORDER BY 1,2""", (mes,mes))
             return [{"Modalidade":m,"Bandeira":b,"Vendas (R$)":float(v),"Taxa (%)":float(t)} for m,b,v,t in cur.fetchall()]
 
 def totais_taxas_cartoes(mes):
     with conectar_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("""SELECT modalidade,COALESCE(SUM(ROUND(vendas*taxa_percentual/100,2)),0)
-                FROM taxas_cartoes_mes WHERE mes_referencia=%s GROUP BY modalidade""", (mes,))
+            cur.execute("""SELECT m.modalidade,COALESCE(SUM(ROUND(m.vendas *
+                COALESCE(p.taxa_percentual,m.taxa_percentual)/100,2)),0)
+                FROM taxas_cartoes_mes m LEFT JOIN taxas_cartoes_padrao p
+                  ON p.modalidade=m.modalidade AND p.bandeira=m.bandeira
+                WHERE m.mes_referencia=%s GROUP BY m.modalidade""", (mes,))
             return {m:float(v) for m,v in cur.fetchall()}
 
 def salvar_taxas_cartoes(mes, linhas):
@@ -1286,12 +1309,60 @@ def salvar_taxas_cartoes(mes, linhas):
         chave=(modalidade,bandeira.casefold())
         if chave in chaves: raise ValueError('Bandeira repetida na mesma modalidade.')
         chaves.add(chave)
-        registros.append((mes,modalidade,bandeira,round(vendas,2),round(taxa,4)))
+        registros.append((modalidade,bandeira,round(vendas,2),round(taxa,4)))
     with conectar_db() as conn:
         with conn.cursor() as cur:
+            # Percentuais compartilhados entre competências; vendas exclusivas do mês.
+            for modalidade,bandeira,vendas,taxa in registros:
+                cur.execute("""INSERT INTO taxas_cartoes_padrao(modalidade,bandeira,taxa_percentual)
+                    VALUES (%s,%s,%s) ON CONFLICT(modalidade,bandeira)
+                    DO UPDATE SET taxa_percentual=EXCLUDED.taxa_percentual""", (modalidade,bandeira,taxa))
             cur.execute('DELETE FROM taxas_cartoes_mes WHERE mes_referencia=%s',(mes,))
+            for modalidade,bandeira,vendas,taxa in registros:
+                cur.execute("""INSERT INTO taxas_cartoes_mes
+                    (mes_referencia,modalidade,bandeira,vendas,taxa_percentual)
+                    VALUES (%s,%s,%s,%s,%s)""",(mes,modalidade,bandeira,vendas,taxa))
+
+# ----------------- MENSALIDADE DA MAQUININHA (POR MÊS) -----------------
+def preparar_mensalidade_maquina():
+    with conectar_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""CREATE TABLE IF NOT EXISTS mensalidades_maquinas_mes (
+                mes_referencia TEXT NOT NULL,
+                operadora TEXT NOT NULL,
+                valor NUMERIC(15,2) NOT NULL CHECK (valor >= 0),
+                PRIMARY KEY (mes_referencia, operadora)
+            )""")
+
+def obter_mensalidades_maquinas(mes):
+    with conectar_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT operadora, valor FROM mensalidades_maquinas_mes WHERE mes_referencia=%s ORDER BY operadora", (mes,))
+            return [{"Operadora / Máquina": op, "Mensalidade (R$)": float(v)} for op, v in cur.fetchall()]
+
+def salvar_mensalidades_maquinas(mes, linhas):
+    registros = []
+    nomes = set()
+    for linha in linhas:
+        operadora = str(linha.get("Operadora / Máquina") or "").strip()
+        valor = converter_numero_br(linha.get("Mensalidade (R$)"))
+        if not operadora or not math.isfinite(valor) or valor < 0:
+            raise ValueError("Informe a operadora e uma mensalidade válida (zero ou maior).")
+        if operadora.casefold() in nomes:
+            raise ValueError("Há uma operadora/máquina repetida. Identifique cada máquina separadamente.")
+        nomes.add(operadora.casefold())
+        registros.append((mes, operadora, round(valor, 2)))
+    with conectar_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM mensalidades_maquinas_mes WHERE mes_referencia=%s", (mes,))
             for registro in registros:
-                cur.execute('INSERT INTO taxas_cartoes_mes (mes_referencia,modalidade,bandeira,vendas,taxa_percentual) VALUES (%s,%s,%s,%s,%s)',registro)
+                cur.execute("INSERT INTO mensalidades_maquinas_mes (mes_referencia,operadora,valor) VALUES (%s,%s,%s)", registro)
+
+def total_mensalidades_maquinas(mes):
+    with conectar_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COALESCE(SUM(valor),0) FROM mensalidades_maquinas_mes WHERE mes_referencia=%s", (mes,))
+            return float(cur.fetchone()[0] or 0)
 
 # ----------------- NAVEGAÇÃO -----------------
 menu = st.sidebar.radio("Módulo:", [
@@ -1318,7 +1389,7 @@ if st.sidebar.button("↪  Sair do Sistema", key="capry_sair", use_container_wid
 # ==============================================================================
 if menu == "💳 Financeiro — Cartões, Pix e Voucher":
     st.title("💳 Financeiro — Cartões, Pix e Voucher")
-    st.caption(f"Competência: {NOMES_MESES[mes_ativo]}. Registre vendas e taxas de crédito, débito, Pix e voucher (vale-refeição/alimentação). As taxas são despesas, não novo faturamento.")
+    st.caption(f"Competência: {NOMES_MESES[mes_ativo]}. Registre vendas mensais de crédito, débito, Pix e voucher. As taxas cadastradas são compartilhadas entre todos os meses. As taxas são despesas, não novo faturamento.")
     try:
         preparar_taxas_cartoes()
         registros = obter_taxas_cartoes(mes_ativo)
@@ -1327,6 +1398,7 @@ if menu == "💳 Financeiro — Cartões, Pix e Voucher":
             st.session_state[chave_edicao] = False
 
         st.subheader("📋 Valores cadastrados")
+        st.caption("As vendas são exclusivas do mês selecionado. Os percentuais das taxas valem para todos os meses e são reaproveitados automaticamente.")
         if registros:
             exibicao = pd.DataFrame(registros)
             exibicao["Despesa (R$)"] = (
@@ -1358,7 +1430,7 @@ if menu == "💳 Financeiro — Cartões, Pix e Voucher":
         else:
             st.divider()
             st.subheader("✏️ Editar vendas e taxas")
-            st.caption("Altere as linhas ou adicione outras bandeiras. Os dados só mudam após salvar.")
+            st.caption("Altere vendas do mês e taxas globais. Ao salvar uma taxa, ela passa a valer para todos os meses, inclusive os anteriores.")
             linhas = [dict(r) for r in registros]
             if not linhas:
                 linhas = [{"Modalidade":m,"Bandeira":b,"Vendas (R$)":0.0,"Taxa (%)":0.0}
@@ -1367,7 +1439,7 @@ if menu == "💳 Financeiro — Cartões, Pix e Voucher":
                 linhas.append({"Modalidade":"Pix","Bandeira":"Pix (QR Code)","Vendas (R$)":0.0,"Taxa (%)":0.0})
             if not any(r["Modalidade"] == "Voucher" for r in linhas):
                 linhas.extend({"Modalidade":"Voucher","Bandeira":b,"Vendas (R$)":0.0,"Taxa (%)":0.0}
-                             for b in ("Alelo","Ticket","Pluxee","VR"))
+                             for b in ("Alelo","Ticket","Pluxee","VR","Sodexo"))
             with st.form(f"form_cartoes_{mes_ativo}"):
                 editado = st.data_editor(
                     pd.DataFrame(linhas), num_rows="dynamic", hide_index=True,
@@ -1390,6 +1462,44 @@ if menu == "💳 Financeiro — Cartões, Pix e Voucher":
                     st.error(str(erro))
             if st.button("Cancelar edição", key=f"cancelar_financeiro_{mes_ativo}"):
                 st.session_state[chave_edicao] = False
+                st.rerun()
+        st.divider()
+        st.subheader("🏧 Mensalidade das máquinas")
+        st.caption("Cadastre o aluguel ou mensalidade fixa de cada máquina. É uma despesa mensal, independente das taxas percentuais.")
+        preparar_mensalidade_maquina()
+        mensalidades = obter_mensalidades_maquinas(mes_ativo)
+        chave_maq = f"editar_mensalidades_{mes_ativo}"
+        if chave_maq not in st.session_state:
+            st.session_state[chave_maq] = False
+        if mensalidades:
+            st.dataframe(pd.DataFrame(mensalidades), hide_index=True, use_container_width=True,
+                         column_config={"Mensalidade (R$)": st.column_config.NumberColumn("Mensalidade (R$)", format="R$ %.2f")})
+        else:
+            st.info("Nenhuma mensalidade cadastrada para este mês.")
+        st.metric("Total de mensalidades", f"R$ {formatar_numero_br(sum(r['Mensalidade (R$)'] for r in mensalidades))}")
+        if not st.session_state[chave_maq]:
+            if st.button("✏️ Alterar mensalidades" if mensalidades else "➕ Cadastrar mensalidade", key=f"abrir_maq_{mes_ativo}"):
+                st.session_state[chave_maq] = True
+                st.rerun()
+        else:
+            st.caption("Adicione uma linha para cada máquina. Para remover, exclua a linha e salve.")
+            with st.form(f"form_mensalidades_{mes_ativo}"):
+                edit_maq = st.data_editor(pd.DataFrame(mensalidades or [{"Operadora / Máquina": "", "Mensalidade (R$)": 0.0}]),
+                    num_rows="dynamic", hide_index=True, use_container_width=True,
+                    column_config={
+                        "Operadora / Máquina": st.column_config.TextColumn("Operadora / Máquina", required=True),
+                        "Mensalidade (R$)": st.column_config.NumberColumn("Mensalidade (R$)", min_value=0.0, format="%.2f", required=True),
+                    })
+                salvar_maq = st.form_submit_button("💾 Salvar mensalidades", type="primary")
+            if salvar_maq:
+                try:
+                    salvar_mensalidades_maquinas(mes_ativo, edit_maq.to_dict("records"))
+                    st.session_state[chave_maq] = False
+                    st.rerun()
+                except (ValueError, KeyError) as erro:
+                    st.error(str(erro))
+            if st.button("Cancelar edição de mensalidades", key=f"cancelar_maq_{mes_ativo}"):
+                st.session_state[chave_maq] = False
                 st.rerun()
         st.caption("A DRE considera somente as taxas como despesas, sem duplicar as vendas. Confira possíveis lançamentos manuais dessas mesmas taxas.")
     except Exception as e:
@@ -1435,6 +1545,12 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
                           'Custo Cartão de Débito': taxas_cartoes_dre.get('Débito',0.0),
                           'Taxas Pix': taxas_cartoes_dre.get('Pix',0.0),
                           'Taxas Voucher': taxas_cartoes_dre.get('Voucher',0.0)}
+    try:
+        preparar_mensalidade_maquina()
+        adicionais_cartoes['Mensalidade da Máquina'] = total_mensalidades_maquinas(mes_ativo)
+    except Exception:
+        st.error('Não foi possível consultar mensalidades das máquinas no Supabase.')
+        st.stop()
 
     cmv_auto, aviso_cmv = apurar_cmv_automatico(mes_ativo)
     if aviso_cmv:
@@ -1497,6 +1613,7 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
         ("Custo Cartão de Débito", "Custo Cartão De Débito", 0.0),
         ("Taxas Pix", "Taxas Pix", 0.0),
         ("Taxas Voucher", "Taxas Voucher", 0.0),
+        ("Mensalidade da Máquina", "Mensalidade da Máquina", 0.0),
         ("Total Bonificação", None, 0.0),
         ("Carro da Loja", "Carro da Loja", 0.0),
         ('Despesas de Viagens', 'Viagens', 0.0),
@@ -1559,7 +1676,7 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
             "Manutenção": ["Serviço - Manutenção e Reparos", "Material - Manutenção e Reparos"],
             "Delivery": ["Comissão agregadores", "Custo com entrega (motoqueiros)"],
             "Marketing e franqueador": ["Anúncios/Propagandas", "Fundo de Marketing", "Royalties"],
-            "Financeiro": ["Custo Cartão de Crédito", "Custo Cartão de Débito", "Taxas Pix", "Taxas Voucher"],
+            "Financeiro": ["Custo Cartão de Crédito", "Custo Cartão de Débito", "Taxas Pix", "Taxas Voucher", "Mensalidade da Máquina"],
         }
         subtotais_ao_vivo = {
             grupo: sum(valor_ao_vivo(conta) for conta in contas)
@@ -1636,7 +1753,7 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
     total_manut = v("Serviço - Manutenção e Reparos") + v("Material - Manutenção e Reparos")
     total_deliv = (v("Comissão agregadores") + v("Custo com entrega (motoqueiros)")) - v("Taxa de entrega arrecadada")
     total_mkt = v("Anúncios/Propagandas") + v("Fundo de Marketing") + v("Royalties")
-    total_fin = v("Custo Cartão de Crédito") + v("Custo Cartão de Débito") + v("Taxas Pix") + v("Taxas Voucher")
+    total_fin = v("Custo Cartão de Crédito") + v("Custo Cartão de Débito") + v("Taxas Pix") + v("Taxas Voucher") + v("Mensalidade da Máquina")
     # Gestão provisória: antes do fechamento do inventário, usar as compras
     # como referência TEMPORÁRIA de gasto operacional. Após o fechamento,
     # substituir pelas informações de CMV consolidado, sem duplicar compras.
@@ -1893,6 +2010,7 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
             {"CONTA": "🛵 DELIVERY", "VALOR": total_deliv, "%": pct(total_deliv)},
             {"CONTA": "📢 MARKETING & FRANQUEADOR", "VALOR": total_mkt, "%": pct(total_mkt)},
             {"CONTA": "💳 CUSTO FINANCEIRO", "VALOR": total_fin, "%": pct(total_fin)},
+            {"CONTA": "  • Mensalidade da Máquina", "VALOR": v("Mensalidade da Máquina"), "%": pct(v("Mensalidade da Máquina"))},
             {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
             {"CONTA": ('🔴 TOTAL DESPESAS OPERACIONAIS (provisório)' if cmv_auto is None
                        else '🔴 TOTAL DESPESAS OPERACIONAIS'),
