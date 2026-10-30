@@ -1281,7 +1281,7 @@ def salvar_taxas_cartoes(mes, linhas):
         bandeira=str(linha['Bandeira']).strip()
         vendas=converter_numero_br(linha['Vendas (R$)'])
         taxa=converter_numero_br(linha['Taxa (%)'])
-        if modalidade not in ('Crédito','Débito','Pix','Voucher','Voucher') or not bandeira or not math.isfinite(vendas) or not math.isfinite(taxa) or vendas<0 or not 0<=taxa<=100:
+        if modalidade not in ('Crédito','Débito','Pix','Voucher') or not bandeira or not math.isfinite(vendas) or not math.isfinite(taxa) or vendas<0 or not 0<=taxa<=100:
             raise ValueError('Revise modalidade, bandeira, vendas e taxa (0 a 100%).')
         chave=(modalidade,bandeira.casefold())
         if chave in chaves: raise ValueError('Bandeira repetida na mesma modalidade.')
@@ -1321,41 +1321,77 @@ if menu == "💳 Financeiro — Cartões, Pix e Voucher":
     st.caption(f"Competência: {NOMES_MESES[mes_ativo]}. Registre vendas e taxas de crédito, débito, Pix e voucher (vale-refeição/alimentação). As taxas são despesas, não novo faturamento.")
     try:
         preparar_taxas_cartoes()
-        registros=obter_taxas_cartoes(mes_ativo)
-        if not registros:
-            registros=[{"Modalidade":m,"Bandeira":b,"Vendas (R$)":0.0,"Taxa (%)":0.0}
-                      for m in ('Crédito','Débito') for b in ('Visa','Mastercard','Elo','Amex')]
-        if not any(r['Modalidade']=='Pix' for r in registros):
-            registros.append({'Modalidade':'Pix','Bandeira':'Pix (QR Code)','Vendas (R$)':0.0,'Taxa (%)':0.0})
-        if not any(r['Modalidade']=='Voucher' for r in registros):
-            registros.extend([{'Modalidade':'Voucher','Bandeira':b,'Vendas (R$)':0.0,'Taxa (%)':0.0} for b in ('Alelo','Ticket','Pluxee','VR')])
-        with st.form(f"form_cartoes_{mes_ativo}"):
-            editado=st.data_editor(pd.DataFrame(registros),num_rows="dynamic",hide_index=True,use_container_width=True,
-                column_config={"Modalidade":st.column_config.SelectboxColumn("Modalidade",options=['Crédito','Débito','Pix','Voucher'],required=True),
-                "Bandeira":st.column_config.TextColumn("Bandeira",required=True),
-                "Vendas (R$)":st.column_config.NumberColumn("Vendas (R$)",min_value=0.0,format="%.2f",required=True),
-                "Taxa (%)":st.column_config.NumberColumn("Taxa (%)",min_value=0.0,max_value=100.0,format="%.4f",required=True)})
-            enviar=st.form_submit_button("💾 Salvar taxas do mês",type="primary")
-        if enviar:
-            try:
-                salvar_taxas_cartoes(mes_ativo,editado.to_dict('records'))
-                st.success('Taxas salvas no Supabase e integradas à DRE.')
+        registros = obter_taxas_cartoes(mes_ativo)
+        chave_edicao = f"financeiro_editando_{mes_ativo}"
+        if chave_edicao not in st.session_state:
+            st.session_state[chave_edicao] = False
+
+        st.subheader("📋 Valores cadastrados")
+        if registros:
+            exibicao = pd.DataFrame(registros)
+            exibicao["Despesa (R$)"] = (
+                exibicao["Vendas (R$)"] * exibicao["Taxa (%)"] / 100
+            ).round(2)
+            st.dataframe(
+                exibicao, hide_index=True, use_container_width=True,
+                column_config={
+                    "Vendas (R$)": st.column_config.NumberColumn("Vendas (R$)", format="R$ %.2f"),
+                    "Taxa (%)": st.column_config.NumberColumn("Taxa (%)", format="%.4f%%"),
+                    "Despesa (R$)": st.column_config.NumberColumn("Despesa (R$)", format="R$ %.2f"),
+                },
+            )
+            totais = exibicao.groupby("Modalidade")["Despesa (R$)"].sum().to_dict()
+            st.markdown("### Resumo das taxas")
+            for modalidade in ("Crédito", "Débito", "Pix", "Voucher"):
+                st.markdown(
+                    f"**{modalidade}:** R$ {formatar_numero_br(totais.get(modalidade, 0))}"
+                )
+            st.metric("Total de taxas do mês", f"R$ {formatar_numero_br(sum(totais.values()))}")
+        else:
+            st.info("Nenhuma venda ou taxa cadastrada neste mês. Clique em Cadastrar valores para começar.")
+
+        if not st.session_state[chave_edicao]:
+            if st.button("✏️ Alterar valores cadastrados" if registros else "➕ Cadastrar valores",
+                         type="primary", key=f"abrir_financeiro_{mes_ativo}"):
+                st.session_state[chave_edicao] = True
                 st.rerun()
-            except (ValueError,KeyError) as e: st.error(str(e))
-        preview=editado.copy()
-        preview['Despesa (R$)']=(preview['Vendas (R$)']*preview['Taxa (%)']/100).round(2)
-        st.dataframe(preview,hide_index=True,use_container_width=True)
-        a,b,c,d,e=st.columns(5)
-        credito=float(preview.loc[preview['Modalidade']=='Crédito','Despesa (R$)'].sum())
-        debito=float(preview.loc[preview['Modalidade']=='Débito','Despesa (R$)'].sum())
-        pix=float(preview.loc[preview['Modalidade']=='Pix','Despesa (R$)'].sum())
-        voucher=float(preview.loc[preview['Modalidade']=='Voucher','Despesa (R$)'].sum())
-        a.metric('Taxas crédito',f"R$ {formatar_numero_br(credito)}")
-        b.metric('Taxas débito',f"R$ {formatar_numero_br(debito)}")
-        c.metric('Taxas Pix',f"R$ {formatar_numero_br(pix)}")
-        d.metric('Taxas voucher',f"R$ {formatar_numero_br(voucher)}")
-        e.metric('Total estimado',f"R$ {formatar_numero_br(credito+debito+pix+voucher)}")
-        st.info('Para voucher, escolha a modalidade Voucher e informe a operadora (Alelo, Ticket, Pluxee, VR ou outra). Para Pix, use a modalidade Pix e informe a taxa da instituição (0% quando não houver cobrança). Os valores acima são uma prévia. Clique em Salvar para atualizar a DRE. Taxas já lançadas manualmente devem ser revisadas para evitar duplicidade.')
+        else:
+            st.divider()
+            st.subheader("✏️ Editar vendas e taxas")
+            st.caption("Altere as linhas ou adicione outras bandeiras. Os dados só mudam após salvar.")
+            linhas = [dict(r) for r in registros]
+            if not linhas:
+                linhas = [{"Modalidade":m,"Bandeira":b,"Vendas (R$)":0.0,"Taxa (%)":0.0}
+                          for m in ("Crédito","Débito") for b in ("Visa","Mastercard","Elo","Amex")]
+            if not any(r["Modalidade"] == "Pix" for r in linhas):
+                linhas.append({"Modalidade":"Pix","Bandeira":"Pix (QR Code)","Vendas (R$)":0.0,"Taxa (%)":0.0})
+            if not any(r["Modalidade"] == "Voucher" for r in linhas):
+                linhas.extend({"Modalidade":"Voucher","Bandeira":b,"Vendas (R$)":0.0,"Taxa (%)":0.0}
+                             for b in ("Alelo","Ticket","Pluxee","VR"))
+            with st.form(f"form_cartoes_{mes_ativo}"):
+                editado = st.data_editor(
+                    pd.DataFrame(linhas), num_rows="dynamic", hide_index=True,
+                    use_container_width=True,
+                    column_config={
+                        "Modalidade": st.column_config.SelectboxColumn("Modalidade",options=["Crédito","Débito","Pix","Voucher"],required=True),
+                        "Bandeira": st.column_config.TextColumn("Bandeira",required=True),
+                        "Vendas (R$)": st.column_config.NumberColumn("Vendas (R$)",min_value=0.0,format="%.2f",required=True),
+                        "Taxa (%)": st.column_config.NumberColumn("Taxa (%)",min_value=0.0,max_value=100.0,format="%.4f",required=True),
+                    },
+                )
+                enviar = st.form_submit_button("💾 Salvar alterações", type="primary")
+            if enviar:
+                try:
+                    salvar_taxas_cartoes(mes_ativo, editado.to_dict("records"))
+                    st.session_state[chave_edicao] = False
+                    st.success("Valores salvos com sucesso.")
+                    st.rerun()
+                except (ValueError, KeyError) as erro:
+                    st.error(str(erro))
+            if st.button("Cancelar edição", key=f"cancelar_financeiro_{mes_ativo}"):
+                st.session_state[chave_edicao] = False
+                st.rerun()
+        st.caption("A DRE considera somente as taxas como despesas, sem duplicar as vendas. Confira possíveis lançamentos manuais dessas mesmas taxas.")
     except Exception as e:
         st.error(f'Não foi possível acessar as taxas de cartões: {type(e).__name__}. Verifique permissões do banco.')
 
