@@ -1244,11 +1244,57 @@ def processar_documento_fiscal_individual(doc, api_key):
     return resultado_documento
 
 
+# ----------------- TAXAS DE CARTÕES POR BANDEIRA -----------------
+def preparar_taxas_cartoes():
+    with conectar_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""CREATE TABLE IF NOT EXISTS taxas_cartoes_mes (
+                mes_referencia TEXT NOT NULL, modalidade TEXT NOT NULL,
+                bandeira TEXT NOT NULL, vendas NUMERIC(15,2) NOT NULL DEFAULT 0,
+                taxa_percentual NUMERIC(9,4) NOT NULL DEFAULT 0,
+                PRIMARY KEY (mes_referencia, modalidade, bandeira),
+                CHECK (vendas >= 0), CHECK (taxa_percentual >= 0 AND taxa_percentual <= 100)
+            )""")
+
+def obter_taxas_cartoes(mes):
+    with conectar_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT modalidade,bandeira,vendas,taxa_percentual FROM taxas_cartoes_mes WHERE mes_referencia=%s ORDER BY modalidade,bandeira", (mes,))
+            return [{"Modalidade":m,"Bandeira":b,"Vendas (R$)":float(v),"Taxa (%)":float(t)} for m,b,v,t in cur.fetchall()]
+
+def totais_taxas_cartoes(mes):
+    with conectar_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT modalidade,COALESCE(SUM(ROUND(vendas*taxa_percentual/100,2)),0)
+                FROM taxas_cartoes_mes WHERE mes_referencia=%s GROUP BY modalidade""", (mes,))
+            return {m:float(v) for m,v in cur.fetchall()}
+
+def salvar_taxas_cartoes(mes, linhas):
+    chaves=set()
+    registros=[]
+    for linha in linhas:
+        modalidade=str(linha['Modalidade']).strip()
+        bandeira=str(linha['Bandeira']).strip()
+        vendas=converter_numero_br(linha['Vendas (R$)'])
+        taxa=converter_numero_br(linha['Taxa (%)'])
+        if modalidade not in ('Crédito','Débito') or not bandeira or not math.isfinite(vendas) or not math.isfinite(taxa) or vendas<0 or not 0<=taxa<=100:
+            raise ValueError('Revise modalidade, bandeira, vendas e taxa (0 a 100%).')
+        chave=(modalidade,bandeira.casefold())
+        if chave in chaves: raise ValueError('Bandeira repetida na mesma modalidade.')
+        chaves.add(chave)
+        registros.append((mes,modalidade,bandeira,round(vendas,2),round(taxa,4)))
+    with conectar_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute('DELETE FROM taxas_cartoes_mes WHERE mes_referencia=%s',(mes,))
+            for registro in registros:
+                cur.execute('INSERT INTO taxas_cartoes_mes (mes_referencia,modalidade,bandeira,vendas,taxa_percentual) VALUES (%s,%s,%s,%s,%s)',registro)
+
 # ----------------- NAVEGAÇÃO -----------------
 menu = st.sidebar.radio("Módulo:", [
     f"📊 DRE Spoleto ({NOMES_MESES[mes_ativo]})",
     "📈 Dashboard de Gráficos",
     "✍️ Ajustes Manuais da DRE",
+    "💳 Financeiro — Taxas de Cartões",
     "📸 Escanear & Alimentar Nota",
     "📝 Lançamentos do Mês",
     "🧠 Regras Inteligentes",
@@ -1266,6 +1312,41 @@ if st.sidebar.button("↪  Sair do Sistema", key="capry_sair", use_container_wid
 # ==============================================================================
 # 1. ABA DO DRE OFICIAL
 # ==============================================================================
+if menu == "💳 Financeiro — Taxas de Cartões":
+    st.title("💳 Financeiro — Taxas de Cartões")
+    st.caption(f"Competência: {NOMES_MESES[mes_ativo]}. As taxas são despesas, não novo faturamento.")
+    try:
+        preparar_taxas_cartoes()
+        registros=obter_taxas_cartoes(mes_ativo)
+        if not registros:
+            registros=[{"Modalidade":m,"Bandeira":b,"Vendas (R$)":0.0,"Taxa (%)":0.0}
+                      for m in ('Crédito','Débito') for b in ('Visa','Mastercard','Elo','Amex')]
+        with st.form(f"form_cartoes_{mes_ativo}"):
+            editado=st.data_editor(pd.DataFrame(registros),num_rows="dynamic",hide_index=True,use_container_width=True,
+                column_config={"Modalidade":st.column_config.SelectboxColumn("Modalidade",options=['Crédito','Débito'],required=True),
+                "Bandeira":st.column_config.TextColumn("Bandeira",required=True),
+                "Vendas (R$)":st.column_config.NumberColumn("Vendas (R$)",min_value=0.0,format="%.2f",required=True),
+                "Taxa (%)":st.column_config.NumberColumn("Taxa (%)",min_value=0.0,max_value=100.0,format="%.4f",required=True)})
+            enviar=st.form_submit_button("💾 Salvar taxas do mês",type="primary")
+        if enviar:
+            try:
+                salvar_taxas_cartoes(mes_ativo,editado.to_dict('records'))
+                st.success('Taxas salvas no Supabase e integradas à DRE.')
+                st.rerun()
+            except (ValueError,KeyError) as e: st.error(str(e))
+        preview=editado.copy()
+        preview['Despesa (R$)']=(preview['Vendas (R$)']*preview['Taxa (%)']/100).round(2)
+        st.dataframe(preview,hide_index=True,use_container_width=True)
+        a,b,c=st.columns(3)
+        credito=float(preview.loc[preview['Modalidade']=='Crédito','Despesa (R$)'].sum())
+        debito=float(preview.loc[preview['Modalidade']=='Débito','Despesa (R$)'].sum())
+        a.metric('Taxas crédito',f"R$ {formatar_numero_br(credito)}")
+        b.metric('Taxas débito',f"R$ {formatar_numero_br(debito)}")
+        c.metric('Total estimado',f"R$ {formatar_numero_br(credito+debito)}")
+        st.info('Os valores acima são uma prévia. Clique em Salvar para atualizar a DRE. Taxas já lançadas manualmente devem ser revisadas para evitar duplicidade.')
+    except Exception as e:
+        st.error(f'Não foi possível acessar as taxas de cartões: {type(e).__name__}. Verifique permissões do banco.')
+
 if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos", "✍️ Ajustes Manuais da DRE"):
     eh_dashboard = menu == "📈 Dashboard de Gráficos"
     eh_editor = menu == "✍️ Ajustes Manuais da DRE"
@@ -1277,7 +1358,7 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
         st.caption("Edite os valores e clique em Salvar. As notas fiscais já lançadas são preservadas; o sistema grava somente a diferença como ajuste.")
     else:
         st.subheader(f"📊 Demonstrativo de Resultados (DRE) — {NOMES_MESES[mes_ativo]}")
-        st.caption("Demonstrativo de consulta. Para alterar valores, use o módulo Ajustes Manuais da DRE.")
+        st.caption("Demonstrativo de consulta. Para alterar valores, use Ajustes Manuais da DRE; taxas de cartões são calculadas no módulo Financeiro.")
 
     df_l = obter_lancamentos_mes(mes_ativo)
     somas_escaneadas = df_l.groupby("detalhamento")["valor"].sum().to_dict() if not df_l.empty else {}
@@ -1296,6 +1377,15 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
     compras_descartaveis = float(compras_por_categoria.get("Descartáveis", 0))
     total_compras_cmv = sum((compras_alimentos, compras_horte, compras_bebidas, compras_descartaveis))
     ajustes_banco = obter_ajustes_dre(mes_ativo)
+    try:
+        preparar_taxas_cartoes()
+        taxas_cartoes_dre = totais_taxas_cartoes(mes_ativo)
+    except Exception:
+        st.error('Não foi possível carregar as taxas de cartões. Confira a conexão e as permissões no Supabase.')
+        st.stop()
+    adicionais_cartoes = {'Custo Cartão de Crédito': taxas_cartoes_dre.get('Crédito',0.0),
+                          'Custo Cartão de Débito': taxas_cartoes_dre.get('Débito',0.0)}
+
     cmv_auto, aviso_cmv = apurar_cmv_automatico(mes_ativo)
     if aviso_cmv:
         st.info("📦 CMV automático pendente: " + aviso_cmv + " Até o fechamento, compras e fretes são considerados provisoriamente no resultado.")
@@ -1376,7 +1466,7 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
         val_ajuste = float(ajustes_banco.get(nome_conta, val_padrao))
         val_final = (cmv_auto[nome_conta] if cmv_auto is not None and nome_conta in CONTAS_CMV
                      else (0.0 if nome_conta in CONTAS_CMV else val_escaneado + val_ajuste))
-        lista_linhas_editaveis.append({"CONTA": nome_conta, "VALOR (R$)": formatar_numero_br(round(val_final, 2))})
+        lista_linhas_editaveis.append({"CONTA": nome_conta, "VALOR (R$)": formatar_numero_br(round(val_final + adicionais_cartoes.get(nome_conta,0.0), 2))})
 
     df_base_editavel = pd.DataFrame(lista_linhas_editaveis)
     if eh_editor:
@@ -1451,7 +1541,7 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
                     if conta == "CMV Consolidado":
                         continue  # CMV apurado não é ajuste manual.
                     base_nota = float(somas_escaneadas.get(next((det for nome, det, _ in CONTAS_DRE_PAINEL if nome == conta), None), 0.0))
-                    novos_ajustes[conta] = converter_numero_br(valor) - base_nota
+                    novos_ajustes[conta] = converter_numero_br(valor) - base_nota - adicionais_cartoes.get(conta,0.0)
                 salvar_ajustes_dre(mes_ativo, novos_ajustes)
                 st.success("✅ Valores gravados com sucesso!")
                 st.rerun()
