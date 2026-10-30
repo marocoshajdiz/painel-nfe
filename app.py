@@ -6,6 +6,7 @@ from google.genai import types
 import json
 import math
 import hashlib
+import hmac
 import psycopg2
 from urllib.parse import urlsplit
 import io
@@ -36,11 +37,12 @@ def tela_login():
         st.markdown("<br><br>", unsafe_allow_html=True)
         st.markdown("### 🔐 Acesso ao Painel de Custos & DRE - Capry")
         st.write("Digite suas credenciais:")
+        st.caption("No iPhone, use o botão Senhas do teclado para preencher com segurança. O salvamento é controlado pelo iOS, não pelo site.")
         with st.form("form_login"):
-            usuario = st.text_input("Usuário", placeholder="admin")
-            senha = st.text_input("Senha", type="password", placeholder="Sua senha")
+            usuario = st.text_input("Usuário", placeholder="Seu usuário", autocomplete="username", key="login_usuario")
+            senha = st.text_input("Senha", type="password", placeholder="Sua senha", autocomplete="current-password", key="login_senha")
             if st.form_submit_button("Entrar", type="primary", use_container_width=True):
-                if usuario == USUARIO_CORRETO and senha == SENHA_CORRETA:
+                if hmac.compare_digest(usuario, str(USUARIO_CORRETO)) and hmac.compare_digest(senha, str(SENHA_CORRETA)):
                     st.session_state.autenticado = True
                     st.rerun()
                 else:
@@ -2748,35 +2750,46 @@ if menu == "📋 Contagem de Estoque":
         exibidos = [p for p in produtos if busca.casefold() in str(p[2]).casefold()]
         quantidades_atuais = quantidades_do_mes(mes_ativo)
         st.caption(f"{len(exibidos)} produto(s) exibido(s). Quantidades já salvas aparecem preenchidas.")
-        with st.form(f"contagem_{mes_ativo}_{busca}"):
-            df = pd.DataFrame([{
-                "ID": p[0], "PRODUTO": p[2],
-                "QUANTIDADE": (formatar_numero_br(quantidades_atuais[p[0]]) if p[0] in quantidades_atuais else "")
-            } for p in exibidos])
-            editado = st.data_editor(df, hide_index=True, use_container_width=True, num_rows="fixed",
-                                     disabled=["ID", "PRODUTO"],
-                                     column_config={"ID": None, "PRODUTO": st.column_config.TextColumn("Produto"),
-                                                    "QUANTIDADE": st.column_config.TextColumn("Quantidade (ex.: 2,5)")})
-            salvar = st.form_submit_button("💾 Salvar contagem no inventário", type="primary", disabled=fechado or not exibidos)
-            if salvar:
+        st.info("💾 Salvamento automático ativado: ao confirmar a edição de uma quantidade (Enter ou sair da célula), ela é gravada no Supabase. Se a sessão cair, basta entrar novamente e selecionar o mês.")
+        df = pd.DataFrame([{
+            "ID": p[0], "PRODUTO": p[2],
+            "QUANTIDADE": (formatar_numero_br(quantidades_atuais[p[0]]) if p[0] in quantidades_atuais else "")
+        } for p in exibidos])
+        editado = st.data_editor(
+            df, hide_index=True, use_container_width=True, num_rows="fixed",
+            disabled=["ID", "PRODUTO", "QUANTIDADE"] if fechado else ["ID", "PRODUTO"],
+            key=f"contagem_auto_{mes_ativo}_{hashlib.sha256(busca.encode()).hexdigest()[:12]}",
+            column_config={"ID": None, "PRODUTO": st.column_config.TextColumn("Produto"),
+                           "QUANTIDADE": st.column_config.TextColumn("Quantidade (ex.: 2,5)")},
+        )
+        if not fechado:
+            mudancas = {}
+            erros = []
+            for linha in editado.to_dict("records"):
+                entrada = str(linha["QUANTIDADE"] or "").strip()
+                if not entrada:
+                    continue  # Vazio não apaga contagens anteriores.
+                if not re.fullmatch(r"[0-9., ]+", entrada):
+                    erros.append(f"{linha['PRODUTO']}: quantidade inválida ({entrada})")
+                    continue
+                numero = converter_numero_br(entrada)
+                if not math.isfinite(numero) or numero < 0:
+                    erros.append(f"{linha['PRODUTO']}: quantidade inválida ({entrada})")
+                    continue
+                identificador = int(linha["ID"])
+                atual = quantidades_atuais.get(identificador)
+                if atual is None or abs(float(atual) - numero) > 0.000001:
+                    mudancas[identificador] = numero
+            if erros:
+                st.error("Revise: " + "; ".join(erros[:5]))
+            elif mudancas:
                 try:
-                    mudancas = {}
-                    for linha in editado.to_dict('records'):
-                        entrada = str(linha['QUANTIDADE'] or '').strip()
-                        if not entrada:
-                            continue
-                        numero = converter_numero_br(entrada)
-                        if numero < 0 or not re.fullmatch(r"[0-9., ]+", entrada):
-                            raise ValueError(f"Quantidade inválida para {linha['PRODUTO']}: {entrada}")
-                        mudancas[int(linha['ID'])] = numero
-                    if not mudancas:
-                        st.warning("Preencha ao menos uma quantidade antes de salvar.")
-                    else:
-                        salvar_contagem_estoque(mes_ativo, mudancas)
-                        st.success(f"{len(mudancas)} quantidade(s) salvas no inventário de {NOMES_MESES[mes_ativo]}!")
-                        st.rerun()
+                    salvar_contagem_estoque(mes_ativo, mudancas)
+                    st.success(f"✅ {len(mudancas)} quantidade(s) salvas automaticamente no Supabase.")
+                    st.rerun()
                 except Exception as erro:
-                    st.error(f"Erro ao salvar a contagem: {erro}")
+                    st.error(f"Não foi possível salvar automaticamente. Não feche a página: {erro}")
+        st.caption("Importante: uma célula ainda em edição, sem Enter ou sem sair dela, não foi enviada ao servidor. O login pode ser solicitado novamente após desconexões ou reinícios do Streamlit.")
 
 elif menu == "📦 Inventário e Produtos":
     st.subheader(f"📦 Inventário e Produtos — {NOMES_MESES[mes_ativo]}")
