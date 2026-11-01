@@ -377,10 +377,14 @@ def calcular_valor_inventario(cur, inv_id, referencia):
             if ativo:
                 raise ValueError(f"Falta contagem de '{nome}' em {referencia}. Informe 0 quando não houver estoque.")
             continue
-        custo_final = custo if custo is not None else preco
-        if (custo_final is None or float(custo_final) <= 0) and float(quantidade) != 0:
+        # Registros antigos podem ter custo_unitario igual a zero, embora
+        # o cadastro do produto já tenha um preço válido.
+        custo_num = float(custo) if custo is not None else 0.0
+        preco_num = float(preco) if preco is not None else 0.0
+        custo_final = custo_num if math.isfinite(custo_num) and custo_num > 0 else preco_num
+        if float(quantidade) != 0 and (not math.isfinite(custo_final) or custo_final <= 0):
             raise ValueError(f"Informe custo unitário válido para '{nome}' em {referencia}.")
-        totais[CATEGORIAS_CMV[categoria]] += float(quantidade) * float(custo_final or 0)
+        totais[CATEGORIAS_CMV[categoria]] += float(quantidade) * (custo_final if math.isfinite(custo_final) else 0.0)
     return totais
 
 
