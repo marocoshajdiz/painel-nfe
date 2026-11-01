@@ -672,7 +672,6 @@ _gerar_excel_dre_base = gerar_excel_dre
 def gerar_excel_dre(nome_mes, df_dre_completo, df_lancamentos):
     """Painel executivo legível, com valores imediatos e gráficos editáveis no Excel."""
     from openpyxl import load_workbook
-    from openpyxl.chart import BarChart, DoughnutChart, Reference
     from openpyxl.chart.label import DataLabelList
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     from openpyxl.utils import get_column_letter
@@ -792,31 +791,11 @@ def gerar_excel_dre(nome_mes, df_dre_completo, df_lancamentos):
             cel.border = Border(bottom=Side(style='hair', color='DDE7F2'))
         painel.row_dimensions[row[0].row].height = 25
 
-    barras = BarChart()
-    barras.type = 'bar'
-    barras.style = 10
-    barras.title = 'Principais grupos de custo'
-    barras.add_data(Reference(painel, min_col=2, min_row=16, max_row=22), titles_from_data=True)
-    barras.set_categories(Reference(painel, min_col=1, min_row=17, max_row=22))
-    barras.legend = None
-    barras.width, barras.height = 17.5, 10
-    barras.x_axis.numFmt = '#,##0'
-    painel.add_chart(barras, 'A25')
-
-    colunas = BarChart()
-    colunas.type = 'col'
-    colunas.style = 10
-    colunas.title = 'Faturamento e resultados'
-    colunas.add_data(Reference(painel, min_col=8, min_row=16, max_row=20), titles_from_data=True)
-    colunas.set_categories(Reference(painel, min_col=7, min_row=17, max_row=20))
-    colunas.legend = None
-    colunas.width, colunas.height = 17.5, 10
-    colunas.y_axis.numFmt = '#,##0'
-    painel.add_chart(colunas, 'G25')
-    painel.merge_cells('A47:L47')
-    painel['A47'] = 'Fonte: DRE mensal. Os grupos exibidos representam uma seleção dos custos, não o total das despesas.'
-    painel['A47'].font = Font(name='Aptos', size=10, italic=True, color='526987')
-    painel.print_area = 'A1:L47'
+    # Relatório executivo somente com indicadores e tabelas, sem gráficos.
+    painel.merge_cells('A25:L25')
+    painel['A25'] = 'Resumo gerencial baseado nos valores da DRE mensal.'
+    painel['A25'].font = Font(name='Aptos', size=11, italic=True, color='526987')
+    painel.print_area = 'A1:L26'
     painel.print_title_rows = '1:3'
     painel.sheet_view.tabSelected = True
     livro.active = 0
