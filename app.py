@@ -665,6 +665,158 @@ def gerar_excel_dre(nome_mes, df_dre_completo, df_lancamentos):
     return output.getvalue()
 
 
+
+# Layout executivo adicional, alimentado pelos mesmos valores da DRE.
+_gerar_excel_dre_base = gerar_excel_dre
+
+def gerar_excel_dre(nome_mes, df_dre_completo, df_lancamentos):
+    """Exporta painel executivo com gráficos + DRE detalhada + lançamentos."""
+    from openpyxl import load_workbook
+    from openpyxl.chart import BarChart, DoughnutChart, Reference
+    from openpyxl.chart.label import DataLabelList
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    dados = _gerar_excel_dre_base(nome_mes, df_dre_completo, df_lancamentos)
+    livro = load_workbook(io.BytesIO(dados))
+    dre = livro['DRE_MENSAL']
+    painel = livro.create_sheet('PAINEL EXECUTIVO', 0)
+    painel.sheet_view.showGridLines = False
+    painel.sheet_properties.pageSetUpPr.fitToPage = True
+    painel.page_setup.orientation = 'landscape'
+    painel.page_setup.fitToWidth = 1
+    painel.freeze_panes = 'A5'
+    for letra in 'ABCDEFGHIJKLMN':
+        painel.column_dimensions[letra].width = 14
+    painel.column_dimensions['A'].width = 23
+    painel.column_dimensions['B'].width = 17
+    painel.column_dimensions['C'].width = 18
+    painel.column_dimensions['D'].width = 18
+    painel.column_dimensions['E'].width = 18
+    painel.column_dimensions['F'].width = 18
+    painel.column_dimensions['G'].width = 18
+    painel.column_dimensions['H'].width = 18
+    painel.merge_cells('A1:N2')
+    t = painel['A1']; t.value = 'SPOLETO  |  PAINEL FINANCEIRO'
+    t.fill = PatternFill('solid', fgColor='102B51')
+    t.font = Font(name='Aptos Display', size=21, bold=True, color='FFFFFF')
+    t.alignment = Alignment(vertical='center', indent=1)
+    painel.row_dimensions[1].height = 28
+    painel.row_dimensions[2].height = 25
+    painel.merge_cells('A3:N3')
+    painel['A3'] = f'Competência: {nome_mes}  •  DRE gerencial  •  Valores em R$'
+    painel['A3'].font = Font(name='Aptos', size=11, italic=True, color='526987')
+    painel.row_dimensions[3].height = 28
+
+    # Usar referências às células originais, sem recalcular ou alterar os números.
+    contas = {}
+    for linha in range(5, dre.max_row + 1):
+        nome = str(dre.cell(linha, 1).value or '').strip().upper()
+        if nome:
+            contas[nome] = linha
+
+    def localizar(*termos):
+        for termo in termos:
+            for nome, linha in contas.items():
+                if termo in nome:
+                    return linha
+        return None
+
+    indicadores = [
+        ('VENDA BRUTA', ('VENDA BRUTA',)),
+        ('RECEITA LÍQUIDA', ('RECEITA LÍQUIDA',)),
+        ('CMV + FRETES', ('C M V (', 'CMV (CUSTO')),
+        ('LUCRO BRUTO', ('LUCRO BRUTO',)),
+        ('DESPESAS OPERACIONAIS', ('TOTAL DESPESAS OPERACIONAIS',)),
+        ('RESULTADO FINAL', ('RESULTADO FINAL',)),
+    ]
+    celulas_indicadores = {}
+    for i, (titulo, termos) in enumerate(indicadores):
+        r = 5 + (i // 3) * 4
+        c = 1 + (i % 3) * 5
+        painel.merge_cells(start_row=r, start_column=c, end_row=r, end_column=c+3)
+        painel.merge_cells(start_row=r+1, start_column=c, end_row=r+2, end_column=c+3)
+        h = painel.cell(r,c, titulo)
+        h.fill = PatternFill('solid', fgColor='E7EFFA')
+        h.font = Font(name='Aptos', size=10, bold=True, color='365781')
+        h.alignment = Alignment(indent=1, vertical='center')
+        v = painel.cell(r+1,c)
+        fonte = localizar(*termos)
+        v.value = f"='DRE_MENSAL'!B{fonte}" if fonte else None
+        v.number_format = '"R$" #,##0.00;[Red]("R$" #,##0.00)'
+        v.font = Font(name='Aptos Display', size=18, bold=True, color='102B51')
+        v.alignment = Alignment(vertical='center', indent=1)
+        celulas_indicadores[titulo] = v.coordinate
+        painel.row_dimensions[r+1].height = 24
+        painel.row_dimensions[r+2].height = 24
+
+    painel.merge_cells('A14:N14')
+    painel['A14'] = 'COMPOSIÇÃO DE DESPESAS E RESULTADO'
+    painel['A14'].font = Font(name='Aptos', size=13, bold=True, color='102B51')
+    painel.row_dimensions[14].height = 26
+
+    # Tabelas auxiliares também são úteis para auditoria e alimentam os gráficos.
+    painel['A16'], painel['B16'] = 'Grupo', 'Valor (R$)'
+    grupos = [
+        ('CMV + fretes', ('C M V (', 'CMV (CUSTO')),
+        ('Ocupação', ('TOTAL OCUPAÇÃO',)),
+        ('Pessoal', ('TOTAL PESSOAL',)),
+        ('Materiais de uso e consumo', ('MATERIAIS DE USO',)),
+        ('Marketing e franqueador', ('MARKETING & FRANQUEADOR', 'MARKETING E FRANQUEADOR')),
+        ('Financeiro', ('CUSTO FINANCEIRO',)),
+    ]
+    for n, (rotulo, termos) in enumerate(grupos, 17):
+        painel.cell(n, 1, rotulo)
+        origem = localizar(*termos)
+        painel.cell(n, 2, f"='DRE_MENSAL'!B{origem}" if origem else None)
+    painel['D16'], painel['E16'] = 'Receitas e resultados', 'Valor (R$)'
+    for n, (rotulo, termos) in enumerate([indicadores[0], indicadores[1], indicadores[3], indicadores[5]], 17):
+        painel.cell(n, 4, rotulo)
+        origem = localizar(*termos)
+        painel.cell(n, 5, f"='DRE_MENSAL'!B{origem}" if origem else None)
+    for faixa in ('A16:B16','D16:E16'):
+        for row in painel[faixa]:
+            for cel in row:
+                cel.fill = PatternFill('solid', fgColor='204879')
+                cel.font = Font(bold=True, color='FFFFFF')
+    for row in list(painel['A17:B22']) + list(painel['D17:E20']):
+        for cel in row:
+            cel.fill = PatternFill('solid', fgColor='F1F5FA' if cel.row % 2 else 'FFFFFF')
+            cel.font = Font(name='Aptos', size=10, color='1D3556')
+            if cel.column in (2,5):
+                cel.number_format = '"R$" #,##0.00;[Red]("R$" #,##0.00)'
+    # Gráficos posicionados abaixo das tabelas, evitando sobreposição.
+    barras = BarChart()
+    barras.type = 'bar'
+    barras.style = 10
+    barras.title = 'Principais grupos de custo'
+    barras.y_axis.title = 'Grupo'
+    barras.x_axis.title = 'R$'
+    barras.add_data(Reference(painel, min_col=2, min_row=16, max_row=22), titles_from_data=True)
+    barras.set_categories(Reference(painel, min_col=1, min_row=17, max_row=22))
+    barras.width, barras.height = 23, 11
+    barras.legend = None
+    painel.add_chart(barras, 'A25')
+    colunas = BarChart()
+    colunas.type = 'col'
+    colunas.style = 10
+    colunas.title = 'Faturamento e resultados'
+    colunas.add_data(Reference(painel, min_col=5, min_row=16, max_row=20), titles_from_data=True)
+    colunas.set_categories(Reference(painel, min_col=4, min_row=17, max_row=20))
+    colunas.width, colunas.height = 23, 11
+    colunas.legend = None
+    painel.add_chart(colunas, 'A47')
+    painel.merge_cells('A70:N70')
+    painel['A70'] = 'Os gráficos mostram valores da DRE. Grupos selecionados não representam a totalidade das despesas.'
+    painel['A70'].font = Font(size=10, italic=True, color='526987')
+    painel.print_options.horizontalCentered = True
+    painel.print_area = 'A1:N70'
+    # DRE e lançamentos continuam disponíveis para consulta detalhada.
+    saida = io.BytesIO()
+    livro.active = 0
+    livro.save(saida)
+    return saida.getvalue()
+
 # ----------------- CONFIGURAÇÕES IA (4 CHAVES) -----------------
 def carregar_chaves_gemini():
     """Lê chaves dos Secrets sem expor seus valores."""
@@ -2194,7 +2346,7 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
         st.markdown("### 📥 Baixar Relatório")
         dados_excel = gerar_excel_dre(NOMES_MESES[mes_ativo], pd.DataFrame(estrutura_dre_spoleto), df_l)
         st.download_button(
-            label="📊 Baixar DRE Atualizado em Excel (.xlsx)",
+            label="📊 Baixar DRE com Painel e Gráficos (.xlsx)",
             data=dados_excel,
             file_name=f"DRE_Spoleto_{mes_ativo}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
