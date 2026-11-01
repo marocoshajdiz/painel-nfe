@@ -2764,6 +2764,21 @@ def salvar_contagem_estoque(mes, quantidades):
         conn.commit()
 
 
+def produtos_sem_contagem(mes):
+    """Lista produtos ativos sem quantidade registrada, sem alterar dados."""
+    with conectar_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT p.id, p.produto
+                FROM produtos_inventario p
+                JOIN inventarios i ON i.mes_referencia=%s
+                LEFT JOIN inventario_itens ii ON ii.inventario_id=i.id AND ii.produto_id=p.id
+                WHERE p.ativo=TRUE AND p.categoria IN ('Demais Alimentos',
+                    'Pratos da Campanha', 'Horte', 'Bebidas', 'Descartáveis')
+                  AND ii.quantidade IS NULL
+                ORDER BY p.produto""", (mes,))
+            return cur.fetchall()
+
+
 def fechar_ou_reabrir(mes, fechar):
     with conectar_db() as conn:
         with conn.cursor() as cur:
@@ -3075,7 +3090,25 @@ elif menu == "📦 Inventário e Produtos":
                     st.rerun()
     elif inv:
         st.info("Inventário aberto. Confira as quantidades antes de fechar.")
+        try:
+            pendentes = produtos_sem_contagem(mes_ativo)
+        except Exception as erro:
+            st.error(f"Não foi possível verificar as contagens pendentes: {erro}")
+            pendentes = None
+        if pendentes:
+            st.warning(f"Existem {len(pendentes)} produtos ativos de CMV sem contagem. Preencha a quantidade ou informe 0 quando não houver estoque.")
+            with st.expander(f"Ver os {len(pendentes)} produtos pendentes", expanded=False):
+                st.dataframe(pd.DataFrame([{"Produto": nome} for _, nome in pendentes]),
+                             hide_index=True, use_container_width=True)
+            st.info("O inventário permanecerá aberto até que todos os itens obrigatórios sejam conferidos.")
         if st.checkbox("Confirmo que revisei a contagem", key=f"confirmar_fechar_{mes_ativo}"):
-            if st.button("🔒 Fechar inventário"):
-                fechar_ou_reabrir(mes_ativo, True)
-                st.rerun()
+            if st.button("🔒 Fechar inventário", disabled=(pendentes is None or bool(pendentes))):
+                try:
+                    fechar_ou_reabrir(mes_ativo, True)
+                except ValueError as erro:
+                    st.error(f"Não foi possível fechar o inventário: {erro}")
+                except Exception:
+                    st.error("Não foi possível fechar o inventário. Consulte os logs do Streamlit.")
+                else:
+                    st.success("Inventário fechado com sucesso.")
+                    st.rerun()
