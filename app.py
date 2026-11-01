@@ -3065,8 +3065,8 @@ if menu == "📋 Contagem de Estoque":
         busca = st.text_input("🔎 Pesquisar produto", placeholder="Digite parte do nome")
         exibidos = [p for p in produtos if busca.casefold() in str(p[2]).casefold()]
         quantidades_atuais = quantidades_do_mes(mes_ativo)
-        st.caption(f"{len(exibidos)} produto(s) exibido(s). Quantidades já salvas aparecem preenchidas.")
-        st.info("💾 As edições ficam em rascunho durante a contagem. Clique em **Salvar contagem agora** quando quiser. O salvamento automático tenta gravar as alterações a cada 5 minutos enquanto esta página permanecer conectada.")
+        st.caption(f"{len(exibidos)} produto(s) exibido(s). A unidade de medida vem do cadastro de cada produto; quantidades já salvas aparecem preenchidas.")
+        st.info("📏 Confira a coluna **Unidade de medida** antes de digitar a quantidade. Se estiver incorreta, ajuste o cadastro do produto em **Inventário e Produtos**.\n\n💾 As edições ficam em rascunho durante a contagem. Clique em **Salvar contagem agora** quando quiser. O salvamento automático tenta gravar as alterações a cada 5 minutos enquanto esta página permanecer conectada.")
 
         @st.fragment(run_every="300s")
         def editor_contagem_com_salvamento():
@@ -3078,15 +3078,16 @@ if menu == "📋 Contagem de Estoque":
             if chave_relogio not in st.session_state:
                 st.session_state[chave_relogio] = time.monotonic()
             df = pd.DataFrame([{
-                "ID": p[0], "PRODUTO": p[2],
+                "ID": p[0], "PRODUTO": p[2], "UNIDADE DE MEDIDA": str(p[4] or "NÃO DEFINIDA").upper(),
                 "QUANTIDADE": (formatar_numero_br(quantidades_atuais[p[0]]) if p[0] in quantidades_atuais else "")
             } for p in exibidos])
             editado = st.data_editor(
                 df, hide_index=True, use_container_width=True, num_rows="fixed",
-                disabled=["ID", "PRODUTO", "QUANTIDADE"] if fechado else ["ID", "PRODUTO"],
+                disabled=["ID", "PRODUTO", "UNIDADE DE MEDIDA", "QUANTIDADE"] if fechado else ["ID", "PRODUTO", "UNIDADE DE MEDIDA"],
                 key=chave_editor,
                 column_config={"ID": None, "PRODUTO": st.column_config.TextColumn("Produto"),
-                               "QUANTIDADE": st.column_config.TextColumn("Quantidade (ex.: 2,5)")},
+                               "UNIDADE DE MEDIDA": st.column_config.TextColumn("Unidade de medida", width="medium", help="Unidade cadastrada no produto (KG, L, UNIDADE, CX, MAÇO etc.)."),
+                               "QUANTIDADE": st.column_config.TextColumn("Quantidade (ex.: 2,5)", width="medium")},
             )
             if fechado:
                 return
