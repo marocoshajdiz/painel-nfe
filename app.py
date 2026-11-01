@@ -2927,21 +2927,31 @@ if menu == "📋 Contagem de Estoque":
         exibidos = [p for p in produtos if busca.casefold() in str(p[2]).casefold()]
         quantidades_atuais = quantidades_do_mes(mes_ativo)
         st.caption(f"{len(exibidos)} produto(s) exibido(s). Quantidades já salvas aparecem preenchidas.")
-        st.info("💾 Salvamento automático ativado: ao confirmar a edição de uma quantidade (Enter ou sair da célula), ela é gravada no Supabase. Se a sessão cair, basta entrar novamente e selecionar o mês.")
-        df = pd.DataFrame([{
-            "ID": p[0], "PRODUTO": p[2],
-            "QUANTIDADE": (formatar_numero_br(quantidades_atuais[p[0]]) if p[0] in quantidades_atuais else "")
-        } for p in exibidos])
-        editado = st.data_editor(
-            df, hide_index=True, use_container_width=True, num_rows="fixed",
-            disabled=["ID", "PRODUTO", "QUANTIDADE"] if fechado else ["ID", "PRODUTO"],
-            key=f"contagem_auto_{mes_ativo}_{hashlib.sha256(busca.encode()).hexdigest()[:12]}",
-            column_config={"ID": None, "PRODUTO": st.column_config.TextColumn("Produto"),
-                           "QUANTIDADE": st.column_config.TextColumn("Quantidade (ex.: 2,5)")},
-        )
-        if not fechado:
-            mudancas = {}
-            erros = []
+        st.info("💾 As edições ficam em rascunho durante a contagem. Clique em **Salvar contagem agora** quando quiser. O salvamento automático tenta gravar as alterações a cada 5 minutos enquanto esta página permanecer conectada.")
+
+        @st.fragment(run_every="300s")
+        def editor_contagem_com_salvamento():
+            # O rascunho fica na sessão; só gravamos diferenças, nunca linhas vazias.
+            quantidades_atuais = quantidades_do_mes(mes_ativo)
+            chave_versao = f"contagem_versao_{mes_ativo}"
+            chave_editor = f"contagem_lote_{mes_ativo}_{hashlib.sha256(busca.encode()).hexdigest()[:12]}_{st.session_state.get(chave_versao, 0)}"
+            chave_relogio = f"contagem_ultimo_salvamento_{mes_ativo}"
+            if chave_relogio not in st.session_state:
+                st.session_state[chave_relogio] = time.monotonic()
+            df = pd.DataFrame([{
+                "ID": p[0], "PRODUTO": p[2],
+                "QUANTIDADE": (formatar_numero_br(quantidades_atuais[p[0]]) if p[0] in quantidades_atuais else "")
+            } for p in exibidos])
+            editado = st.data_editor(
+                df, hide_index=True, use_container_width=True, num_rows="fixed",
+                disabled=["ID", "PRODUTO", "QUANTIDADE"] if fechado else ["ID", "PRODUTO"],
+                key=chave_editor,
+                column_config={"ID": None, "PRODUTO": st.column_config.TextColumn("Produto"),
+                               "QUANTIDADE": st.column_config.TextColumn("Quantidade (ex.: 2,5)")},
+            )
+            if fechado:
+                return
+            mudancas, erros = {}, []
             for linha in editado.to_dict("records"):
                 entrada = str(linha["QUANTIDADE"] or "").strip()
                 if not entrada:
@@ -2957,16 +2967,26 @@ if menu == "📋 Contagem de Estoque":
                 atual = quantidades_atuais.get(identificador)
                 if atual is None or abs(float(atual) - numero) > 0.000001:
                     mudancas[identificador] = numero
+            st.caption(f"{len(mudancas)} alteração(ões) ainda não salva(s).")
+            manual = st.button("💾 Salvar contagem agora", type="primary", key=f"salvar_lote_{mes_ativo}")
+            automatico = bool(mudancas) and time.monotonic() - st.session_state[chave_relogio] >= 300
             if erros:
-                st.error("Revise: " + "; ".join(erros[:5]))
-            elif mudancas:
+                st.error("Revise antes de salvar: " + "; ".join(erros[:5]))
+            elif mudancas and (manual or automatico):
                 try:
                     salvar_contagem_estoque(mes_ativo, mudancas)
-                    st.success(f"✅ {len(mudancas)} quantidade(s) salvas automaticamente no Supabase.")
-                    st.rerun()
+                    st.session_state[chave_relogio] = time.monotonic()
+                    st.success(f"✅ {len(mudancas)} quantidade(s) salvas {'manualmente' if manual else 'automaticamente'} no Supabase.")
+                    # Limpa o estado do editor somente após o sucesso, para não reaplicar edições antigas.
+                    st.session_state[chave_versao] = st.session_state.get(chave_versao, 0) + 1
+                    st.rerun(scope="fragment")
                 except Exception as erro:
-                    st.error(f"Não foi possível salvar automaticamente. Não feche a página: {erro}")
-        st.caption("Importante: uma célula ainda em edição, sem Enter ou sem sair dela, não foi enviada ao servidor. O login pode ser solicitado novamente após desconexões ou reinícios do Streamlit.")
+                    st.error(f"Falha ao salvar; mantenha esta página aberta e tente novamente: {erro}")
+            elif manual:
+                st.info("Nenhuma alteração pendente para salvar.")
+
+        editor_contagem_com_salvamento()
+        st.caption("Atenção: o salvamento automático depende de a página permanecer aberta e conectada. Para evitar perdas por desconexão, use 'Salvar contagem agora' periodicamente. Confirme a célula com Enter antes de salvar.")
 
 elif menu == "📦 Inventário e Produtos":
     st.subheader(f"📦 Inventário e Produtos — {NOMES_MESES[mes_ativo]}")
