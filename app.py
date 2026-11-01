@@ -20,39 +20,96 @@ from leitor_fiscal import ler_xml, ler_pdf, ler_imagem_ocr
 
 st.set_page_config(page_title="Painel de Custos & DRE Spoleto - Capry", layout="wide")
 
-# ----------------- CONTROLE DE ACESSO -----------------
-USUARIO_CORRETO = st.secrets.get("LOGIN_USUARIO", "admin")
-SENHA_CORRETA = st.secrets.get("LOGIN_SENHA", "")
-if not SENHA_CORRETA:
-    st.error("Configure LOGIN_SENHA nos Secrets do Streamlit para habilitar o acesso.")
+# ----------------- CONTROLE DE ACESSO COM PERMISSÕES -----------------
+import secrets as crypto_secrets
+
+MODULOS_PERMISSOES = {
+    "dre": "📊 DRE Spoleto", "graficos": "📈 Dashboard de Gráficos",
+    "ajustes": "✍️ Ajustes Manuais da DRE", "financeiro": "💳 Financeiro — Cartões, Pix e Voucher",
+    "notas": "📸 Escanear & Alimentar Nota", "lancamentos": "📝 Lançamentos do Mês",
+    "regras": "🧠 Regras Inteligentes", "contagem": "📋 Contagem de Estoque",
+    "inventario": "📦 Inventário e Produtos",
+}
+
+def conectar_usuarios():
+    url = st.secrets.get("DATABASE_URL", "")
+    if not str(url).startswith(("postgresql://", "postgres://")):
+        raise RuntimeError("DATABASE_URL não configurada corretamente.")
+    return psycopg2.connect(str(url), connect_timeout=12, sslmode="require")
+
+def preparar_usuarios():
+    with conectar_usuarios() as conn, conn.cursor() as cur:
+        cur.execute("""CREATE TABLE IF NOT EXISTS usuarios_acesso_spoleto (
+            id BIGSERIAL PRIMARY KEY, usuario TEXT NOT NULL UNIQUE,
+            nome TEXT NOT NULL, senha_hash TEXT NOT NULL,
+            administrador BOOLEAN NOT NULL DEFAULT FALSE,
+            ativo BOOLEAN NOT NULL DEFAULT TRUE,
+            permissoes JSONB NOT NULL DEFAULT '[]'::jsonb,
+            criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )""")
+
+def hash_senha(senha):
+    salt = crypto_secrets.token_bytes(16)
+    chave = hashlib.pbkdf2_hmac("sha256", senha.encode("utf-8"), salt, 600000)
+    return "pbkdf2_sha256$600000$" + salt.hex() + "$" + chave.hex()
+
+def verificar_senha(senha, gravado):
+    try:
+        algoritmo, rodadas, sal, esperado = gravado.split("$")
+        if algoritmo != "pbkdf2_sha256": return False
+        atual = hashlib.pbkdf2_hmac("sha256", senha.encode("utf-8"), bytes.fromhex(sal), int(rodadas))
+        return hmac.compare_digest(atual, bytes.fromhex(esperado))
+    except (ValueError, TypeError):
+        return False
+
+def consultar_usuario(usuario):
+    with conectar_usuarios() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id,usuario,nome,senha_hash,administrador,ativo,permissoes FROM usuarios_acesso_spoleto WHERE usuario=%s", (usuario,))
+        return cur.fetchone()
+
+def sessao_valida():
+    identidade = st.session_state.get("identidade_spoleto")
+    if not identidade: return False
+    # Revoga acesso imediatamente quando conta for desativada ou permissões alteradas.
+    registro = consultar_usuario(identidade["usuario"]) if not identidade.get("bootstrap") else None
+    if identidade.get("bootstrap"):
+        return bool(st.session_state.get("autenticado"))
+    if not registro or not registro[5]: return False
+    st.session_state.identidade_spoleto = {"usuario": registro[1], "nome": registro[2], "admin": bool(registro[4]), "permissoes": registro[6] or []}
+    return True
+
+try:
+    preparar_usuarios()
+except Exception as erro:
+    st.error(f"Não foi possível preparar o controle de usuários: {erro}")
     st.stop()
 
-if "autenticado" not in st.session_state:
+if not st.session_state.get("autenticado") or not sessao_valida():
     st.session_state.autenticado = False
-
-
-def tela_login():
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.markdown("<br><br>", unsafe_allow_html=True)
-        st.markdown("### 🔐 Acesso ao Painel de Custos & DRE - Capry")
-        st.write("Digite suas credenciais:")
-        st.caption("No iPhone, use o botão Senhas do teclado para preencher com segurança. O salvamento é controlado pelo iOS, não pelo site.")
-        with st.form("form_login"):
-            usuario = st.text_input("Usuário", placeholder="Seu usuário", autocomplete="username", key="login_usuario")
-            senha = st.text_input("Senha", type="password", placeholder="Sua senha", autocomplete="current-password", key="login_senha")
-            if st.form_submit_button("Entrar", type="primary", use_container_width=True):
-                if hmac.compare_digest(usuario, str(USUARIO_CORRETO)) and hmac.compare_digest(senha, str(SENHA_CORRETA)):
-                    st.session_state.autenticado = True
-                    st.rerun()
-                else:
-                    st.error("❌ Usuário ou senha incorretos!")
-
-
-if not st.session_state.autenticado:
-    tela_login()
+    st.session_state.pop("identidade_spoleto", None)
+    st.title("🔐 Acesso ao Painel Spoleto")
+    with st.form("form_login_spoleto"):
+        usuario = st.text_input("Usuário", autocomplete="username").strip()
+        senha = st.text_input("Senha", type="password", autocomplete="current-password")
+        entrar = st.form_submit_button("Entrar", type="primary")
+    if entrar:
+        registro = consultar_usuario(usuario)
+        if registro and registro[5] and verificar_senha(senha, registro[3]):
+            st.session_state.identidade_spoleto = {"usuario": registro[1], "nome": registro[2], "admin": bool(registro[4]), "permissoes": registro[6] or []}
+            st.session_state.autenticado = True
+            st.rerun()
+        elif (hmac.compare_digest(usuario, str(st.secrets.get("LOGIN_USUARIO", "admin")))
+              and bool(st.secrets.get("LOGIN_SENHA", ""))
+              and hmac.compare_digest(senha, str(st.secrets.get("LOGIN_SENHA", "")))):
+            st.session_state.identidade_spoleto = {"usuario": usuario, "nome": "Administrador Geral", "admin": True, "permissoes": list(MODULOS_PERMISSOES), "bootstrap": True}
+            st.session_state.autenticado = True
+            st.rerun()
+        else:
+            st.error("Usuário ou senha incorretos, ou conta desativada.")
     st.stop()
 
+identidade = st.session_state.identidade_spoleto
+st.sidebar.markdown(f"**👤 {identidade['nome']}**")
 st.sidebar.markdown("""
 <div class="capry-brand">
   <div class="capry-logo">S P O L E T O</div>
@@ -61,7 +118,7 @@ st.sidebar.markdown("""
 </div>
 <div class="capry-profile">
   <span class="capry-avatar">👤</span>
-  <span><strong>Olá, administrador</strong><small>Gestão financeira</small></span>
+  <span><strong>Painel Spoleto</strong><small>Acesso autorizado</small></span>
 </div>
 """, unsafe_allow_html=True)
 
@@ -1442,17 +1499,73 @@ def total_mensalidades_maquinas(mes):
             return float(cur.fetchone()[0] or 0)
 
 # ----------------- NAVEGAÇÃO -----------------
-menu = st.sidebar.radio("Módulo:", [
-    f"📊 DRE Spoleto ({NOMES_MESES[mes_ativo]})",
-    "📈 Dashboard de Gráficos",
-    "✍️ Ajustes Manuais da DRE",
-    "💳 Financeiro — Cartões, Pix e Voucher",
-    "📸 Escanear & Alimentar Nota",
-    "📝 Lançamentos do Mês",
-    "🧠 Regras Inteligentes",
-    "📋 Contagem de Estoque",
-    "📦 Inventário e Produtos",
-])
+opcoes_menu = [("dre", f"📊 DRE Spoleto ({NOMES_MESES[mes_ativo]})"),
+    ("graficos", "📈 Dashboard de Gráficos"),
+    ("ajustes", "✍️ Ajustes Manuais da DRE"),
+    ("financeiro", "💳 Financeiro — Cartões, Pix e Voucher"),
+    ("notas", "📸 Escanear & Alimentar Nota"),
+    ("lancamentos", "📝 Lançamentos do Mês"),
+    ("regras", "🧠 Regras Inteligentes"),
+    ("contagem", "📋 Contagem de Estoque"),
+    ("inventario", "📦 Inventário e Produtos")]
+permitidos = list(MODULOS_PERMISSOES) if identidade["admin"] else identidade["permissoes"]
+visiveis = [nome for codigo, nome in opcoes_menu if codigo in permitidos]
+if identidade["admin"]:
+    visiveis.append("🔐 Administração de Usuários")
+if not visiveis:
+    st.warning("Sua conta não possui módulos liberados. Procure o administrador.")
+    st.stop()
+menu = st.sidebar.radio("Módulo:", visiveis)
+
+if menu == "🔐 Administração de Usuários":
+    st.title("🔐 Administração de Usuários")
+    if st.button("↪ Sair do Sistema", key="logout_admin"):
+        st.session_state.autenticado = False
+        st.session_state.pop("identidade_spoleto", None)
+        st.rerun()
+    st.caption("Cadastre contas, atribua permissões e bloqueie acessos. As senhas são armazenadas com hash PBKDF2.")
+    with st.expander("➕ Cadastrar novo usuário", expanded=False):
+        with st.form("criar_usuario"):
+            nome_novo = st.text_input("Nome completo")
+            login_novo = st.text_input("Login (sem espaços)")
+            senha_nova = st.text_input("Senha inicial (mínimo 12 caracteres)", type="password")
+            admin_novo = st.checkbox("Administrador geral (acesso total)")
+            perms_novas = st.multiselect("Módulos permitidos", list(MODULOS_PERMISSOES), format_func=lambda k: MODULOS_PERMISSOES[k])
+            if st.form_submit_button("Criar usuário", type="primary"):
+                if not nome_novo.strip() or not re.fullmatch(r"[a-zA-Z0-9_.-]{3,40}", login_novo) or len(senha_nova) < 12:
+                    st.error("Informe nome, login de 3 a 40 caracteres e senha de pelo menos 12 caracteres.")
+                else:
+                    try:
+                        with conectar_usuarios() as conn, conn.cursor() as cur:
+                            cur.execute("INSERT INTO usuarios_acesso_spoleto (usuario,nome,senha_hash,administrador,permissoes) VALUES (%s,%s,%s,%s,%s::jsonb)", (login_novo, nome_novo.strip(), hash_senha(senha_nova), admin_novo, json.dumps(perms_novas)))
+                        st.success("Usuário criado.")
+                        st.rerun()
+                    except psycopg2.errors.UniqueViolation:
+                        st.error("Esse login já existe.")
+    with conectar_usuarios() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id,usuario,nome,administrador,ativo,permissoes FROM usuarios_acesso_spoleto ORDER BY nome")
+        usuarios = cur.fetchall()
+    for uid, login, nome, admin, ativo, perms in usuarios:
+        with st.expander(f"{'🟢' if ativo else '🔴'} {nome} ({login})"):
+            with st.form(f"editar_usuario_{uid}"):
+                novo_nome = st.text_input("Nome", value=nome, key=f"nome_{uid}")
+                novo_admin = st.checkbox("Administrador", value=admin, key=f"admin_{uid}")
+                novo_ativo = st.checkbox("Acesso ativo", value=ativo, key=f"ativo_{uid}")
+                novas_perms = st.multiselect("Permissões", list(MODULOS_PERMISSOES), default=[p for p in (perms or []) if p in MODULOS_PERMISSOES], format_func=lambda k: MODULOS_PERMISSOES[k], key=f"perms_{uid}")
+                nova_senha = st.text_input("Nova senha (deixe vazio para manter)", type="password", key=f"senha_{uid}")
+                if st.form_submit_button("Salvar alterações"):
+                    if not novo_nome.strip() or (nova_senha and len(nova_senha) < 12):
+                        st.error("Nome obrigatório e nova senha com no mínimo 12 caracteres.")
+                    elif login == identidade["usuario"] and (not novo_admin or not novo_ativo):
+                        st.error("Não é permitido retirar seu próprio acesso administrativo.")
+                    else:
+                        with conectar_usuarios() as conn, conn.cursor() as cur:
+                            cur.execute("UPDATE usuarios_acesso_spoleto SET nome=%s,administrador=%s,ativo=%s,permissoes=%s::jsonb WHERE id=%s", (novo_nome.strip(), novo_admin, novo_ativo, json.dumps(novas_perms), uid))
+                            if nova_senha:
+                                cur.execute("UPDATE usuarios_acesso_spoleto SET senha_hash=%s WHERE id=%s", (hash_senha(nova_senha), uid))
+                        st.success("Alterações salvas.")
+                        st.rerun()
+    st.stop()
 
 mostrar_contador_gemini()
 
