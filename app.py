@@ -586,11 +586,81 @@ def salvar_ajustes_dre(mes_ref, dict_valores):
 
 
 def gerar_excel_dre(nome_mes, df_dre_completo, df_lancamentos):
+    """Exporta DRE e lançamentos com layout profissional e números utilizáveis."""
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
     output = io.BytesIO()
+    dre = df_dre_completo.copy()
+    # O painel apresenta percentuais como texto ('12.34%'); no Excel devem ser números.
+    if "%" in dre.columns:
+        dre["%"] = dre["%"].map(
+            lambda x: float(str(x).strip().replace("%", "").replace(",", ".")) / 100
+            if pd.notna(x) and str(x).strip() else None
+        )
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df_dre_completo.copy().to_excel(writer, sheet_name="DRE_MENSAL", index=False)
-        if not df_lancamentos.empty:
-            df_lancamentos.copy().to_excel(writer, sheet_name="LANÇAMENTOS", index=False)
+        dre.to_excel(writer, sheet_name="DRE_MENSAL", index=False, startrow=3)
+        lanc = df_lancamentos.copy()
+        lanc.to_excel(writer, sheet_name="LANÇAMENTOS", index=False, startrow=3)
+        for nome_aba, dados in (("DRE_MENSAL", dre), ("LANÇAMENTOS", lanc)):
+            ws = writer.sheets[nome_aba]
+            ncol = max(len(dados.columns), 1)
+            ultima = get_column_letter(ncol)
+            ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ncol)
+            titulo = ws.cell(1, 1)
+            titulo.value = "SPOLETO | DRE GERENCIAL" if nome_aba == "DRE_MENSAL" else "SPOLETO | LANÇAMENTOS DO MÊS"
+            titulo.font = Font(name="Aptos Display", size=17, bold=True, color="FFFFFF")
+            titulo.fill = PatternFill("solid", fgColor="102B51")
+            titulo.alignment = Alignment(vertical="center", indent=1)
+            ws.row_dimensions[1].height = 39
+            ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=ncol)
+            subtitulo = ws.cell(2, 1)
+            subtitulo.value = f"Competência: {nome_mes}  |  Valores em R$"
+            subtitulo.font = Font(name="Aptos", size=11, italic=True, color="35537A")
+            subtitulo.alignment = Alignment(vertical="center", indent=1)
+            ws.row_dimensions[2].height = 26
+            ws.row_dimensions[3].height = 10
+            ws.row_dimensions[4].height = 29
+            for cel in ws[4][:ncol]:
+                cel.fill = PatternFill("solid", fgColor="1E477C")
+                cel.font = Font(name="Aptos", size=11, bold=True, color="FFFFFF")
+                cel.alignment = Alignment(vertical="center", indent=1)
+            ws.freeze_panes = "B5" if ncol > 1 else "A5"
+            ws.sheet_view.showGridLines = False
+            ws.auto_filter.ref = f"A4:{ultima}{max(4, ws.max_row)}" if nome_aba == "LANÇAMENTOS" else None
+            for col_idx, nome in enumerate(dados.columns, 1):
+                coluna = get_column_letter(col_idx)
+                if nome_aba == "DRE_MENSAL":
+                    largura = 69 if str(nome).upper() == "CONTA" else (21 if str(nome).upper() == "VALOR" else 16)
+                else:
+                    maior = max([len(str(nome))] + [len(str(v)) for v in dados[nome].dropna().head(300)])
+                    largura = min(54, max(16, maior + 4))
+                ws.column_dimensions[coluna].width = largura
+            for row in ws.iter_rows(min_row=5, max_row=ws.max_row, max_col=ncol):
+                indice = row[0].row
+                rotulo = str(row[0].value or "").strip()
+                separador = not rotulo or set(rotulo) <= set("-_— ")
+                destaque = nome_aba == "DRE_MENSAL" and not separador and not rotulo.startswith("•") and not rotulo.startswith("- ") and not rotulo.startswith("(-)") and not rotulo.startswith("  •")
+                fundo = "E8F0FB" if destaque else ("F4F7FC" if indice % 2 else "FFFFFF")
+                if "RESULTADO FINAL" in rotulo.upper() or "TOTAL GERAL DE DESPESAS" in rotulo.upper():
+                    fundo = "D8E8FA"
+                for cel in row:
+                    cel.fill = PatternFill("solid", fgColor=fundo)
+                    cel.font = Font(name="Aptos", size=10, bold=destaque, color="102B51" if destaque else "26364A")
+                    cel.alignment = Alignment(vertical="center", indent=1 if cel.column == 1 else 0,
+                                              horizontal="left" if cel.column == 1 else "right" if isinstance(cel.value, (int, float)) else "left")
+                    cel.border = Border(bottom=Side(style="hair", color="E1E7F0"))
+                    if nome_aba == "DRE_MENSAL" and cel.column == 2 and isinstance(cel.value, (int, float)):
+                        cel.number_format = '"R$" #,##0.00;[Red]("R$" #,##0.00)'
+                    elif nome_aba == "DRE_MENSAL" and cel.column == 3 and isinstance(cel.value, (int, float)):
+                        cel.number_format = '0.00%'
+                    elif nome_aba == "LANÇAMENTOS" and str(dados.columns[cel.column - 1]).lower() == "valor" and isinstance(cel.value, (int, float)):
+                        cel.number_format = '"R$" #,##0.00;[Red]("R$" #,##0.00)'
+                ws.row_dimensions[indice].height = 23 if not separador else 12
+            ws.print_options.horizontalCentered = True
+            ws.sheet_properties.pageSetUpPr.fitToPage = True
+            ws.page_setup.fitToWidth = 1
+            ws.print_title_rows = "1:4"
     output.seek(0)
     return output.getvalue()
 
