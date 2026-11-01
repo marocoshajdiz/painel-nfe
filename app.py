@@ -2779,6 +2779,35 @@ def produtos_sem_contagem(mes):
             return cur.fetchall()
 
 
+def fechar_com_zeros_confirmados(mes):
+    """Preenche apenas quantidades ausentes em itens ativos de CMV e fecha atomicamente."""
+    with conectar_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, status FROM inventarios WHERE mes_referencia=%s FOR UPDATE", (mes,))
+            registro = cur.fetchone()
+            if not registro or registro[1] != 'ABERTO':
+                raise ValueError("O inventário precisa estar aberto para fechar.")
+            inv_id = registro[0]
+            cur.execute("""INSERT INTO inventario_itens
+                (inventario_id, produto_id, quantidade, custo_unitario)
+                SELECT %s, p.id, 0, p.preco_unitario
+                FROM produtos_inventario p
+                LEFT JOIN inventario_itens ii ON ii.inventario_id=%s AND ii.produto_id=p.id
+                WHERE p.ativo=TRUE AND p.categoria IN
+                  ('Demais Alimentos','Pratos da Campanha','Horte','Bebidas','Descartáveis')
+                  AND ii.id IS NULL
+                ON CONFLICT (inventario_id, produto_id) DO NOTHING""", (inv_id, inv_id))
+            cur.execute("""UPDATE inventario_itens ii SET quantidade=0
+                FROM produtos_inventario p
+                WHERE ii.inventario_id=%s AND ii.produto_id=p.id
+                  AND p.ativo=TRUE AND p.categoria IN
+                  ('Demais Alimentos','Pratos da Campanha','Horte','Bebidas','Descartáveis')
+                  AND ii.quantidade IS NULL""", (inv_id,))
+            calcular_valor_inventario(cur, inv_id, mes)
+            cur.execute("UPDATE inventarios SET status='FECHADO', fechado_em=NOW() WHERE id=%s", (inv_id,))
+        conn.commit()
+
+
 def fechar_ou_reabrir(mes, fechar):
     with conectar_db() as conn:
         with conn.cursor() as cur:
@@ -3096,19 +3125,21 @@ elif menu == "📦 Inventário e Produtos":
             st.error(f"Não foi possível verificar as contagens pendentes: {erro}")
             pendentes = None
         if pendentes:
-            st.warning(f"Existem {len(pendentes)} produtos ativos de CMV sem contagem. Preencha a quantidade ou informe 0 quando não houver estoque.")
-            with st.expander(f"Ver os {len(pendentes)} produtos pendentes", expanded=False):
+            st.warning(f"Há {len(pendentes)} produtos sem quantidade. Você pode confirmar que todos esses itens estão zerados.")
+            with st.expander(f"Ver os {len(pendentes)} produtos sem contagem"):
                 st.dataframe(pd.DataFrame([{"Produto": nome} for _, nome in pendentes]),
                              hide_index=True, use_container_width=True)
-            st.info("O inventário permanecerá aberto até que todos os itens obrigatórios sejam conferidos.")
-        if st.checkbox("Confirmo que revisei a contagem", key=f"confirmar_fechar_{mes_ativo}"):
-            if st.button("🔒 Fechar inventário", disabled=(pendentes is None or bool(pendentes))):
-                try:
-                    fechar_ou_reabrir(mes_ativo, True)
-                except ValueError as erro:
-                    st.error(f"Não foi possível fechar o inventário: {erro}")
-                except Exception:
-                    st.error("Não foi possível fechar o inventário. Consulte os logs do Streamlit.")
-                else:
-                    st.success("Inventário fechado com sucesso.")
-                    st.rerun()
+        st.caption("Antes de fechar, salve as alterações pendentes na tela de Contagem de Estoque.")
+        confirmar = st.checkbox(
+            "Revisei o inventário e confirmo que TODOS os produtos sem quantidade estão com estoque zero",
+            key=f"confirmar_zeros_{mes_ativo}")
+        if st.button("🔒 Confirmar zeros e fechar inventário", disabled=(pendentes is None or not confirmar)):
+            try:
+                fechar_com_zeros_confirmados(mes_ativo)
+            except ValueError as erro:
+                st.error(f"Não foi possível fechar o inventário: {erro}")
+            except Exception:
+                st.error("Não foi possível fechar o inventário. Consulte os logs do Streamlit.")
+            else:
+                st.success("Inventário fechado. Campos sem quantidade foram registrados como zero.")
+                st.rerun()
