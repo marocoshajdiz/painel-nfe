@@ -184,6 +184,9 @@ CLASSIFICACOES_DESPESAS = {
     "Serviço - Manutenção e Reparos": ("Manutenção", "Serviço - Manutenção E Reparos"),
     "Material - Manutenção e Reparos": ("Manutenção", "Material - Manutenção E Reparos"),
     "Comissão agregadores": ("Delivery", "Comissão Agregadores"),
+    "Comissão iFood": ("Delivery", "Comissão iFood"),
+    "Mensalidade iFood": ("Delivery", "Mensalidade iFood"),
+    "Promoções iFood": ("Delivery", "Promoções iFood"),
     "Custo com entrega (motoqueiros)": ("Delivery", "Custo Com Entrega (Motoqueiros)"),
     "Anúncios/Propagandas": ("Marketing", "Anúncios/Propagandas"),
     "Fundo de Marketing": ("Marketing", "Fundo De Marketing"),
@@ -1605,6 +1608,9 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
         ("Material - Manutenção e Reparos", "Material - Manutenção E Reparos", 0.0),
         ("Taxa de entrega arrecadada", None, 0.0),
         ("Comissão agregadores", "Comissão Agregadores", 0.0),
+        ("Comissão iFood", "Comissão iFood", 0.0),
+        ("Mensalidade iFood", "Mensalidade iFood", 0.0),
+        ("Promoções iFood", "Promoções iFood", 0.0),
         ("Custo com entrega (motoqueiros)", "Custo Com Entrega (Motoqueiros)", 0.0),
         ("Anúncios/Propagandas", "Anúncios/Propagandas", 0.0),
         ("Fundo de Marketing", "Fundo De Marketing", 0.0),
@@ -1674,7 +1680,7 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
             "Serviços": ["Serviços", "Terceiros", "Gcom", "Contador"],
             "Materiais de uso e consumo": ["Material de Escritório", "Material de Limpeza", "Uniformes", "Utensílios", "Outros Materiais de Uso e Consumo"],
             "Manutenção": ["Serviço - Manutenção e Reparos", "Material - Manutenção e Reparos"],
-            "Delivery": ["Comissão agregadores", "Custo com entrega (motoqueiros)"],
+            "Delivery": ["Comissão agregadores", "Comissão iFood", "Mensalidade iFood", "Promoções iFood", "Custo com entrega (motoqueiros)"],
             "Marketing e franqueador": ["Anúncios/Propagandas", "Fundo de Marketing", "Royalties"],
             "Financeiro": ["Custo Cartão de Crédito", "Custo Cartão de Débito", "Taxas Pix", "Taxas Voucher", "Mensalidade da Máquina"],
         }
@@ -1751,7 +1757,7 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
         v("Utensílios") + v("Outros Materiais de Uso e Consumo")
     )
     total_manut = v("Serviço - Manutenção e Reparos") + v("Material - Manutenção e Reparos")
-    total_deliv = (v("Comissão agregadores") + v("Custo com entrega (motoqueiros)")) - v("Taxa de entrega arrecadada")
+    total_deliv = (v("Comissão agregadores") + v("Comissão iFood") + v("Mensalidade iFood") + v("Promoções iFood") + v("Custo com entrega (motoqueiros)")) - v("Taxa de entrega arrecadada")
     total_mkt = v("Anúncios/Propagandas") + v("Fundo de Marketing") + v("Royalties")
     total_fin = v("Custo Cartão de Crédito") + v("Custo Cartão de Débito") + v("Taxas Pix") + v("Taxas Voucher") + v("Mensalidade da Máquina")
     # Gestão provisória: antes do fechamento do inventário, usar as compras
@@ -2008,6 +2014,9 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
             {"CONTA": "  • Uniformes", "VALOR": v("Uniformes"), "%": pct(v("Uniformes"))},
             {"CONTA": "🔧 MANUTENÇÃO", "VALOR": total_manut, "%": pct(total_manut)},
             {"CONTA": "🛵 DELIVERY", "VALOR": total_deliv, "%": pct(total_deliv)},
+            {"CONTA": "  • Comissão iFood", "VALOR": v("Comissão iFood"), "%": pct(v("Comissão iFood"))},
+            {"CONTA": "  • Mensalidade iFood", "VALOR": v("Mensalidade iFood"), "%": pct(v("Mensalidade iFood"))},
+            {"CONTA": "  • Promoções iFood", "VALOR": v("Promoções iFood"), "%": pct(v("Promoções iFood"))},
             {"CONTA": "📢 MARKETING & FRANQUEADOR", "VALOR": total_mkt, "%": pct(total_mkt)},
             {"CONTA": "💳 CUSTO FINANCEIRO", "VALOR": total_fin, "%": pct(total_fin)},
             {"CONTA": "  • Mensalidade da Máquina", "VALOR": v("Mensalidade da Máquina"), "%": pct(v("Mensalidade da Máquina"))},
