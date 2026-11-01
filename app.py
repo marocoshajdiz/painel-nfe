@@ -670,137 +670,142 @@ def gerar_excel_dre(nome_mes, df_dre_completo, df_lancamentos):
 _gerar_excel_dre_base = gerar_excel_dre
 
 def gerar_excel_dre(nome_mes, df_dre_completo, df_lancamentos):
-    """Painel executivo legível, com valores imediatos e gráficos editáveis no Excel."""
+    """Exporta painel executivo compacto, sem gráficos, preservando a DRE original."""
     from openpyxl import load_workbook
-    from openpyxl.chart.label import DataLabelList
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-    from openpyxl.utils import get_column_letter
+    import unicodedata
 
     dados = _gerar_excel_dre_base(nome_mes, df_dre_completo, df_lancamentos)
     livro = load_workbook(io.BytesIO(dados))
     painel = livro.create_sheet('PAINEL EXECUTIVO', 0)
     painel.sheet_view.showGridLines = False
-    painel.sheet_view.zoomScale = 85
+    painel.sheet_view.zoomScale = 95
+    painel.sheet_properties.tabColor = '102B51'
     painel.sheet_properties.pageSetUpPr.fitToPage = True
     painel.page_setup.orientation = 'landscape'
-    painel.page_setup.paperSize = painel.PAPERSIZE_A3
+    painel.page_setup.paperSize = painel.PAPERSIZE_A4
     painel.page_setup.fitToWidth = 1
     painel.page_setup.fitToHeight = 1
     painel.print_options.horizontalCentered = True
-    painel.sheet_properties.tabColor = '102B51'
-    painel.sheet_view.zoomScaleNormal = 85
-    painel.sheet_format.defaultRowHeight = 22
-    for col in 'ABCDEFGHIJKL':
-        painel.column_dimensions[col].width = 15
-    painel.column_dimensions['A'].width = 23
-    painel.column_dimensions['B'].width = 19
-    painel.column_dimensions['G'].width = 23
-    painel.column_dimensions['H'].width = 19
-
-    navy, blue, pale, ink = '102B51', '245A98', 'E8F1FB', '213750'
+    painel.sheet_view.tabSelected = True
+    painel.freeze_panes = 'A5'
+    painel.sheet_format.defaultRowHeight = 21
+    for col in 'ABCDEFGHI':
+        painel.column_dimensions[col].width = 12
+    for col in ('A', 'F'):
+        painel.column_dimensions[col].width = 21
+    for col in ('B', 'G'):
+        painel.column_dimensions[col].width = 18
+    for col in ('C', 'H'):
+        painel.column_dimensions[col].width = 12
+    painel.column_dimensions['D'].width = 17
+    painel.column_dimensions['I'].width = 17
+    painel.column_dimensions['E'].width = 3.5
+    navy, blue, light, ink, muted = '102B51', '245A98', 'EAF1F9', '20334B', '64748B'
     money = '"R$" #,##0.00;[Red]("R$" #,##0.00)'
-    painel.merge_cells('A1:L2')
-    c = painel['A1']; c.value = 'SPOLETO  |  PAINEL FINANCEIRO'
-    c.fill = PatternFill('solid', fgColor=navy)
-    c.font = Font(name='Aptos Display', size=22, bold=True, color='FFFFFF')
-    c.alignment = Alignment(vertical='center', indent=1)
-    painel.row_dimensions[1].height = 29
-    painel.row_dimensions[2].height = 27
-    painel.merge_cells('A3:L3')
-    c = painel['A3']; c.value = f'Competência: {nome_mes}  |  Indicadores gerenciais  |  Valores em R$'
-    c.font = Font(name='Aptos', size=12, italic=True, color=blue)
-    c.alignment = Alignment(indent=1, vertical='center')
-    painel.row_dimensions[3].height = 31
 
-    # Valores originais do DRE, sem reprocessar cálculos nem alterar o banco.
-    import unicodedata
-    def normalizar(v):
-        t = unicodedata.normalize('NFKD', str(v or ''))
-        return ''.join(x for x in t if not unicodedata.combining(x)).upper().strip()
-    linhas = [(normalizar(r.get('CONTA')), r.get('VALOR')) for r in df_dre_completo.to_dict('records')]
+    def norm(v):
+        v = unicodedata.normalize('NFKD', str(v or ''))
+        return ''.join(c for c in v if not unicodedata.combining(c)).upper().strip()
+    linhas = [(norm(r.get('CONTA')), r.get('VALOR')) for r in df_dre_completo.to_dict('records')]
     def buscar(*termos):
         for termo in termos:
-            alvo = normalizar(termo)
+            alvo = norm(termo)
             for nome, valor in linhas:
                 if alvo in nome:
-                    try:
-                        return float(valor)
-                    except (TypeError, ValueError):
-                        return 0.0
+                    try: return float(valor)
+                    except (ValueError, TypeError): return 0.0
         return 0.0
-
+    finais = []
+    for n,v in linhas:
+        if 'RESULTADO FINAL' in n and 'OPERACIONAL' not in n:
+            try: finais.append(float(v))
+            except (TypeError,ValueError): pass
     indicadores = [
         ('VENDA BRUTA', buscar('VENDA BRUTA')),
         ('RECEITA LÍQUIDA', buscar('RECEITA LIQUIDA')),
         ('CMV + FRETES', buscar('C M V (', 'CMV (CUSTO')),
         ('LUCRO BRUTO', buscar('LUCRO BRUTO')),
         ('DESPESAS OPERACIONAIS', buscar('TOTAL DESPESAS OPERACIONAIS')),
-        ('RESULTADO FINAL', buscar('RESULTADO FINAL') if not any('RESULTADO FINAL' == n for n, _ in linhas) else next((float(v) for n,v in reversed(linhas) if 'RESULTADO FINAL' == n), 0.0)),
+        ('RESULTADO FINAL', finais[-1] if finais else 0.0),
     ]
-    # Busca o último resultado final, evitando confundi-lo com o resultado operacional.
-    finais = [float(v) for n, v in linhas if 'RESULTADO FINAL' in n and 'OPERACIONAL' not in n]
-    if finais:
-        indicadores[-1] = ('RESULTADO FINAL', finais[-1])
+    painel.merge_cells('A1:I2')
+    for row in painel['A1:I2']:
+        for cell in row: cell.fill = PatternFill('solid', fgColor=navy)
+    cell = painel['A1']; cell.value = 'SPOLETO  |  RESUMO FINANCEIRO'
+    cell.font = Font(name='Aptos Display', size=20, bold=True, color='FFFFFF')
+    cell.alignment = Alignment(vertical='center', indent=1)
+    painel.row_dimensions[1].height = 28
+    painel.row_dimensions[2].height = 22
+    painel.merge_cells('A3:I3')
+    c=painel['A3']; c.value=f'Competência: {nome_mes}    •    DRE gerencial    •    Valores em R$'
+    c.font=Font(name='Aptos',size=11,color=blue)
+    c.alignment=Alignment(vertical='center',indent=1)
+    painel.row_dimensions[3].height=30
 
-    for i, (titulo, valor) in enumerate(indicadores):
-        r = 5 + (i // 3) * 4
-        c = 1 + (i % 3) * 4
-        painel.merge_cells(start_row=r, start_column=c, end_row=r, end_column=c+3)
-        painel.merge_cells(start_row=r+1, start_column=c, end_row=r+2, end_column=c+3)
-        cab = painel.cell(r, c, titulo)
-        cab.fill = PatternFill('solid', fgColor=pale)
-        cab.font = Font(name='Aptos', size=11, bold=True, color=blue)
-        cab.alignment = Alignment(vertical='center', indent=1)
-        cel = painel.cell(r+1, c, valor)
-        cel.number_format = money
-        cel.font = Font(name='Aptos Display', size=20, bold=True, color=navy if valor >= 0 else 'B42332')
-        cel.alignment = Alignment(vertical='center', indent=1)
-        painel.row_dimensions[r+1].height = 30
-        painel.row_dimensions[r+2].height = 24
+    # Seis cartões em duas colunas: evitam os valores soltos e o excesso de largura.
+    for idx,(titulo,valor) in enumerate(indicadores):
+        r=5+(idx//2)*3
+        start,end=(1,4) if idx%2==0 else (6,9)
+        painel.merge_cells(start_row=r,start_column=start,end_row=r,end_column=end)
+        painel.merge_cells(start_row=r+1,start_column=start,end_row=r+2,end_column=end)
+        for rr in range(r,r+3):
+            for cc in range(start,end+1):
+                painel.cell(rr,cc).fill=PatternFill('solid',fgColor=('DDEAF8' if titulo=='RESULTADO FINAL' else light))
+        cab=painel.cell(r,start); cab.value=titulo
+        cab.font=Font(name='Aptos',size=10,bold=True,color=blue)
+        cab.alignment=Alignment(indent=1,vertical='center')
+        v=painel.cell(r+1,start); v.value=valor; v.number_format=money
+        v.font=Font(name='Aptos Display',size=18,bold=True,color=navy if valor>=0 else 'B42332')
+        v.alignment=Alignment(indent=1,vertical='center')
+        painel.row_dimensions[r].height=21
+        painel.row_dimensions[r+1].height=25
+        painel.row_dimensions[r+2].height=18
 
-    painel.merge_cells('A14:L14')
-    painel['A14'] = 'COMPOSIÇÃO DE CUSTOS E DESEMPENHO'
-    painel['A14'].font = Font(name='Aptos', size=14, bold=True, color=navy)
-    painel.row_dimensions[14].height = 32
-    grupos = [
-        ('CMV + fretes', buscar('C M V (', 'CMV (CUSTO')),
+    painel.merge_cells('A15:I15')
+    c=painel['A15']; c.value='COMPOSIÇÃO DOS CUSTOS E INDICADORES'
+    c.font=Font(name='Aptos',size=13,bold=True,color=navy)
+    c.alignment=Alignment(vertical='center')
+    painel.row_dimensions[15].height=32
+    grupos=[
+        ('CMV + fretes', indicadores[2][1]),
         ('Ocupação', buscar('TOTAL OCUPACAO')),
         ('Pessoal', buscar('TOTAL PESSOAL')),
-        ('Materiais de consumo', buscar('TOTAL MATERIAIS DE USO', 'MATERIAIS DE USO E CONSUMO')),
-        ('Marketing', buscar('MARKETING & FRANQUEADOR', 'MARKETING E FRANQUEADOR')),
+        ('Materiais de consumo', buscar('TOTAL MATERIAIS DE USO','MATERIAIS DE USO E CONSUMO')),
+        ('Marketing', buscar('MARKETING & FRANQUEADOR','MARKETING E FRANQUEADOR')),
         ('Financeiro', buscar('CUSTO FINANCEIRO')),
     ]
-    for col, title in ((1, 'GRUPO DE CUSTO'), (2, 'VALOR (R$)'), (7, 'INDICADOR'), (8, 'VALOR (R$)')):
-        cel = painel.cell(16, col, title)
-        cel.fill = PatternFill('solid', fgColor=navy)
-        cel.font = Font(name='Aptos', size=10, bold=True, color='FFFFFF')
-    painel.row_dimensions[16].height = 27
-    for i, (rotulo, valor) in enumerate(grupos, 17):
-        painel.cell(i, 1, rotulo)
-        painel.cell(i, 2, valor)
-    for i, (rotulo, valor) in enumerate([indicadores[0], indicadores[1], indicadores[3], indicadores[5]], 17):
-        painel.cell(i, 7, rotulo)
-        painel.cell(i, 8, valor)
-    for row in list(painel['A17:B22']) + list(painel['G17:H20']):
-        for cel in row:
-            cel.fill = PatternFill('solid', fgColor='F0F5FB' if cel.row % 2 else 'FFFFFF')
-            cel.font = Font(name='Aptos', size=11, color=ink)
-            cel.alignment = Alignment(vertical='center', horizontal='right' if isinstance(cel.value, (float,int)) else 'left')
-            if isinstance(cel.value, (float,int)):
-                cel.number_format = money
-            cel.border = Border(bottom=Side(style='hair', color='DDE7F2'))
-        painel.row_dimensions[row[0].row].height = 25
-
-    # Relatório executivo somente com indicadores e tabelas, sem gráficos.
-    painel.merge_cells('A25:L25')
-    painel['A25'] = 'Resumo gerencial baseado nos valores da DRE mensal.'
-    painel['A25'].font = Font(name='Aptos', size=11, italic=True, color='526987')
-    painel.print_area = 'A1:L26'
-    painel.print_title_rows = '1:3'
-    painel.sheet_view.tabSelected = True
-    livro.active = 0
-    saida = io.BytesIO()
-    livro.save(saida)
+    for start, end, title in [(1,3,'PRINCIPAIS GRUPOS DE CUSTO'),(6,9,'INDICADORES DE RESULTADO')]:
+        painel.merge_cells(start_row=17,start_column=start,end_row=17,end_column=end)
+        for col in range(start,end+1): painel.cell(17,col).fill=PatternFill('solid',fgColor=navy)
+        c=painel.cell(17,start);c.value=title;c.font=Font(name='Aptos',size=10,bold=True,color='FFFFFF');c.alignment=Alignment(indent=1,vertical='center')
+    painel.row_dimensions[17].height=27
+    for i,(nome,valor) in enumerate(grupos,18):
+        painel.merge_cells(start_row=i,start_column=1,end_row=i,end_column=2)
+        painel.cell(i,1,nome)
+        painel.cell(i,3,valor)
+    extra=[indicadores[0],indicadores[1],indicadores[3],indicadores[5]]
+    for i,(nome,valor) in enumerate(extra,18):
+        painel.merge_cells(start_row=i,start_column=6,end_row=i,end_column=8)
+        painel.cell(i,6,nome)
+        painel.cell(i,9,valor)
+    for r in range(18,24):
+        for start,end in [(1,3),(6,9)]:
+            for col in range(start,end+1):
+                c=painel.cell(r,col)
+                c.fill=PatternFill('solid',fgColor='F1F5FA' if r%2==0 else 'FFFFFF')
+                c.border=Border(bottom=Side(style='hair',color='DCE5F0'))
+                c.font=Font(name='Aptos',size=10,bold=(r==21 and start==6),color=ink)
+                c.alignment=Alignment(vertical='center',horizontal='right' if col==end else 'left',indent=0 if col==end else 1)
+                if col==end: c.number_format=money
+        painel.row_dimensions[r].height=27
+    painel.merge_cells('A25:I25')
+    c=painel['A25'];c.value='Indicadores conforme a DRE mensal. Consulte as abas DRE_MENSAL e LANÇAMENTOS para o detalhamento.'
+    c.font=Font(name='Aptos',size=10,italic=True,color=muted)
+    painel.row_dimensions[25].height=28
+    painel.print_area='A1:I25'
+    livro.active=0
+    saida=io.BytesIO(); livro.save(saida)
     return saida.getvalue()
 
 # ----------------- CONFIGURAÇÕES IA (4 CHAVES) -----------------
