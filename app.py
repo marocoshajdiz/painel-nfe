@@ -1713,13 +1713,14 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
     # Indicadores de compras: independem do fechamento do inventário.
     # A classificação Horte possui detalhamento Alimentos, portanto não pode
     # ser somada uma segunda vez ao total de alimentos.
-    categorias_compras = ("Demais Alimentos", "Horte", "Bebidas", "Descartáveis")
+    categorias_compras = ("Demais Alimentos", "Pratos da Campanha", "Horte", "Bebidas", "Descartáveis")
     compras_por_categoria = (
         df_l[df_l["classificacao"].isin(categorias_compras)]
         .groupby("classificacao")["valor"].sum().to_dict()
         if not df_l.empty else {}
     )
-    compras_alimentos = float(compras_por_categoria.get("Demais Alimentos", 0))
+    compras_alimentos = (float(compras_por_categoria.get("Demais Alimentos", 0))
+                        + float(compras_por_categoria.get("Pratos da Campanha", 0)))
     compras_horte = float(compras_por_categoria.get("Horte", 0))
     compras_bebidas = float(compras_por_categoria.get("Bebidas", 0))
     compras_descartaveis = float(compras_por_categoria.get("Descartáveis", 0))
@@ -2303,6 +2304,53 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
                 "Antes de fechar o inventário, as compras entram provisoriamente no total operacional. "
                 "Após o fechamento, o CMV consolidado substitui as compras no cálculo, sem duplicidade."
             )
+
+        # Conciliação de referência: não modifica lançamentos nem força o lucro.
+        if mes_ativo == "2026-09":
+            with st.expander("🧾 Auditoria de setembro/2026 — comparação com o consultor", expanded=True):
+                st.warning("Diferenças em relação à planilha do consultor. Os valores de referência são para conferência; NÃO substituem lançamentos ou o inventário.")
+                referencias = [
+                    ("Faturamento", venda_bruta, 256215.77),
+                    ("Impostos", imp_fed + imp_est, 31476.30 + 2319.74),
+                    ("CMV sem fretes", cmv_para_resultado, 76268.05),
+                    ("Fretes", cmv_fret, 9653.23),
+                    ("Pessoal", total_pess, 35177.15),
+                    ("Ocupação", total_ocup, 21913.46),
+                    ("Utilidades", total_util, 6886.93),
+                    ("Manutenção", total_manut, 1349.60),
+                    ("Serviços", total_serv, 2765.18),
+                    ("Material de uso e consumo", total_mat, 2606.07),
+                    ("Royalties", v("Royalties"), 15372.95),
+                    ("Fundo de Marketing", v("Fundo de Marketing"), 5124.32),
+                    ("Custos financeiros", total_fin, 1618.83),
+                    ("Delivery líquido", total_deliv, 7143.79),
+                    ("Resultado final", res_final, 36540.18),
+                ]
+                linhas_auditoria = [{"Conta": nome,
+                    "Site (R$)": round(site, 2), "Consultor (R$)": round(ref, 2),
+                    "Diferença site - consultor (R$)": round(site-ref, 2)}
+                    for nome, site, ref in referencias]
+                st.dataframe(pd.DataFrame(linhas_auditoria), hide_index=True,
+                    use_container_width=True, column_config={
+                    c: st.column_config.NumberColumn(c, format="R$ %.2f")
+                    for c in ("Site (R$)", "Consultor (R$)", "Diferença site - consultor (R$)")})
+                st.markdown("**Memória de cálculo do CMV do inventário**")
+                if cmv_auto is not None:
+                    st.write(f"Estoque inicial: R$ {formatar_numero_br(cmv_auto['Estoque Inicial'])}"
+                        f" | Compras elegíveis: R$ {formatar_numero_br(cmv_auto['Compras Elegíveis'])}"
+                        f" | Estoque final: R$ {formatar_numero_br(cmv_auto['Estoque Final'])}")
+                    st.caption("CMV = estoque inicial + compras elegíveis − estoque final. Fretes são exibidos separadamente e entram uma única vez nas despesas.")
+                else:
+                    st.info("Inventário não fechado: o site utiliza compras provisórias, não CMV apurado.")
+                if not df_l.empty:
+                    categorias_cmv = {"Alimentos", "Bebidas", "Descartáveis"}
+                    candidatos = df_l[(df_l['dre'].isin(['Alimentos', 'Bebidas', 'Descartáveis']))
+                        & (~df_l['detalhamento'].isin(categorias_cmv))]
+                    if not candidatos.empty:
+                        st.error(f"Há {len(candidatos)} lançamentos em grupos de compras cujo detalhamento não é elegível para o CMV automático. Confira as classificações.")
+                        st.dataframe(candidatos[['id','data','fornecedor','valor','dre','classificacao','detalhamento']],
+                            hide_index=True, use_container_width=True)
+                st.caption("A referência do consultor usa CMV de R$ 76.268,05. É necessário validar se corresponde a compras ou a CMV de estoque. Não alteramos a fórmula automaticamente.")
 
         st.markdown("### 📥 Baixar Relatório")
         dados_excel = gerar_excel_dre(NOMES_MESES[mes_ativo], pd.DataFrame(estrutura_dre_spoleto), df_l)
