@@ -1876,7 +1876,7 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
             grupo: sum(valor_ao_vivo(conta) for conta in contas)
             for grupo, contas in grupos_operacionais_ao_vivo.items()
         }
-        subtotais_ao_vivo["Delivery"] = abs(subtotais_ao_vivo["Delivery"] - valor_ao_vivo("Taxa de entrega arrecadada"))
+        subtotais_ao_vivo["Delivery"] = subtotais_ao_vivo["Delivery"] + abs(valor_ao_vivo("Taxa de entrega arrecadada"))
         subtotais_ao_vivo["Estoque/CMV e fretes"] = (
             total_compras_cmv
         ) + valor_ao_vivo("Fretes")
@@ -1945,10 +1945,13 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
         v("Utensílios") + v("Outros Materiais de Uso e Consumo")
     )
     total_manut = v("Serviço - Manutenção e Reparos") + v("Material - Manutenção e Reparos")
-    # Delivery é uma DESPESA operacional. A fonte histórica pode trazer o
-    # líquido com sinal negativo; normalizamos apenas a apresentação do grupo.
-    delivery_liquido_origem = (v("Comissão agregadores") + v("Comissão iFood") + v("Mensalidade iFood") + v("Promoções iFood") + v("Custo com entrega (motoqueiros)")) - v("Taxa de entrega arrecadada")
-    total_deliv = abs(delivery_liquido_origem)
+    # A antiga conta "Taxa de entrega arrecadada" representa DESPESA PAGA.
+    # Mantemos a chave histórica no Supabase, sem migrar ou duplicar lançamentos.
+    # A despesa é positiva na DRE e somada UMA ÚNICA VEZ ao grupo Delivery.
+    despesa_entregas = abs(v("Taxa de entrega arrecadada"))
+    total_deliv = (v("Comissão agregadores") + v("Comissão iFood") +
+                   v("Mensalidade iFood") + v("Promoções iFood") +
+                   v("Custo com entrega (motoqueiros)") + despesa_entregas)
     total_mkt = v("Anúncios/Propagandas") + v("Fundo de Marketing") + v("Royalties")
     total_fin = v("Custo Cartão de Crédito") + v("Custo Cartão de Débito") + v("Taxas Pix") + v("Taxas Voucher") + v("Mensalidade da Máquina")
     # Gestão provisória: antes do fechamento do inventário, usar as compras
@@ -2240,7 +2243,7 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
             {"CONTA": "  • Promoções iFood", "VALOR": v("Promoções iFood"), "%": pct(v("Promoções iFood"))},
             {"CONTA": "  • Comissão agregadores", "VALOR": v("Comissão agregadores"), "%": pct(v("Comissão agregadores"))},
             {"CONTA": "  • Custo com entrega (motoqueiros)", "VALOR": v("Custo com entrega (motoqueiros)"), "%": pct(v("Custo com entrega (motoqueiros)"))},
-            {"CONTA": "  • (-) Taxa de entrega arrecadada", "VALOR": -v("Taxa de entrega arrecadada"), "%": pct(-v("Taxa de entrega arrecadada"))},
+            {"CONTA": "  • Despesa com entregas", "VALOR": despesa_entregas, "%": pct(despesa_entregas)},
             {"CONTA": "📢 MARKETING & FRANQUEADOR", "VALOR": total_mkt, "%": pct(total_mkt)},
             {"CONTA": "  • Anúncios/Propagandas", "VALOR": v("Anúncios/Propagandas"), "%": pct(v("Anúncios/Propagandas"))},
             {"CONTA": "  • Fundo de Marketing", "VALOR": v("Fundo de Marketing"), "%": pct(v("Fundo de Marketing"))},
