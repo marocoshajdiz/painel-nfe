@@ -1745,9 +1745,9 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
 
     cmv_auto, aviso_cmv = apurar_cmv_automatico(mes_ativo)
     if aviso_cmv:
-        st.info("📦 CMV automático pendente: " + aviso_cmv + " Até o fechamento, compras e fretes são considerados provisoriamente no resultado.")
+        st.info("📦 Inventário ainda não fechado: " + aviso_cmv + " A DRE usa a soma das quatro categorias e adiciona fretes uma única vez.")
     else:
-        st.success("📦 CMV consolidado calculado pelo inventário fechado: alimentos, Horte, bebidas e descartáveis.")
+        st.success("📦 Inventário fechado disponível para conferência. Na DRE, o subtotal CMV usa a soma das quatro categorias, conforme critério solicitado.")
         if cmv_auto["CMV Consolidado"] < 0:
             st.warning("Há CMV negativo. Confira compras, quantidades e custos antes de utilizar a DRE.")
 
@@ -1878,7 +1878,7 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
         }
         subtotais_ao_vivo["Delivery"] -= valor_ao_vivo("Taxa de entrega arrecadada")
         subtotais_ao_vivo["Estoque/CMV e fretes"] = (
-            float(cmv_auto.get("CMV Consolidado", 0.0)) if cmv_auto else total_compras_cmv
+            total_compras_cmv
         ) + valor_ao_vivo("Fretes")
         total_operacional_ao_vivo = sum(subtotais_ao_vivo.values())
         contas_nao_operacionais_ao_vivo = [
@@ -1929,7 +1929,7 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
     cmv_fret = v("Fretes")
     # Enquanto o inventário não estiver fechado, as compras são uma
     # aproximação gerencial do CMV; não apresentamos lucro bruto inflado.
-    cmv_para_resultado = cmv_consolidado if cmv_auto is not None else total_compras_cmv
+    cmv_para_resultado = total_compras_cmv  # soma das quatro categorias, sem frete
     total_cmv = cmv_para_resultado + cmv_fret
     lucro_bruto = rec_liquida - total_cmv
 
@@ -1951,12 +1951,11 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
     # Gestão provisória: antes do fechamento do inventário, usar as compras
     # como referência TEMPORÁRIA de gasto operacional. Após o fechamento,
     # substituir pelas informações de CMV consolidado, sem duplicar compras.
-    compras_provisorias = total_compras_cmv if cmv_auto is None else 0.0
-    custo_estoque_para_despesas = (cmv_consolidado if cmv_auto is not None else compras_provisorias)
+    compras_provisorias = total_compras_cmv
+    custo_estoque_para_despesas = total_compras_cmv
     grupos_operacionais = {
         "Impostos": imp_fed + imp_est,
-        ("Total CMV (com frete)" if cmv_auto is not None
-         else "Total CMV (com frete — provisório)"): custo_estoque_para_despesas + cmv_fret,
+        "Total CMV (com frete)": custo_estoque_para_despesas + cmv_fret,
         "Ocupação": total_ocup,
         "Pessoal (inclui FGTS)": total_pess,
         "Utilidades": total_util,
@@ -2027,10 +2026,10 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
         """, unsafe_allow_html=True)
         resumo_cards = [
             ("Venda Bruta", venda_bruta, None, False),
-            ("CMV consolidado" if cmv_auto is not None else "Compras + fretes (provisório)", total_cmv, pct(total_cmv) + " da venda", False),
+            ("Total CMV com frete", total_cmv, pct(total_cmv) + " da venda", False),
             ("Lucro Bruto", lucro_bruto, pct(lucro_bruto) + " da venda", False),
             ("Resultado Final", res_final, pct(res_final) + " da venda", True),
-            ("Compras de Horte (indicador)", compras_horte, None, False),
+            ("Horte (incluído no CMV)", compras_horte, None, False),
         ]
         html_resumo = '<div class="capry-resumo-grid">'
         for titulo, valor, indicador, destaque in resumo_cards:
@@ -2043,7 +2042,7 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
             html_resumo += '</div>'
         html_resumo += '</div>'
         st.markdown(html_resumo, unsafe_allow_html=True)
-        st.caption("Antes do fechamento, compras + fretes substituem provisoriamente o CMV no resultado; depois, usa-se somente o CMV consolidado + fretes.")
+        st.caption("Critério gerencial escolhido: CMV sem frete = Alimentos (sem Horte) + Horte + Bebidas + Descartáveis; CMV com frete = subtotal + fretes. O inventário é apresentado à parte para conferência.")
         st.markdown("#### 🧾 Compras do mês para composição do CMV")
         # Cartões responsivos: números completos, sem truncamento do st.metric.
         st.markdown("""
@@ -2137,7 +2136,7 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
                       centro="Não operacional")
             with col_g4:
                 rosca("🧾 Compras por tipo",
-                      {"Alimentos (sem Horte)": max(0, compras_alimentos - compras_horte),
+                      {"Alimentos (sem Horte)": compras_alimentos,
                        "Horte": compras_horte, "Bebidas": compras_bebidas,
                        "Descartáveis": compras_descartaveis}, centro="Compras")
 
@@ -2152,18 +2151,18 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
         with st.expander("🔎 Memória de cálculo do CMV — compras e estoques", expanded=False):
             st.caption("Valores informativos: NÃO são somados novamente ao resultado. O total CMV com frete já inclui os fretes uma única vez.")
             st.dataframe(pd.DataFrame([
-                {"Componente": "Compras de alimentos (sem Horte)", "Valor (R$)": compras_alimentos},
+                {"Componente": "Alimentos (sem Horte)", "Valor (R$)": compras_alimentos},
                 {"Componente": "Compras de Horte", "Valor (R$)": compras_horte},
                 {"Componente": "Compras de bebidas", "Valor (R$)": compras_bebidas},
                 {"Componente": "Compras de descartáveis", "Valor (R$)": compras_descartaveis},
                 {"Componente": "Total de compras elegíveis", "Valor (R$)": total_compras_cmv},
                 {"Componente": "Estoque inicial", "Valor (R$)": cmv_auto["Estoque Inicial"] if cmv_auto else None},
                 {"Componente": "Estoque final", "Valor (R$)": cmv_auto["Estoque Final"] if cmv_auto else None},
-                {"Componente": "Subtotal CMV sem frete", "Valor (R$)": cmv_para_resultado},
+                {"Componente": "Subtotal CMV sem frete (soma das quatro categorias)", "Valor (R$)": cmv_para_resultado},
                 {"Componente": "Fretes e carretos", "Valor (R$)": cmv_fret},
                 {"Componente": "Total CMV com frete", "Valor (R$)": total_cmv},
             ]), hide_index=True, use_container_width=True)
-            st.caption("CMV sem frete = estoque inicial + compras elegíveis − estoque final (quando o inventário está fechado).")
+            st.caption("Neste demonstrativo, o subtotal é a soma das quatro categorias. Estoque inicial e final ficam para conferência e não alteram o subtotal. Para apuração contábil de CMV, é necessário considerar a variação do estoque.")
 
         estrutura_dre_spoleto = [
             {"CONTA": "🔹 VENDA BRUTA", "VALOR": venda_bruta, "%": "100.00%"},
@@ -2175,16 +2174,16 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
             {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
             # Compras por categoria são informativas: Horte aparece separado,
             # mas já compõe o subtotal CMV. Não somar estas linhas novamente.
-            {"CONTA": "  • Compras de Alimentos (informativo; sem Horte)", "VALOR": compras_alimentos, "%": pct(compras_alimentos)},
-            {"CONTA": "  • Compras de Horte (informativo)", "VALOR": compras_horte, "%": pct(compras_horte)},
-            {"CONTA": "  • Compras de Bebidas (informativo)", "VALOR": compras_bebidas, "%": pct(compras_bebidas)},
-            {"CONTA": "  • Compras de Descartáveis (informativo)", "VALOR": compras_descartaveis, "%": pct(compras_descartaveis)},
+            {"CONTA": "  • Alimentos (sem Horte)", "VALOR": compras_alimentos, "%": pct(compras_alimentos)},
+            {"CONTA": "  • Horte", "VALOR": compras_horte, "%": pct(compras_horte)},
+            {"CONTA": "  • Bebidas", "VALOR": compras_bebidas, "%": pct(compras_bebidas)},
+            {"CONTA": "  • Descartáveis", "VALOR": compras_descartaveis, "%": pct(compras_descartaveis)},
             # Modelo da planilha: subtotal sem frete + frete = CMV total.
             # As linhas informativas acima NÃO entram novamente no somatório.
-            {"CONTA": "📦 SUBTOTAL CMV (SEM FRETE)" if cmv_auto is not None else "📦 SUBTOTAL CMV (SEM FRETE — PROVISÓRIO)",
+            {"CONTA": "📦 SUBTOTAL CMV (SEM FRETE)",
              "VALOR": cmv_para_resultado, "%": pct(cmv_para_resultado)},
             {"CONTA": "  • Fretes e carretos (CMV)", "VALOR": cmv_fret, "%": pct(cmv_fret)},
-            {"CONTA": "📦 TOTAL CMV (COM FRETE)" if cmv_auto is not None else "📦 TOTAL CMV (COM FRETE — PROVISÓRIO)",
+            {"CONTA": "📦 TOTAL CMV (COM FRETE)",
              "VALOR": total_cmv, "%": pct(total_cmv)},
             {"CONTA": "🔹 LUCRO BRUTO", "VALOR": lucro_bruto, "%": pct(lucro_bruto)},
             {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
