@@ -2173,8 +2173,14 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
             {"CONTA": "(-) Imposto Estadual", "VALOR": imp_est, "%": pct(imp_est)},
             {"CONTA": "🔹 RECEITA LÍQUIDA", "VALOR": rec_liquida, "%": pct(rec_liquida)},
             {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
+            # Compras por categoria são informativas: Horte aparece separado,
+            # mas já compõe o subtotal CMV. Não somar estas linhas novamente.
+            {"CONTA": "  • Compras de Alimentos (informativo; sem Horte)", "VALOR": compras_alimentos, "%": pct(compras_alimentos)},
+            {"CONTA": "  • Compras de Horte (informativo)", "VALOR": compras_horte, "%": pct(compras_horte)},
+            {"CONTA": "  • Compras de Bebidas (informativo)", "VALOR": compras_bebidas, "%": pct(compras_bebidas)},
+            {"CONTA": "  • Compras de Descartáveis (informativo)", "VALOR": compras_descartaveis, "%": pct(compras_descartaveis)},
             # Modelo da planilha: subtotal sem frete + frete = CMV total.
-            # As compras individuais são apenas memória de cálculo, fora da tabela principal.
+            # As linhas informativas acima NÃO entram novamente no somatório.
             {"CONTA": "📦 SUBTOTAL CMV (SEM FRETE)" if cmv_auto is not None else "📦 SUBTOTAL CMV (SEM FRETE — PROVISÓRIO)",
              "VALOR": cmv_para_resultado, "%": pct(cmv_para_resultado)},
             {"CONTA": "  • Fretes e carretos (CMV)", "VALOR": cmv_fret, "%": pct(cmv_fret)},
