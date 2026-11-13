@@ -1876,7 +1876,7 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
             grupo: sum(valor_ao_vivo(conta) for conta in contas)
             for grupo, contas in grupos_operacionais_ao_vivo.items()
         }
-        subtotais_ao_vivo["Delivery"] -= valor_ao_vivo("Taxa de entrega arrecadada")
+        subtotais_ao_vivo["Delivery"] = abs(subtotais_ao_vivo["Delivery"] - valor_ao_vivo("Taxa de entrega arrecadada"))
         subtotais_ao_vivo["Estoque/CMV e fretes"] = (
             total_compras_cmv
         ) + valor_ao_vivo("Fretes")
@@ -1945,7 +1945,10 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
         v("Utensílios") + v("Outros Materiais de Uso e Consumo")
     )
     total_manut = v("Serviço - Manutenção e Reparos") + v("Material - Manutenção e Reparos")
-    total_deliv = (v("Comissão agregadores") + v("Comissão iFood") + v("Mensalidade iFood") + v("Promoções iFood") + v("Custo com entrega (motoqueiros)")) - v("Taxa de entrega arrecadada")
+    # Delivery é uma DESPESA operacional. A fonte histórica pode trazer o
+    # líquido com sinal negativo; normalizamos apenas a apresentação do grupo.
+    delivery_liquido_origem = (v("Comissão agregadores") + v("Comissão iFood") + v("Mensalidade iFood") + v("Promoções iFood") + v("Custo com entrega (motoqueiros)")) - v("Taxa de entrega arrecadada")
+    total_deliv = abs(delivery_liquido_origem)
     total_mkt = v("Anúncios/Propagandas") + v("Fundo de Marketing") + v("Royalties")
     total_fin = v("Custo Cartão de Crédito") + v("Custo Cartão de Débito") + v("Taxas Pix") + v("Taxas Voucher") + v("Mensalidade da Máquina")
     # Gestão provisória: antes do fechamento do inventário, usar as compras
@@ -1997,6 +2000,8 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
     despesas_nao_operacionais = sum(grupos_nao_operacionais.values())
     total_geral_despesas = total_despesas_operacionais + despesas_nao_operacionais
     res_final = resultado_final_operacional - despesas_nao_operacionais
+    # Conferência: não forçar o percentual de referência do consultor.
+    # A diferença remanescente depende dos lançamentos reais, inclusive royalties.
 
     def pct(val):
         return f"{(val / venda_bruta) * 100:.2f}%" if venda_bruta > 0 else "0.00%"
@@ -2252,7 +2257,7 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
              "VALOR": total_despesas_operacionais, "%": pct(total_despesas_operacionais)},
             {"CONTA": '🏆 RESULTADO OPERACIONAL', "VALOR": res_operacional, "%": pct(res_operacional)},
             {"CONTA": '🎁 Total Bonificação', "VALOR": bonificacao, "%": pct(bonificacao)},
-            {"CONTA": '🏅 RESULTADO FINAL OPERACIONAL', "VALOR": resultado_final_operacional, "%": pct(resultado_final_operacional)},
+            {"CONTA": '🏅 RESULTADO GERENCIAL (SEM NÃO OPERACIONAIS)', "VALOR": resultado_final_operacional, "%": pct(resultado_final_operacional)},
             {"CONTA": "──────── DESPESAS NÃO OPERACIONAIS ────────", "VALOR": None, "%": ""},
             {"CONTA": '  • Carro da Loja', "VALOR": v("Carro da Loja"), "%": pct(v("Carro da Loja"))},
             {"CONTA": '✈️ VIAGENS', "VALOR": total_viagens, "%": pct(total_viagens)},
@@ -2272,7 +2277,7 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
             {"CONTA": '  • Pro Labore', "VALOR": v("Pro Labore"), "%": pct(v("Pro Labore"))},
             {"CONTA": '🔵 SUBTOTAL DESPESAS NÃO OPERACIONAIS', "VALOR": despesas_nao_operacionais, "%": pct(despesas_nao_operacionais)},
             {"CONTA": '🔴 TOTAL GERAL DE DESPESAS', "VALOR": total_geral_despesas, "%": pct(total_geral_despesas)},
-            {"CONTA": '💰 RESULTADO FINAL', "VALOR": res_final, "%": pct(res_final)},
+            {"CONTA": '💰 RESULTADO FINAL (APÓS NÃO OPERACIONAIS)', "VALOR": res_final, "%": pct(res_final)},
         ]
         df_spoleto_view = pd.DataFrame(estrutura_dre_spoleto)
         df_spoleto_view["VALOR"] = df_spoleto_view["VALOR"].apply(lambda x: f"R$ {formatar_numero_br(x)}" if pd.notnull(x) else "")
@@ -2340,8 +2345,8 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
                     ("Royalties", v("Royalties"), 15372.95),
                     ("Fundo de Marketing", v("Fundo de Marketing"), 5124.32),
                     ("Custos financeiros", total_fin, 1618.83),
-                    ("Delivery líquido", total_deliv, 7143.79),
-                    ("Resultado final", res_final, 36540.18),
+                    ("Despesas de Delivery", total_deliv, 7143.79),
+                    ("Resultado gerencial (sem não operacionais)", resultado_final_operacional, 36540.18),
                 ]
                 linhas_auditoria = [{"Conta": nome,
                     "Site (R$)": round(site, 2), "Consultor (R$)": round(ref, 2),
