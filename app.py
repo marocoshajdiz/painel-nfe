@@ -1794,7 +1794,7 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
         ("Outros Materiais de Uso e Consumo", "Outros Materiais De Uso E Consumo", 0.0),
         ("Serviço - Manutenção e Reparos", "Serviço - Manutenção E Reparos", 0.0),
         ("Material - Manutenção e Reparos", "Material - Manutenção E Reparos", 0.0),
-        ("Taxa de entrega arrecadada", None, 0.0),
+        ("Taxa de entrega arrecadada", None, 0.0),  # Chave histórica: taxa paga ao iFood
         ("Comissão agregadores", "Comissão Agregadores", 0.0),
         ("Comissão iFood", "Comissão iFood", 0.0),
         ("Mensalidade iFood", "Mensalidade iFood", 0.0),
@@ -1945,10 +1945,12 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
         v("Utensílios") + v("Outros Materiais de Uso e Consumo")
     )
     total_manut = v("Serviço - Manutenção e Reparos") + v("Material - Manutenção e Reparos")
-    # A antiga conta "Taxa de entrega arrecadada" representa DESPESA PAGA.
+    # A conta histórica "Taxa de entrega arrecadada" representa TAXA PAGA AO IFOOD,
+    # e não despesa com motoqueiros nem receita de entrega.
     # Mantemos a chave histórica no Supabase, sem migrar ou duplicar lançamentos.
-    # A despesa é positiva na DRE e somada UMA ÚNICA VEZ ao grupo Delivery.
-    despesa_entregas = abs(v("Taxa de entrega arrecadada"))
+    # A taxa é positiva na DRE e somada UMA ÚNICA VEZ ao grupo Delivery.
+    taxa_plataforma_ifood = abs(v("Taxa de entrega arrecadada"))
+    despesa_entregas = taxa_plataforma_ifood  # Alias de compatibilidade com a auditoria existente
     total_deliv = (v("Comissão agregadores") + v("Comissão iFood") +
                    v("Mensalidade iFood") + v("Promoções iFood") +
                    v("Custo com entrega (motoqueiros)") + despesa_entregas)
@@ -1973,6 +1975,11 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
         "Financeiro": total_fin,
     }
     total_despesas_operacionais = sum(grupos_operacionais.values())
+    # Regra financeira: a despesa paga de entrega entra no TOTAL OPERACIONAL
+    # e reduz os dois resultados (gerencial e final), exatamente uma vez.
+    # Não usar o valor com sinal negativo como receita/abatimento de custo.
+    despesas_operacionais_sem_entregas = total_despesas_operacionais - despesa_entregas
+    total_despesas_operacionais = despesas_operacionais_sem_entregas + despesa_entregas
     res_operacional = venda_bruta - total_despesas_operacionais
     bonificacao = v("Total Bonificação")
     resultado_final_operacional = res_operacional + bonificacao
@@ -2003,6 +2010,12 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
     despesas_nao_operacionais = sum(grupos_nao_operacionais.values())
     total_geral_despesas = total_despesas_operacionais + despesas_nao_operacionais
     res_final = resultado_final_operacional - despesas_nao_operacionais
+    # Auditoria independente: conferir que a entrega realmente reduziu o lucro.
+    resultado_sem_despesa_entregas = (venda_bruta - despesas_operacionais_sem_entregas
+                                    + bonificacao - despesas_nao_operacionais)
+    if abs((resultado_sem_despesa_entregas - res_final) - despesa_entregas) > 0.011:
+        st.error("Inconsistência: despesa de entrega não foi abatida corretamente do resultado final.")
+        st.stop()
     # Conferência: não forçar o percentual de referência do consultor.
     # A diferença remanescente depende dos lançamentos reais, inclusive royalties.
 
@@ -2243,7 +2256,7 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
             {"CONTA": "  • Promoções iFood", "VALOR": v("Promoções iFood"), "%": pct(v("Promoções iFood"))},
             {"CONTA": "  • Comissão agregadores", "VALOR": v("Comissão agregadores"), "%": pct(v("Comissão agregadores"))},
             {"CONTA": "  • Custo com entrega (motoqueiros)", "VALOR": v("Custo com entrega (motoqueiros)"), "%": pct(v("Custo com entrega (motoqueiros)"))},
-            {"CONTA": "  • Despesa com entregas", "VALOR": despesa_entregas, "%": pct(despesa_entregas)},
+            {"CONTA": "  • Taxa da plataforma iFood", "VALOR": despesa_entregas, "%": pct(despesa_entregas)},
             {"CONTA": "📢 MARKETING & FRANQUEADOR", "VALOR": total_mkt, "%": pct(total_mkt)},
             {"CONTA": "  • Anúncios/Propagandas", "VALOR": v("Anúncios/Propagandas"), "%": pct(v("Anúncios/Propagandas"))},
             {"CONTA": "  • Fundo de Marketing", "VALOR": v("Fundo de Marketing"), "%": pct(v("Fundo de Marketing"))},
@@ -2306,6 +2319,13 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
                 f"  |  **Subtotal não operacionais:** R$ {formatar_numero_br(despesas_nao_operacionais)}"
                 f"  |  **Total geral:** R$ {formatar_numero_br(total_geral_despesas)}"
             )
+
+        with st.expander("🛵 Auditoria das taxas iFood — impacto no resultado", expanded=False):
+            st.write(f"Taxa paga pela utilização da plataforma iFood: **R$ {formatar_numero_br(despesa_entregas)}**")
+            st.write(f"Total de despesas operacionais incluindo a taxa da plataforma iFood: **R$ {formatar_numero_br(total_despesas_operacionais)}**")
+            st.write(f"Resultado final sem essa despesa (simulação): **R$ {formatar_numero_br(resultado_sem_despesa_entregas)}**")
+            st.write(f"Resultado final após descontar a taxa iFood: **R$ {formatar_numero_br(res_final)}**")
+            st.caption("A diferença entre os dois resultados é exatamente a taxa paga à plataforma iFood. Nenhum lançamento é alterado no banco.")
 
         with st.expander("🔎 Conferência dos subtotais — veja de onde vem o Total de Despesas"):
             st.markdown("**Despesas operacionais — composição sem duplicidade**")
