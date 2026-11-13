@@ -1955,8 +1955,8 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
     custo_estoque_para_despesas = (cmv_consolidado if cmv_auto is not None else compras_provisorias)
     grupos_operacionais = {
         "Impostos": imp_fed + imp_est,
-        ("CMV consolidado + fretes" if cmv_auto is not None
-         else "Compras do mês (provisório) + fretes"): custo_estoque_para_despesas + cmv_fret,
+        ("Total CMV (com frete)" if cmv_auto is not None
+         else "Total CMV (com frete — provisório)"): custo_estoque_para_despesas + cmv_fret,
         "Ocupação": total_ocup,
         "Pessoal (inclui FGTS)": total_pess,
         "Utilidades": total_util,
@@ -2149,6 +2149,22 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
             st.caption("Os gráficos de rosca mostram apenas valores positivos. O resultado final pode ser negativo e aparece no indicador, não como fatia da rosca.")
 
     if eh_dre:
+        with st.expander("🔎 Memória de cálculo do CMV — compras e estoques", expanded=False):
+            st.caption("Valores informativos: NÃO são somados novamente ao resultado. O total CMV com frete já inclui os fretes uma única vez.")
+            st.dataframe(pd.DataFrame([
+                {"Componente": "Compras de alimentos (sem Horte)", "Valor (R$)": compras_alimentos},
+                {"Componente": "Compras de Horte", "Valor (R$)": compras_horte},
+                {"Componente": "Compras de bebidas", "Valor (R$)": compras_bebidas},
+                {"Componente": "Compras de descartáveis", "Valor (R$)": compras_descartaveis},
+                {"Componente": "Total de compras elegíveis", "Valor (R$)": total_compras_cmv},
+                {"Componente": "Estoque inicial", "Valor (R$)": cmv_auto["Estoque Inicial"] if cmv_auto else None},
+                {"Componente": "Estoque final", "Valor (R$)": cmv_auto["Estoque Final"] if cmv_auto else None},
+                {"Componente": "Subtotal CMV sem frete", "Valor (R$)": cmv_para_resultado},
+                {"Componente": "Fretes e carretos", "Valor (R$)": cmv_fret},
+                {"Componente": "Total CMV com frete", "Valor (R$)": total_cmv},
+            ]), hide_index=True, use_container_width=True)
+            st.caption("CMV sem frete = estoque inicial + compras elegíveis − estoque final (quando o inventário está fechado).")
+
         estrutura_dre_spoleto = [
             {"CONTA": "🔹 VENDA BRUTA", "VALOR": venda_bruta, "%": "100.00%"},
             {"CONTA": "  • Faturamento Balcão", "VALOR": fat_balcao, "%": pct(fat_balcao)},
@@ -2157,17 +2173,13 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
             {"CONTA": "(-) Imposto Estadual", "VALOR": imp_est, "%": pct(imp_est)},
             {"CONTA": "🔹 RECEITA LÍQUIDA", "VALOR": rec_liquida, "%": pct(rec_liquida)},
             {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
-            {"CONTA": "📦 C M V (Custo de Mercadoria Vendida)" if cmv_auto is not None else "📦 COMPRAS + FRETES (CMV provisório)", "VALOR": total_cmv, "%": pct(total_cmv)},
-            {"CONTA": "  • CMV Consolidado (pendente de fechamento)" if cmv_auto is None else "  • CMV Consolidado (Alimentos, Horte, Bebidas e Descartáveis)", "VALOR": None if cmv_auto is None else cmv_consolidado, "%": "" if cmv_auto is None else pct(cmv_consolidado)},
-            {"CONTA": "  • Compras de Alimentos (informativo)", "VALOR": compras_alimentos, "%": pct(compras_alimentos)},
-            {"CONTA": "  • Compras de Horte (informativo)", "VALOR": compras_horte, "%": pct(compras_horte)},
-            {"CONTA": "  • Compras de Bebidas (informativo)", "VALOR": compras_bebidas, "%": pct(compras_bebidas)},
-            {"CONTA": "  • Compras de Descartáveis (informativo)", "VALOR": compras_descartaveis, "%": pct(compras_descartaveis)},
-            {"CONTA": ("  • TOTAL COMPRAS PARA CMV (informativo; já substituído pelo CMV)"
-                        if cmv_auto is not None else
-                        "  • TOTAL COMPRAS DO MÊS (incluído provisoriamente nas despesas)"),
-             "VALOR": total_compras_cmv, "%": pct(total_compras_cmv)},
-            {"CONTA": "  • Fretes", "VALOR": cmv_fret, "%": pct(cmv_fret)},
+            # Modelo da planilha: subtotal sem frete + frete = CMV total.
+            # As compras individuais são apenas memória de cálculo, fora da tabela principal.
+            {"CONTA": "📦 SUBTOTAL CMV (SEM FRETE)" if cmv_auto is not None else "📦 SUBTOTAL CMV (SEM FRETE — PROVISÓRIO)",
+             "VALOR": cmv_para_resultado, "%": pct(cmv_para_resultado)},
+            {"CONTA": "  • Fretes e carretos (CMV)", "VALOR": cmv_fret, "%": pct(cmv_fret)},
+            {"CONTA": "📦 TOTAL CMV (COM FRETE)" if cmv_auto is not None else "📦 TOTAL CMV (COM FRETE — PROVISÓRIO)",
+             "VALOR": total_cmv, "%": pct(total_cmv)},
             {"CONTA": "🔹 LUCRO BRUTO", "VALOR": lucro_bruto, "%": pct(lucro_bruto)},
             {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
             {"CONTA": "🏢 TOTAL OCUPAÇÃO", "VALOR": total_ocup, "%": pct(total_ocup)},
