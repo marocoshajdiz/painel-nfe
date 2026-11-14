@@ -3404,10 +3404,11 @@ elif menu == "📦 Movimentação de Produtos":
                     mes TEXT NOT NULL, nota_id TEXT NOT NULL, item_indice INTEGER NOT NULL,
                     produto TEXT, fornecedor TEXT, categoria TEXT, quantidade DOUBLE PRECISION,
                     unidade TEXT, grupo_origem TEXT, fator_conversao DOUBLE PRECISION,
-                    unidade_conversao TEXT, atualizado_em TIMESTAMPTZ DEFAULT NOW(),
+                    unidade_conversao TEXT, valor_total NUMERIC(15,2), atualizado_em TIMESTAMPTZ DEFAULT NOW(),
                     PRIMARY KEY (mes, nota_id, item_indice))""")
+                cur.execute("ALTER TABLE ajustes_movimentacao_spoleto ADD COLUMN IF NOT EXISTS valor_total NUMERIC(15,2)")
                 cur.execute("""SELECT nota_id, item_indice, produto, fornecedor, categoria, quantidade,
-                           unidade, grupo_origem, fator_conversao, unidade_conversao
+                           unidade, grupo_origem, fator_conversao, unidade_conversao, valor_total
                            FROM ajustes_movimentacao_spoleto WHERE mes=%s""", (mes_ativo,))
                 ajustes_mov = {(str(r[0]), int(r[1])): r[2:] for r in cur.fetchall()}
     except Exception as erro_mov:
@@ -3433,6 +3434,9 @@ elif menu == "📦 Movimentação de Produtos":
             if not nome or not math.isfinite(qtd) or qtd <= 0 or un == "NÃO INFORMADA":
                 pendencias.append(f"Nota {nota_id}: {nome or 'produto não identificado'} — quantidade/unidade precisa de revisão")
                 continue
+            valor_item = numero_seguro(item.get("TotalItem", item.get("total_item", item.get("Total do Item (R$)"))), float("nan"))
+            if not math.isfinite(valor_item) or valor_item < 0:
+                valor_item = None
             # Conversão apenas entre unidades físicas equivalentes, nunca entre caixas e kg.
             if un == "G": qtd, un = qtd / 1000, "KG"
             if un == "ML": qtd, un = qtd / 1000, "L"
@@ -3452,6 +3456,8 @@ elif menu == "📦 Movimentação de Produtos":
             ajuste = ajustes_mov.get((str(nota_id), indice_item))
             origem = "Fornecedor especializado" if False else "Outras origens"
             if ajuste:
+                if ajuste[8] is not None:
+                    valor_item = float(ajuste[8])
                 nome = ajuste[0] if ajuste[0] is not None else nome
                 fornecedor = ajuste[1] if ajuste[1] is not None else fornecedor
                 categoria_original = ajuste[2] if ajuste[2] is not None else categoria_original
@@ -3473,7 +3479,7 @@ elif menu == "📦 Movimentação de Produtos":
             registros.append({"Nota": nota_id, "Índice do item": indice_item, "Origem": origem,
                               "Fator conversão": fator[1] if fator else None, "Fornecedor": fornecedor, "Produto": nome.upper(),
                               "Chave": _chave_produto_mov(nome), "Categoria": categoria_original,
-                              "Quantidade": qtd, "Unidade": un, "Grupo": grupo,
+                              "Quantidade": qtd, "Unidade": un, "Valor total gasto (R$)": valor_item, "Grupo": grupo,
                               "Código catálogo": catalogo[0] if catalogo else "",
                               "Descrição catálogo": desc_ref if catalogo else "",
                               "Unidades internas": embalagens, "Quantidade convertida": qtd_convertida,
@@ -3485,13 +3491,14 @@ elif menu == "📦 Movimentação de Produtos":
         st.caption("As três tabelas são apenas de consulta: não alteram notas, inventário, CMV nem DRE.")
         with st.expander("✏️ Editar produtos, fornecedores, quantidades e conversões", expanded=False):
             st.caption("Edite as linhas abaixo e clique em Salvar. Os ajustes são guardados em tabela separada no Supabase; as notas fiscais originais e a DRE não são modificadas. Para alterar a origem, selecione Fornecedor especializado ou Outras origens.")
-            colunas_edicao = ["Nota", "Índice do item", "Produto", "Fornecedor", "Categoria", "Quantidade", "Unidade", "Origem", "Fator conversão", "Unidade convertida"]
+            colunas_edicao = ["Nota", "Índice do item", "Produto", "Fornecedor", "Categoria", "Quantidade", "Unidade", "Valor total gasto (R$)", "Origem", "Fator conversão", "Unidade convertida"]
             edicao_mov = df_mov[colunas_edicao].copy()
             edicao_mov["Fator conversão"] = edicao_mov["Fator conversão"].astype(float)
             tabela_editada = st.data_editor(edicao_mov, hide_index=True, use_container_width=True,
                 disabled=["Nota", "Índice do item"], num_rows="fixed", key=f"editor_mov_{mes_ativo}",
                 column_config={"Origem": st.column_config.SelectboxColumn("Origem", options=["Fornecedor especializado", "Outras origens"]),
                                "Quantidade": st.column_config.NumberColumn("Quantidade", min_value=0.0),
+                               "Valor total gasto (R$)": st.column_config.NumberColumn("Valor total gasto (R$)", min_value=0.0, format="R$ %.2f"),
                                "Fator conversão": st.column_config.NumberColumn("Fator conversão (por unidade)", min_value=0.0)})
             if st.button("💾 Salvar ajustes de movimentação", key=f"salvar_mov_{mes_ativo}", type="primary"):
                 try:
@@ -3501,24 +3508,29 @@ elif menu == "📦 Movimentação de Produtos":
                                 quantidade = float(linha["Quantidade"])
                                 if not math.isfinite(quantidade) or quantidade < 0:
                                     raise ValueError("Quantidade inválida: informe um número maior ou igual a zero")
+                                valor_editado = linha["Valor total gasto (R$)"]
+                                valor_editado = None if pd.isna(valor_editado) else float(valor_editado)
+                                if valor_editado is not None and (not math.isfinite(valor_editado) or valor_editado < 0):
+                                    raise ValueError("Valor total gasto inválido")
                                 fc = linha["Fator conversão"]
                                 fc = None if pd.isna(fc) else float(fc)
                                 if fc is not None and (not math.isfinite(fc) or fc < 0):
                                     raise ValueError("Fator de conversão inválido")
                                 cur.execute("""INSERT INTO ajustes_movimentacao_spoleto
                                   (mes, nota_id, item_indice, produto, fornecedor, categoria, quantidade, unidade,
-                                   grupo_origem, fator_conversao, unidade_conversao)
-                                  VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                                   grupo_origem, fator_conversao, unidade_conversao, valor_total)
+                                  VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                                   ON CONFLICT (mes, nota_id, item_indice) DO UPDATE SET
                                   produto=EXCLUDED.produto, fornecedor=EXCLUDED.fornecedor,
                                   categoria=EXCLUDED.categoria, quantidade=EXCLUDED.quantidade,
                                   unidade=EXCLUDED.unidade, grupo_origem=EXCLUDED.grupo_origem,
                                   fator_conversao=EXCLUDED.fator_conversao,
-                                  unidade_conversao=EXCLUDED.unidade_conversao, atualizado_em=NOW()""",
+                                  unidade_conversao=EXCLUDED.unidade_conversao,
+                                  valor_total=EXCLUDED.valor_total, atualizado_em=NOW()""",
                                   (mes_ativo, str(linha["Nota"]), int(linha["Índice do item"]),
                                    str(linha["Produto"]), str(linha["Fornecedor"]), str(linha["Categoria"]),
                                    quantidade, str(linha["Unidade"]), str(linha["Origem"]), fc,
-                                   str(linha["Unidade convertida"]) if pd.notna(linha["Unidade convertida"]) else ""))
+                                   str(linha["Unidade convertida"]) if pd.notna(linha["Unidade convertida"]) else "", valor_editado))
                     st.success("Ajustes salvos. Atualizando tabelas...")
                     st.rerun()
                 except Exception as erro_salvar_mov:
@@ -3538,10 +3550,16 @@ elif menu == "📦 Movimentação de Produtos":
                 return
             agrupado = (dados.groupby(["Chave", "Unidade", "Unidade convertida"], dropna=False, as_index=False)
                 .agg(Produto=("Produto", "first"), Quantidade=("Quantidade", "sum"),
-                     Convertido=("Quantidade convertida", "sum"), Notas=("Nota", "nunique")))
+                     Convertido=("Quantidade convertida", "sum"),
+                     **{"Valor total gasto (R$)": ("Valor total gasto (R$)", lambda x: x.sum(min_count=1))},
+                     Notas=("Nota", "nunique")))
             agrupado["Convertido"] = agrupado.apply(lambda r: None if not r["Unidade convertida"] else r["Convertido"], axis=1)
-            agrupado = agrupado[["Produto", "Quantidade", "Unidade", "Convertido", "Unidade convertida", "Notas"]].sort_values("Produto")
-            st.dataframe(agrupado, hide_index=True, use_container_width=True)
+            agrupado = agrupado[["Produto", "Quantidade", "Unidade", "Valor total gasto (R$)", "Convertido", "Unidade convertida", "Notas"]].sort_values("Produto")
+            st.metric("Total gasto neste grupo", f"R$ {formatar_numero_br(dados['Valor total gasto (R$)'].sum())}")
+            if dados["Valor total gasto (R$)"].isna().any():
+                st.caption("Alguns itens não têm valor informado: o total exibido é parcial.")
+            st.dataframe(agrupado, hide_index=True, use_container_width=True,
+                column_config={"Valor total gasto (R$)": st.column_config.NumberColumn("Valor total gasto (R$)", format="R$ %.2f")})
             st.download_button(f"⬇️ Exportar {titulo} (CSV)", agrupado.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
                 file_name=f"{titulo.lower().replace(' ', '_')}_{mes_ativo}.csv", mime="text/csv", key=f"export_mov_{titulo}")
         st.markdown("### 🥬 Horte por origem da compra")
