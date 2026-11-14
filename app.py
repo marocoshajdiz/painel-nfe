@@ -3396,6 +3396,23 @@ elif menu == "📦 Movimentação de Produtos":
         nome = unicodedata.normalize("NFKD", str(nome or "").upper())
         nome = "".join(c for c in nome if not unicodedata.combining(c))
         return " ".join(nome.split())
+    # Ajustes independentes das notas fiscais e da DRE.
+    try:
+        with conectar_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""CREATE TABLE IF NOT EXISTS ajustes_movimentacao_spoleto (
+                    mes TEXT NOT NULL, nota_id TEXT NOT NULL, item_indice INTEGER NOT NULL,
+                    produto TEXT, fornecedor TEXT, categoria TEXT, quantidade DOUBLE PRECISION,
+                    unidade TEXT, grupo_origem TEXT, fator_conversao DOUBLE PRECISION,
+                    unidade_conversao TEXT, atualizado_em TIMESTAMPTZ DEFAULT NOW(),
+                    PRIMARY KEY (mes, nota_id, item_indice))""")
+                cur.execute("""SELECT nota_id, item_indice, produto, fornecedor, categoria, quantidade,
+                           unidade, grupo_origem, fator_conversao, unidade_conversao
+                           FROM ajustes_movimentacao_spoleto WHERE mes=%s""", (mes_ativo,))
+                ajustes_mov = {(str(r[0]), int(r[1])): r[2:] for r in cur.fetchall()}
+    except Exception as erro_mov:
+        st.error(f"Não foi possível preparar os ajustes de movimentação: {erro_mov}")
+        st.stop()
     registros, pendencias = [], []
     for nota_id, fornecedor, itens_json in notas_mov:
         try:
@@ -3407,7 +3424,7 @@ elif menu == "📦 Movimentação de Produtos":
         except (ValueError, TypeError):
             pendencias.append(f"Nota {nota_id}: itens não puderam ser interpretados")
             continue
-        for item in itens:
+        for indice_item, item in enumerate(itens):
             if not isinstance(item, dict):
                 continue
             nome = str(item.get("Produto", item.get("produto", ""))).strip()
@@ -3432,8 +3449,30 @@ elif menu == "📦 Movimentação de Produtos":
             chave_nome = _chave_produto_mov(nome)
             grupo = ("Horte" if any(x in chave_cat for x in ("HORTE", "HORTIFRUT")) else
                      "Molhos" if "MOLHO " in chave_nome or chave_nome.startswith("MOLHO") else "Outros")
-            registros.append({"Nota": nota_id, "Fornecedor": fornecedor, "Produto": nome.upper(),
-                              "Chave": _chave_produto_mov(nome), "Categoria": str(item.get("Categoria", "Não informada")),
+            ajuste = ajustes_mov.get((str(nota_id), indice_item))
+            origem = "Fornecedor especializado" if False else "Outras origens"
+            if ajuste:
+                nome = ajuste[0] if ajuste[0] is not None else nome
+                fornecedor = ajuste[1] if ajuste[1] is not None else fornecedor
+                categoria_original = ajuste[2] if ajuste[2] is not None else categoria_original
+                qtd = float(ajuste[3]) if ajuste[3] is not None else qtd
+                un = ajuste[4] if ajuste[4] is not None else un
+                origem = ajuste[5] or "Outras origens"
+                grupo = ("Horte" if "HORTE" in _chave_produto_mov(categoria_original) else
+                         "Molhos" if "MOLHO" in _chave_produto_mov(nome) else "Outros")
+                if ajuste[6] is not None and ajuste[7]:
+                    fator = (1, float(ajuste[6]), ajuste[7])
+                    qtd_convertida = round(qtd * fator[1], 6)
+                    un_convertida = fator[2]
+                    embalagens = qtd
+                else:
+                    fator = conversao_catalogo_mov(desc_ref, un)
+                    qtd_convertida = round(qtd * fator[1], 6) if fator else None
+                    un_convertida = fator[2] if fator else ""
+                    embalagens = round(qtd * fator[0], 6) if fator else None
+            registros.append({"Nota": nota_id, "Índice do item": indice_item, "Origem": origem,
+                              "Fator conversão": fator[1] if fator else None, "Fornecedor": fornecedor, "Produto": nome.upper(),
+                              "Chave": _chave_produto_mov(nome), "Categoria": categoria_original,
                               "Quantidade": qtd, "Unidade": un, "Grupo": grupo,
                               "Código catálogo": catalogo[0] if catalogo else "",
                               "Descrição catálogo": desc_ref if catalogo else "",
@@ -3444,6 +3483,47 @@ elif menu == "📦 Movimentação de Produtos":
     else:
         df_mov = pd.DataFrame(registros)
         st.caption("As três tabelas são apenas de consulta: não alteram notas, inventário, CMV nem DRE.")
+        with st.expander("✏️ Editar produtos, fornecedores, quantidades e conversões", expanded=False):
+            st.caption("Edite as linhas abaixo e clique em Salvar. Os ajustes são guardados em tabela separada no Supabase; as notas fiscais originais e a DRE não são modificadas. Para alterar a origem, selecione Fornecedor especializado ou Outras origens.")
+            colunas_edicao = ["Nota", "Índice do item", "Produto", "Fornecedor", "Categoria", "Quantidade", "Unidade", "Origem", "Fator conversão", "Unidade convertida"]
+            edicao_mov = df_mov[colunas_edicao].copy()
+            edicao_mov["Fator conversão"] = edicao_mov["Fator conversão"].astype(float)
+            tabela_editada = st.data_editor(edicao_mov, hide_index=True, use_container_width=True,
+                disabled=["Nota", "Índice do item"], num_rows="fixed", key=f"editor_mov_{mes_ativo}",
+                column_config={"Origem": st.column_config.SelectboxColumn("Origem", options=["Fornecedor especializado", "Outras origens"]),
+                               "Quantidade": st.column_config.NumberColumn("Quantidade", min_value=0.0),
+                               "Fator conversão": st.column_config.NumberColumn("Fator conversão (por unidade)", min_value=0.0)})
+            if st.button("💾 Salvar ajustes de movimentação", key=f"salvar_mov_{mes_ativo}", type="primary"):
+                try:
+                    with conectar_db() as conn:
+                        with conn.cursor() as cur:
+                            for _, linha in tabela_editada.iterrows():
+                                quantidade = float(linha["Quantidade"])
+                                if not math.isfinite(quantidade) or quantidade < 0:
+                                    raise ValueError("Quantidade inválida: informe um número maior ou igual a zero")
+                                fc = linha["Fator conversão"]
+                                fc = None if pd.isna(fc) else float(fc)
+                                if fc is not None and (not math.isfinite(fc) or fc < 0):
+                                    raise ValueError("Fator de conversão inválido")
+                                cur.execute("""INSERT INTO ajustes_movimentacao_spoleto
+                                  (mes, nota_id, item_indice, produto, fornecedor, categoria, quantidade, unidade,
+                                   grupo_origem, fator_conversao, unidade_conversao)
+                                  VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                                  ON CONFLICT (mes, nota_id, item_indice) DO UPDATE SET
+                                  produto=EXCLUDED.produto, fornecedor=EXCLUDED.fornecedor,
+                                  categoria=EXCLUDED.categoria, quantidade=EXCLUDED.quantidade,
+                                  unidade=EXCLUDED.unidade, grupo_origem=EXCLUDED.grupo_origem,
+                                  fator_conversao=EXCLUDED.fator_conversao,
+                                  unidade_conversao=EXCLUDED.unidade_conversao, atualizado_em=NOW()""",
+                                  (mes_ativo, str(linha["Nota"]), int(linha["Índice do item"]),
+                                   str(linha["Produto"]), str(linha["Fornecedor"]), str(linha["Categoria"]),
+                                   quantidade, str(linha["Unidade"]), str(linha["Origem"]), fc,
+                                   str(linha["Unidade convertida"]) if pd.notna(linha["Unidade convertida"]) else ""))
+                    st.success("Ajustes salvos. Atualizando tabelas...")
+                    st.rerun()
+                except Exception as erro_salvar_mov:
+                    st.error(f"Não foi possível salvar: {erro_salvar_mov}")
+
         categoria_mov = st.selectbox("Categoria das notas", ["Todas"] + sorted(df_mov["Categoria"].unique().tolist()), key="filtro_categoria_mov")
         pesquisa_mov = st.text_input("Pesquisar produto ou código", key="pesquisa_mov")
         if categoria_mov != "Todas":
@@ -3464,7 +3544,27 @@ elif menu == "📦 Movimentação de Produtos":
             st.dataframe(agrupado, hide_index=True, use_container_width=True)
             st.download_button(f"⬇️ Exportar {titulo} (CSV)", agrupado.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
                 file_name=f"{titulo.lower().replace(' ', '_')}_{mes_ativo}.csv", mime="text/csv", key=f"export_mov_{titulo}")
-        tabela_grupo_mov(df_mov[df_mov["Grupo"] == "Horte"], "Horte")
+        st.markdown("### 🥬 Horte por origem da compra")
+        st.caption("Selecione o fornecedor especializado de Horte. As notas dos demais fornecedores ficam separadas; "
+                   "o total geral soma todas as origens sem duplicar notas. Nenhuma alteração é feita na DRE.")
+        df_horte = df_mov[df_mov["Grupo"] == "Horte"].copy()
+        fornecedores_horte = sorted(df_horte["Fornecedor"].fillna("Não informado").astype(str).unique().tolist())
+        fornecedores_especializados = st.multiselect(
+            "Fornecedor(es) especializado(s) de Horte",
+            options=fornecedores_horte,
+            key="fornecedores_especializados_horte_mov",
+            help="Escolha pelo nome que aparece nas notas fiscais. Fornecedores não escolhidos ficam na tabela de outras origens (inclusive supermercados).")
+        if not fornecedores_especializados:
+            st.info("Selecione acima o fornecedor de Horte para separar suas entradas das compras em supermercados e outras origens.")
+        df_especial = df_horte[(df_horte["Fornecedor"].fillna("Não informado").astype(str).isin(fornecedores_especializados)) | (df_horte["Origem"] == "Fornecedor especializado")]
+        df_outras = df_horte[~df_horte.index.isin(df_especial.index)]
+        tabela_grupo_mov(df_especial, "Horte - Fornecedor especializado")
+        tabela_grupo_mov(df_outras, "Horte - Outras origens e supermercados")
+        tabela_grupo_mov(df_horte, "Horte - Total geral")
+        st.caption("O total geral inclui cada item de nota uma única vez. Agrupamento por produto e unidade: "
+                   "KG não é somado a caixas, maços ou unidades. 'Outras origens' não significa necessariamente supermercado.")
+        with st.expander("🔎 Conferir notas e fornecedores do Horte"):
+            st.dataframe(df_horte.drop(columns=["Chave"]), hide_index=True, use_container_width=True)
         tabela_grupo_mov(df_mov[df_mov["Grupo"] == "Molhos"], "Molhos")
         with st.expander("📋 Todos os produtos (outras categorias)"):
             tabela_grupo_mov(df_mov, "Todos os produtos")
