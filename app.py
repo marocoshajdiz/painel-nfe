@@ -29,6 +29,7 @@ MODULOS_PERMISSOES = {
     "notas": "📸 Escanear & Alimentar Nota", "lancamentos": "📝 Lançamentos do Mês",
     "regras": "🧠 Regras Inteligentes", "contagem": "📋 Contagem de Estoque",
     "inventario": "📦 Inventário e Produtos",
+    "movimentacao": "📦 Movimentação de Produtos",
 }
 
 def conectar_usuarios():
@@ -1507,7 +1508,8 @@ opcoes_menu = [("dre", f"📊 DRE Spoleto ({NOMES_MESES[mes_ativo]})"),
     ("lancamentos", "📝 Lançamentos do Mês"),
     ("regras", "🧠 Regras Inteligentes"),
     ("contagem", "📋 Contagem de Estoque"),
-    ("inventario", "📦 Inventário e Produtos")]
+    ("inventario", "📦 Inventário e Produtos"),
+    ("movimentacao", "📦 Movimentação de Produtos")]
 permitidos = list(MODULOS_PERMISSOES) if identidade["admin"] else identidade["permissoes"]
 visiveis = [nome for codigo, nome in opcoes_menu if codigo in permitidos]
 if identidade["admin"]:
@@ -3253,6 +3255,47 @@ def interface_cadastro_produto():
 
 
 # ======================= TELAS DE ESTOQUE =======================
+
+# Catálogo eSupri 14/11/2026: somente referência de embalagem, sem escrita na DRE.
+CATALOGO_ESUPRI_MOV = [('132103', 'TERMOMETRO TIPO ESPETO C/ CERTIFICADO', 'UN'), ('132107', 'MANGA DESC CONFEITO C/ 50 UNID', 'PT'), ('132115', 'LACRE P/ CHOCOLATE PCT 100 UNI', 'PT'), ('756994', 'ABRIDOR DE LATA INOX', 'UN'), ('756995', 'ACETO BALSAMICO GF 500ML (IMPORTADO)', 'UN'), ('757009', 'BARRA MAGNETICA 33CM - M13MKS', 'UN'), ('757022', 'PULVERIZADOR C/ BOMBA 500ML', 'UN'), ('757025', 'CACAROLA FUNDA 40CM 25 L', 'UN'), ('757040', 'SAPATO ATEND PRETO N40', 'PA'), ('757067', 'RASPADOR MASTER INOX 24672/185', 'UN'), ('757069', 'ESPONJA DUPLA FACE PT 10UN', 'PT'), ('757070', 'ETIQUETA VALIDADE TRIGO RL 2500UN', 'UN'), ('757073', 'FIBRA LIMP MULTIUSO VERDE 5UN', 'PCT'), ('757074', 'ROLO PACK FILME PVC 300MX29CM', 'UN'), ('757095', 'LUVA LATEX PAR AMARELA SOFT (IMPORTADO)', 'PT'), ('757107', 'MOEDOR DE PIMENTA REF104', 'UN'), ('757111', 'ORGANIZADOR TOMATE REF920 VISTA', 'UN'), ('757113', 'PA P/ LIXO CABO LONGO', 'UN'), ('757114', 'PALITO SH 2000UN (IMPORTADO)', 'CX'), ('757116', 'PANO MULTIUSO RL 28 CM X 300 M', 'RL'), ('757118', 'PAPEL PARA LASANHA 500UNI', 'PT'), ('757122', 'PEDRA AFIAR GRAO 120/240', 'UN'), ('757123', 'PEDRA REFRATARIA BEGE FORNO 35X32', 'UN'), ('757124', 'PEITO/BLANKET PERU 4X1,7KG', 'CX'), ('757126', 'PIMENTA PRETA GRAO - 500 GR (IMPORTADA)', 'PT'), ('757133', 'PRESUNTO COZ S/ CP GD 2X3,67KG', 'CX'), ('757136', 'RALADOR INOX 4 FACES 2202/327', 'UN'), ('757138', 'RECIPIENTE PLAST BOTELLA 762/40', 'UN'), ('757142', 'REFRESCO LARANJA 1KG', 'PT'), ('757147', 'RODO BORRACHA DUPLA 40CM', 'UN'), ('757151', 'SACO LIXO PRETO 100X200 LT', 'FD'), ('757152', 'SACO LIXO PRETO 100X40LT', 'FD'), ('757153', 'SACO LIXO PRETO 100X60LT', 'PT'), ('757157', 'SAL SH 2000 X 1G', 'CX'), ('757160', 'SACO LIXO PRETO 100X250LT', 'PT'), ('757173', 'TOUCA BRANCA DESC CX 100UNID', 'PT'), ('757176', 'VASSOURA NYLON NOVICA', 'UN'), ('757177', 'VASSOURA PARA BANCADA', 'UN'), ('757183', 'SAPATO ATEND PRETO N39', 'PA'), ('757184', 'BANDEJA ALIMENTO REF342', 'UN'), ('757223', 'TAMPA PLAST MASSA BCA250UN REF', 'CX'), ('757235', 'SAPATO ATEND PRETO N35', 'PA'), ('757236', 'SAPATO ATEND PRETO N36', 'PA'), ('757248', 'AZEITE BAGACO OLIVA 5LT (IMPORTADO)', 'UN'), ('757251', 'LINGUICA CALABRESA 2,5KG', 'PT'), ('757253', 'TABELA HIGIENIZACAO DAS MAOS', 'UN'), ('757263', 'ESCORREDOR MASSA 1/4 40CM', 'UN'), ('757268', 'FRIGIDEIRA INOX REF 62636/261 - SEM FUNDO TRIPLO', 'UN'), ('757269', 'CUBA INOX (FUNDA) 53X33 61051/060', 'UN'), ('757272', 'LIXEIRA PLAST C/ PEDAL 72L REF299', 'UN'), ('757279', 'RECIP PLAST VAC FREEZER 460/2', 'UN'), ('757280', 'ORGANIZADOR TOP STOCK REF 970', 'UN'), ('757281', 'RODO DE ALUMINIO IMPORTADO', 'UN'), ('757284', 'SACO LIXO PRETO 100X100LT', 'PT'), ('757307', 'PEGADOR GELO INGR 63800/610/11', 'UN'), ('757318', 'CANUDO MOLHO (B.CHAMPAG 61218)', 'UN'), ('757355', 'SAPATO ATEND PRETO N37', 'PA'), ('757443', 'ESPONJA FIBRACO 3M-5UN', 'PT'), ('757556', 'REFRESCO UVA 1KG', 'PT'), ('757604', 'SAPATO ATEND PRETO N38', 'PA'), ('757605', 'CANUDO PEQ (B.GELO-61219/140)', 'UN'), ('757748', 'QUEIJO GORGONZOLA (APROX 6 KG)', 'KG'), ('757751', 'SAL REFINADO 1KG', 'PT'), ('757765', 'FACA INOX 26CM REF 24609/080', 'UN'), ('757884', 'PA PARA GELO INOX 2202/362', 'UN'), ('757886', 'ACENDEDOR DE GAS', 'UN'), ('757903', 'JARRA GRADUADA 1LT REF 202 (IMPORTADO)', 'UN'), ('757979', 'LIXEIRA PLAST C/ PEDAL 36 L REF298/01', 'UN'), ('758152', 'ORGANIZADOR P/ PANE REF 955', 'UN'), ('758289', 'GN 1/6 TRANSP 64CW135 - 10CM/1,5L (IMPORTADO)', 'UN'), ('758290', 'GN 1/9 TRANSP 94CW135 - 10 CM/0,85L (IMPORTADO)', 'UN'), ('758293', 'TAMPA GN 1/9 BRANCA 90PPCWSC438 (IMPORTADO)', 'UN'), ('758310', 'CORTADOR DE BAG VERMELHO', 'UN'), ('758319', 'ESCORREDOR DE MASSA RETAGUARDA', 'UN'), ('758321', 'BOBINA BALANCA FILIZOLA RL 697 UND', 'RL'), ('758386', 'SAPATO ATEND PRETO N41', 'PA'), ('758387', 'SAPATO ATEND PRETO N42', 'PA'), ('758388', 'SAPATO ATEND PRETO N43', 'PA'), ('758389', 'SAPATO ATEND PRETO N34', 'PA'), ('758390', 'BOBINA BALANCA TOLEDO RL 697 UND', 'RL'), ('758410', 'SAL GROSSO 1KG', 'PT'), ('758430', 'BOBINA PICOTADA 30X40 500 UND', 'PT'), ('758431', 'VINHO BCO CHARDONAY 24X187,5ML (IMPORTADO)', 'CX'), ('758432', 'VINHO TTO MERLOT 24X187,5ML (IMPORTADO)', 'CX'), ('758439', 'PUMP BOMBONA 5L BR800029042', 'UN'), ('758445', 'LUVA LATEX PAR VERDE SOFT LIMP', 'UN'), ('758448', 'TERMOMETRO INFRAV CALIBRADO UN', 'UN'), ('758451', 'AVENTAL DESCARTAVEL 100UN', 'PT'), ('758473', 'REFIL RODO IMPORTADO', 'UN'), ('758487', 'FITA MEDICAO CLORO CX 6UNID BR800001000 (IMPORTADO)', 'CX'), ('758509', 'PAPEL TOALHA 20,3X20 1000UN', 'PT'), ('758528', 'COLHER SOB INDIV PRETO CX 1000', 'CX'), ('758529', 'KIT GARFO FACA PRETO 150 UND', 'CX'), ('758530', 'KIT GARFO COLHER PRETO 150UN GNC', 'CX'), ('758532', 'REFRESCO MARACUJA 1KG', 'PT'), ('758538', 'CESTA TEFLON 215X280 MM', 'UN'), ('758539', 'LUVA PROCEDIMENTO MOLHOS CA:16460', 'UN'), ('758559', 'BOWL INOX PARA SALADA 26CM', 'UN'), ('758561', 'SAPATO ATEND PRETO N44', 'PA'), ('758562', 'SAPATO ATEND PRETO N45', 'PA'), ('758564', 'TAMPA GN 1/6 BRANCA 60PPCWSC438 (IMPORTADO)', 'UN'), ('758572', 'TAMPA CN 1/2 TRANSP FLIP TOP 20CWL135 (IMPORTADO)', 'UN'), ('758573', 'DRENO 1/2 TRANSP 20CWD135 (IMPORTADO)', 'UN'), ('758574', 'ORGANIZADOR PARA CARNES GRANDE GN 1/2 REF 24CW135', 'UN'), ('758578', 'POLVILHADOR AMAR REF 96SKRC135 UNID', 'UN'), ('758579', 'DRENO 1/3 TRANSP 30CWD135 (IMPORTADO)', 'UN'), ('758584', 'GN 1/3 TRANSP 34CW135 - 10CM / 3,6L (IMPORTADO)', 'UN'), ('760063', 'GNOCCHI CONGELADO 24X0,22G/5,4KG', 'CX'), ('760105', 'LASAGNA BOLOGNESA MAIOR CONG 4X6X340G', 'CX'), ('790177', 'PORTA QUEIJO RALADO (GERGELIM) 1604/000', 'UN'), ('790307', 'GARRAFA MOLHOS FIFO 710ML (IMPORTADO) FFFIFOCB24', 'UN'), ('758608', 'TAMPA GN 1/3 TRANSP PEGADOR 30CWCH135 (IMPORTADO)', 'CX'), ('758625', 'KAY OVEN CLEAN 1L', 'BD'), ('758629', 'FIBRA AZUL SCOTCH BRITE 1 UN', 'CX'), ('758628', 'TACA E SUPORTE CRISTAL CS 50UN', 'CX'), ('758635', 'CONTRA FILETTO / CTR FILE 12X5X180GR /10,80 KG', 'CX'), ('758676', 'CONCHA INOX - CABO RETO 59ML', 'UND'), ('758644', 'BANDEJA PLASTICA PRETA 49X28CM', 'UN'), ('758667', 'PRATO FUNDO C/ABA BAMB SPOL 23/12UN', 'CX'), ('758668', 'PRATO QUAD SOB NOVA ARTE 12 UN 19,5 CM', 'CX'), ('758670', 'PRATO BASE POLPETONE NOVA ARTE 860226', 'CX'), ('758672', 'TRAVESSA QUAD MASSA MAMMA GRATINAR CX 6 UND', 'CX'), ('758673', 'TRAV.QUADR LASAGNA E POLPETONE 12 UND-54282', 'CX'), ('758688', 'GN DE INOX 1 1X 65 MM PERFURADA GN 11', 'UN'), ('758691', 'TABUA PLAST CORTE CARNE 30X60 AMARELA', 'UN'), ('758649', 'PAPEL BANDEJA SPOL PCT 1000 UND', 'CX'), ('758677', 'FILE DE FRANGO CONG CX 12 X 1 KG / 12KG', 'CX'), ('758701', 'MOLHEIRA ELIPSE PRETA C/TAMPA 750ML CX 12', 'CX'), ('758746', 'UVAS PASSAS PRETAS S/SEMENTES 500GR', 'UN'), ('758711', 'ESPATULA SILICONE APRECIATTA 25781/100', 'UN'), ('758145', 'MOLHO POMODORO CONG CX 6X1,2KG / 7,2KG', 'CX'), ('757006', 'AZEITE OLIVA VD 12X500ML IMPORTADO MCI', 'CX'), ('760120', 'MOLHO NOVO BRANCO CONG CX 6X1,2KG /7,2 KG', 'CX'), ('757026', 'CAFE A VACUO - 500GR', 'CX'), ('760124', 'MOLHO DE QUEIJO CONG 6X1,2KG /7,2 KG', 'CX'), ('758763', 'QJ PARMESAO PECA (APROX 6KG)', 'KG'), ('758719', 'CACAROLA RASA ACO INOX 53/241', 'UN'), ('758731', 'CUBA ACO INOX 1/1 20MM S/ALCA 61051/020', 'UN'), ('758723', 'FACA LEGUMES INOX 3 PROFISSIONAL', 'UN'), ('758729', 'FACA CARNE INOX 8 PROFISSIONAL 24609/088', 'UND'), ('758721', 'PINCEL SILICONE 27,5X 4,5 CM PRETO', 'UN'), ('758525', 'BACON IN NATURA CUBOS CX 2X2KG SPOLETO', 'CX'), ('758775', 'POLPETONE DE CARNE CX 38X130G', 'CX'), ('757011', 'ALCOOL LIQUIDO 70GL CX 12X1LT', 'CX'), ('790471', 'NUTELLA FD 6X650GR IMPORTADO', 'CX'), ('760130', 'RAVIOLI DE CARNE CONGELADO 24X0,200GR / 4,8KG', 'CX'), ('758786', 'PRATO COUPLE SPOL CX 12 UNID', 'CX'), ('758788', 'ARROZ CARNAROLI 10X1KG IMPORTADO', 'CX'), ('500036', 'VINHO TINTO SECO 1,48L', 'CX'), ('500068', 'PASSADOR CHINOY 21CM', 'UN'), ('758812', 'OREGANO PCT 250GR IMPORTADO', 'PCT'), ('758416', 'SUMA CALC D5 5L BR002390', 'BB'), ('758844', 'BICO DOSADOR ACO INOX PCT 1UND', 'UND'), ('760164', 'MOLHO CEASER CONG 6X0,5KG - 3KG', 'CX'), ('758887', 'TACHO DEC N 06', 'UN'), ('758896', 'CREMA DI ACETO BALSAMICO GF 250ML (IMPORTADO)', 'GF'), ('758910', 'TAMPA MOLHEIRA ELIPSE CX 12 UNID - MET 3870T', 'CX'), ('758911', 'PIMENTA CALABRESA FL. 250 GRS IMPORTADO', 'PT'), ('760188', 'RAVIOLI QUEIJO E PRESUNTO CONG 24X0,2KG - 4,8KG', 'CX'), ('758937', 'PASTILHA FORNO DE CONSERVACAO BALDE C/ 150 UNDS (IMPORTADO)', 'BD'), ('758938', 'BORRACHA FORNO XS UND (IMPORTADO)', 'UN'), ('758951', 'RALADOR INOX IMPORTADO', 'UND'), ('758954', 'CANUDO PAPEL EMBAL CX/ 3000', 'CX'), ('758972', 'PEITO FRANGO GRELHADO CONG 2,5KG', 'PCT'), ('758976', 'EMB PLAST P/ MASSA MAMMA 250 UN REF 042', 'CX'), ('758990', 'MILHO VERDE 24X170G /4,08 KG', 'CX'), ('759045', 'LIVRO AVANTI SPOLETO', 'UND'), ('758992', 'TAMPA PARA TACHO DEC N06', 'UN'), ('759052', 'FILE DE FRANGO CONG CX 7 X 12 X 120 G (10,08 KG)', 'CX'), ('759066', 'PORTA BEBIDAS FARDO C/ 50', 'FD'), ('759059', 'LACRE SACO TORRADA SPOL ROL C/ 2000 UNID', 'UND'), ('759061', 'TABUA POLIE CORTE 15X30X50 BRANCA', 'UN'), ('759062', 'TABUA POLIE CORTE 15X30X50 AZUL', 'UN'), ('759063', 'TABUA POLIE CORTE 15X30X50 VERMELHA', 'UN'), ('759064', 'TABUA POLIE CORTE 15X30X50 VERDE', 'UND'), ('759065', 'TABUA POLIE CORTE 15X30X50 AMARELA', 'UND'), ('759100', 'CREMEIRA ALUMINIO 300ML', 'UND'), ('759103', 'RICOTA DE BUFALA PCT 4X320G', 'PT'), ('759117', 'ORGANIZADOR REF. 70800', 'UN'), ('759122', 'GALAO ALCOOL GEL 5L', 'GL'), ('759125', 'PALHA ITALIANA CONG CX 28 X 0,065G / 1,82KG', 'CX'), ('759137', 'REDE PARA CABELO PCT 10 UN', 'PCT'), ('759140', 'PAPEL HAMBURGUER 35X35 SPOL PT 400 FLS', 'PT'), ('500229', 'CASTANHA DE CAJU 200 G TORRADA', 'PCT'), ('500237', 'VINHO BRANCO GF 1,47L', 'GF'), ('760257', 'COGUMELO ASSADO CONG 8X0,5KG - 4,0KG', 'CX'), ('759188', 'MANTEIGA SEM SAL 12X200GR', 'CX'), ('760270', 'RAVIOLI DE RICOTA CONG 24X0,200G / 4,8KG', 'CX'), ('760274', 'RAVIOLI DE MUSSARELA DE BUFALA CONG 24X0,200 - 4,8 KG', 'CX'), ('759195', 'LUVA VINILFLEX S/PO PRETA (GG) PCT 100UN', 'PT'), ('759201', 'PAS FORNO DETER C/150 VERDE 5601535 IMPORTADO', 'BD'), ('759202', 'CAIXA INTERNA FORNO 450G 200UND', 'CX'), ('759207', 'LUVA VINILFLEX S/PO (G) PCT 100UN', 'CX'), ('759215', 'IMA 4,5X4,5CM PCT C/24 - GNOCCHI DO BEM 2021', 'PCT'), ('759234', 'EMBALAGEM FOCACCIA MENOR PCT C/ 50 UND', 'PCT'), ('760294', 'MOLHO AL MARE CONG 25X150G - 3,75 KG', 'CX'), ('760295', 'MOLHO CARBONARA CONG 25X150G - 3,75 KG', 'CX'), ('760296', 'MOLHO ALFREDO CONG 25X150G - 3,75 KG', 'CX'), ('500266', 'PUDIM LEITE CONDENSADO 8 X 100G', 'CX'), ('759250', 'CHAPEU DO PICCOLO PAPEL - PT 50 UND (BONIFICADO)', 'PT'), ('780190', 'DEDEIRAS LATEX PT 50 UM TAM 4', 'PCT'), ('760322', 'MOLHO MOSTARDA E MEL 10X0,3KG - 3KG', 'CX'), ('759278', 'SACO TORRADA BG KNT 32X14 PCT 1000 UND', 'PT'), ('759276', 'CORACAO DE ALCATRA MATURATTA APROX 9 A 20 KGS CONG', 'KG'), ('759283', 'AVENTAL JEANS SPOLETO', 'UN'), ('759284', 'BOINA RISCA DE GIZ SPOLETO', 'UN'), ('759292', 'FILE DE FRANGO CONG CX 6X16 X 120 G', 'CX'), ('759299', 'SACO TALHER PAPEL SPOL 15CM CX 1000 UND', 'CX'), ('400030', 'LACRE TRIGO RL 2000UN', 'RL'), ('757285', 'SACO TRANSP MASSA 20X25 1000 UND VDP', 'PT'), ('760350', 'CAMARAO 51/60 PEDOFF PT 2KG (140/165 UN/KG)', 'PT'), ('759418', 'PALMITO PICADO 10X1,080KG / 10,8KG', 'CX'), ('759424', 'DOLMA SPOLETO P', 'UN'), ('759425', 'DOLMA SPOLETO M', 'UN'), ('759426', 'DOLMA SPOLETO G', 'UN'), ('758797', 'FACA CHURRASCO BUZIOS CX 12 UND (29812/065)', 'CX'), ('758798', 'GARFO MESA BUZIOS CX 12 UND (29812/066)', 'CX'), ('759444', 'OVO CODORNA CONSERVA 15X900G / 13,5KG', 'CX'), ('760381', 'PIZZA BALCAO 24 CM MUCARELA CONG 10X0,360KG -3,600 KG', 'CX'), ('760382', 'PIZZA BALCAO 24 CM CALABRESA CONG 10X0,400 KG - 4,000KG', 'CX'), ('759500', 'QUEIJO MUSSARELA TERRA VIVA PC 4KG', 'PC'), ('759507', 'COLHER MESA BUZIOS SPOL CX 12 UND (29812/067)', 'CX'), ('759511', 'DOLMA CAIXA FEMININO P', 'UN'), ('759512', 'DOLMA CAIXA MASCULINO P', 'UN'), ('759515', 'DOLMA CAIXA FEMININO M', 'UN'), ('759516', 'DOLMA CAIXA MASCULINO M', 'UN'), ('759517', 'DOLMA CAIXA FEMININO G', 'UN'), ('759518', 'DOLMA CAIXA MASCULINO G', 'UN'), ('759521', 'REQUEIJAO CULINARIO CX 4X1,5 KG', 'CX'), ('759651', 'FRIGIDEIRA PROFESSIONAL ACO FUNDO TRIPLO 26CM 2,2L', 'UN'), ('759655', 'CAIXA DE PIZZA COM ARTE SPOL BALCAO 25CM PT 50UND', 'CX'), ('759663', 'CIF DESENGORDURANTE CONCENTRADO 5L', 'BB'), ('759664', 'CIF DESINCRUSTANTE 5L', 'BD'), ('759665', 'CIF DESINFETANTE HORTIFRUTI 1L', 'BB'), ('759667', 'CIF DET LAVAGEM MEC DE LOUCAS 5L', 'BB'), ('759668', 'CIF DETERGENTE LIQ CONCENTRADO SEM PERFUME 7L', 'BB'), ('759669', 'CIF SECANTE LAVAGEM MEC DE LOUCAS 5L', 'BB'), ('759672', 'REXONA SAB LIQ ANTIBACTERIANO CIF SEM PERFUME 2L', 'BB'), ('759678', 'OVO INT CAGE FREE DESIDRATADO EM PO 720G', 'UND'), ('759689', 'CORTADOR P/ PIZZA 10 INOX CABO PP BRANCO 23CM (IMPORTADO)', 'UN'), ('759691', 'DISPENSER P ALCOOL EM GEL E SABONETE LIQUIDO', 'UN'), ('759706', 'SPRAY GATILHO PARA PULVERIZADOR', 'UND'), ('759707', 'PULVERIZADOR COM SPRAY 1L', 'UND'), ('759708', 'VALVULA PUMP PROFISSIONAL 30ML P/ GL 5L', 'UND'), ('759710', 'FRASCO 1L C/ TAMPA PUSH', 'UND'), ('759734', 'PAPEL MANTEIGA RL 30CM X 5CM 36UN', 'RL'), ('759744', 'PEGADOR CABO LONGO INOX PARA FORNO 28CM (3510)', 'UN'), ('759747', 'SPOLATE CHOCOLATE CONG CX 14X32G', 'CX'), ('759749', 'GUARDANAPO PAPEL EMB SPOL 15X30 C/2000 VERSATILLE', 'CX'), ('759752', 'CIF ULTRA BRANQ ALCAL CLORADO 5L', 'BB'), ('759753', 'CANECA DOSADORA PLASTICA', 'UN'), ('759772', 'BICO PERLE 09 PCT 3UN (IMPORTADO)', 'PCT'), ('759773', 'MATRIZ PEQUENA PCT 2UN (IMPORTADO)', 'PT'), ('759774', 'ESCOVINHAS DE LIMPEZA PCT 2UN (IMPORTADO)', 'PCT'), ('759776', 'OLEO DE SOJA LIVRE CX 20 X 900ML / 18L', 'CX'), ('760428', 'MOLHO PESTO CONG CX 6X500G / 3KG', 'CX'), ('780433', 'CIF DESINFETANTE LAVANDA BB 5L', 'BB'), ('759783', 'MUSSARELA BUFALA 6X250G (CEREJINHA 0,010G)', 'CX'), ('759791', 'BACON ASSADO EM CUBOS CONG CX 4 X 1KG / 4KG', 'CX'), ('759793', 'QJ PARMESAO SACHE VIGOR CX 100X10G', 'CX'), ('759815', 'TAMPA PLAST EMB SPOL GLITTER CX 250UN', 'CX'), ('759828', 'EMB PLAST P/ MASSA CAMPANHA NATAL 250UN REF 041 / 850ML', 'CX'), ('759832', 'PEITO FRANGO COZ DESF CONG CX 2 X 2 KG / 4KG', 'CX'), ('759845', 'MAC PENNE INTEGRAL TRAF BRONZO CX 12X500G / 6KG IMPORTADO', 'CX'), ('759863', 'AZEITE DE OLIVA TRUFA NEGRA 250ML (IMPORTADO)', 'UN'), ('759865', 'AZEITONA PRETA FATIADA CX 6 X 2KG / 12KG (IMPORTADO)', 'CX'), ('759868', 'ALHO INTEIRO DESC CONG CX 5X 1,1KG / 5,5KG', 'CX'), ('759870', 'COPO PAPEL SPOL NOVA ARTE 2026 CX 2000 X 300ML', 'CX'), ('759871', 'ACUCAR LIVRE FD 10KG', 'FD'), ('760445', 'MOLHO BOLOGNESA CONG CX 6 X 1,2 KG / 7,2KG', 'CX'), ('759916', 'SACO SPOL NOVA ARTE 2026 PT 100UN', 'PT'), ('759922', 'COSTELA BOVINA DESFIADA S/ CALDO CX 10 X 1KG / 10KG', 'CX'), ('759956', 'MAC SPAGUETTI BRONZO SPOL CX 4 X 3KG / 12KG (IMPORTADO)', 'CX'), ('759957', 'MAC PENNE BRONZO SPOL CX 4 X 3KG / 12KG (IMPORTADO)', 'CX'), ('759958', 'MAC FETTUCCINE BRONZO SPOL CX 4 X 3KG / 12KG (IMPORTADO)', 'CX'), ('759959', 'MAC FARFALLE BRONZO SPOL CX 4 X 3KG / 12KG (IMPORTADO)', 'CX'), ('760458', 'LASAGNA DE QUEIJOS CONG CX 6 X 4 X 320G / 7,68KG', 'CX'), ('770008', 'CAMARAO 61/70 PED COZ IQF PT 2KG (134/198 UN/KG)', 'PT'), ('770037', 'COLHER PEQ TRAMONTINA REF 63917/070', 'UN'), ('770044', 'BOBINA PDV TERM 80X100M CX 12UN SPOL', 'CX'), ('770045', 'BOBINA PDV TERM 80X100M CX 12UN BRANCA', 'CX'), ('770056', 'DOVE SABONETE CIF LIQUIDO ORIGINAL 2L', 'BB')]
+
+def normalizar_nome_mov(valor):
+    import unicodedata
+    valor = unicodedata.normalize("NFKD", str(valor or "").upper())
+    return " ".join("".join(c for c in valor if not unicodedata.combining(c)).split())
+
+def conversao_catalogo_mov(descricao, unidade):
+    """Conversão conservadora: só converte embalagem com fator explícito e confiável."""
+    import re
+    s = normalizar_nome_mov(descricao).replace(',', '.')
+    if unidade != 'CX':
+        return None
+    # Ex.: CX 6X1,2KG /7,2KG ou CX 6X500G / 3KG.
+    m = re.search(r'\b(?:CX\s*)?(\d+)\s*X\s*(\d+(?:\.\d+)?)\s*(KG|G|ML|L|LT)\b', s)
+    if not m:
+        return None
+    bags = int(m.group(1)); volume = float(m.group(2)); medida = m.group(3)
+    if bags < 1 or bags > 10000:
+        return None
+    if medida == 'G':
+        volume /= 1000; medida = 'KG'
+    elif medida == 'ML':
+        volume /= 1000; medida = 'L'
+    elif medida == 'LT':
+        medida = 'L'
+    return bags, round(bags * volume, 6), medida
+
+def identificar_catalogo_mov(nome):
+    """Exige correspondência exata do código ou descrição, sem aproximação arriscada."""
+    chave = normalizar_nome_mov(nome)
+    codigo = re.search(r'\b\d{6}\b', chave)
+    if codigo:
+        achados = [p for p in CATALOGO_ESUPRI_MOV if p[0] == codigo.group()]
+        if len(achados) == 1:
+            return achados[0]
+    achados = [p for p in CATALOGO_ESUPRI_MOV if normalizar_nome_mov(p[1]) == chave]
+    return achados[0] if len(achados) == 1 else None
+
 if menu == "📋 Contagem de Estoque":
     st.subheader(f"📋 Contagem de Estoque — {NOMES_MESES[mes_ativo]}")
     st.caption("Preencha apenas as quantidades. Deixe vazio o que ainda não contou; digite 0 para registrar estoque zerado.")
@@ -3333,6 +3376,110 @@ if menu == "📋 Contagem de Estoque":
 
         editor_contagem_com_salvamento()
         st.caption("Atenção: o salvamento automático depende de a página permanecer aberta e conectada. Para evitar perdas por desconexão, use 'Salvar contagem agora' periodicamente. Confirme a célula com Enter antes de salvar.")
+
+elif menu == "📦 Movimentação de Produtos":
+    st.subheader(f"📦 Movimentação de Produtos — {NOMES_MESES[mes_ativo]}")
+    st.caption("Entradas obtidas dos itens das notas fiscais salvas. A quantidade comprada não é necessariamente a quantidade consumida.")
+    with conectar_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, razao_social, itens_json FROM notas WHERE mes_referencia=%s ORDER BY id", (mes_ativo,))
+            notas_mov = cur.fetchall()
+    def _unidade_mov(u):
+        u = str(u or "").strip().upper().replace(".", "")
+        return {"KG":"KG", "KILO":"KG", "QUILO":"KG", "KILOGRAMA":"KG", "KILOGRAMAS":"KG",
+                "G":"G", "GR":"G", "GRAMA":"G", "GRAMAS":"G", "L":"L", "LT":"L", "LITRO":"L",
+                "LITROS":"L", "ML":"ML", "CX":"CX", "CAIXA":"CX", "CAIXAS":"CX",
+                "UN":"UN", "UND":"UN", "UNIDADE":"UN", "UNIDADES":"UN", "PC":"UN",
+                "PCT":"PCT", "PACOTE":"PCT", "MACO":"MAÇO", "MAÇO":"MAÇO"}.get(u, u or "NÃO INFORMADA")
+    import unicodedata
+    def _chave_produto_mov(nome):
+        nome = unicodedata.normalize("NFKD", str(nome or "").upper())
+        nome = "".join(c for c in nome if not unicodedata.combining(c))
+        return " ".join(nome.split())
+    registros, pendencias = [], []
+    for nota_id, fornecedor, itens_json in notas_mov:
+        try:
+            itens = json.loads(itens_json) if isinstance(itens_json, str) else itens_json
+            if isinstance(itens, dict):
+                itens = itens.get("itens", [])
+            if not isinstance(itens, list):
+                raise ValueError("Itens inválidos")
+        except (ValueError, TypeError):
+            pendencias.append(f"Nota {nota_id}: itens não puderam ser interpretados")
+            continue
+        for item in itens:
+            if not isinstance(item, dict):
+                continue
+            nome = str(item.get("Produto", item.get("produto", ""))).strip()
+            qtd = numero_seguro(item.get("Quantidade", item.get("quantidade")), float('nan'))
+            un = _unidade_mov(item.get("Unid", item.get("unid", "")))
+            if not nome or not math.isfinite(qtd) or qtd <= 0 or un == "NÃO INFORMADA":
+                pendencias.append(f"Nota {nota_id}: {nome or 'produto não identificado'} — quantidade/unidade precisa de revisão")
+                continue
+            # Conversão apenas entre unidades físicas equivalentes, nunca entre caixas e kg.
+            if un == "G": qtd, un = qtd / 1000, "KG"
+            if un == "ML": qtd, un = qtd / 1000, "L"
+            catalogo = identificar_catalogo_mov(nome)
+            desc_ref = catalogo[1] if catalogo else nome
+            fator = conversao_catalogo_mov(desc_ref, un)
+            # Não presume que toda caixa de molho branco contenha 15 bags:
+            # o catálogo eSupri código 760120 especifica 6 x 1,2 kg.
+            qtd_convertida = round(qtd * fator[1], 6) if fator else None
+            un_convertida = fator[2] if fator else ""
+            embalagens = round(qtd * fator[0], 6) if fator else None
+            categoria_original = str(item.get("Categoria", item.get("categoria", "Não informada")))
+            chave_cat = _chave_produto_mov(categoria_original)
+            chave_nome = _chave_produto_mov(nome)
+            grupo = ("Horte" if any(x in chave_cat for x in ("HORTE", "HORTIFRUT")) else
+                     "Molhos" if "MOLHO " in chave_nome or chave_nome.startswith("MOLHO") else "Outros")
+            registros.append({"Nota": nota_id, "Fornecedor": fornecedor, "Produto": nome.upper(),
+                              "Chave": _chave_produto_mov(nome), "Categoria": str(item.get("Categoria", "Não informada")),
+                              "Quantidade": qtd, "Unidade": un, "Grupo": grupo,
+                              "Código catálogo": catalogo[0] if catalogo else "",
+                              "Descrição catálogo": desc_ref if catalogo else "",
+                              "Unidades internas": embalagens, "Quantidade convertida": qtd_convertida,
+                              "Unidade convertida": un_convertida})
+    if not registros:
+        st.info("Nenhum item com quantidade e unidade válidas foi encontrado nas notas deste mês.")
+    else:
+        df_mov = pd.DataFrame(registros)
+        st.caption("As três tabelas são apenas de consulta: não alteram notas, inventário, CMV nem DRE.")
+        categoria_mov = st.selectbox("Categoria das notas", ["Todas"] + sorted(df_mov["Categoria"].unique().tolist()), key="filtro_categoria_mov")
+        pesquisa_mov = st.text_input("Pesquisar produto ou código", key="pesquisa_mov")
+        if categoria_mov != "Todas":
+            df_mov = df_mov[df_mov["Categoria"] == categoria_mov]
+        if pesquisa_mov.strip():
+            termo = re.escape(pesquisa_mov.strip())
+            df_mov = df_mov[df_mov["Produto"].str.contains(termo, case=False, na=False) | df_mov["Código catálogo"].str.contains(termo, na=False)]
+        def tabela_grupo_mov(dados, titulo):
+            st.markdown(f"#### {titulo}")
+            if dados.empty:
+                st.info("Nenhuma entrada encontrada neste grupo no mês selecionado.")
+                return
+            agrupado = (dados.groupby(["Chave", "Unidade", "Unidade convertida"], dropna=False, as_index=False)
+                .agg(Produto=("Produto", "first"), Quantidade=("Quantidade", "sum"),
+                     Convertido=("Quantidade convertida", "sum"), Notas=("Nota", "nunique")))
+            agrupado["Convertido"] = agrupado.apply(lambda r: None if not r["Unidade convertida"] else r["Convertido"], axis=1)
+            agrupado = agrupado[["Produto", "Quantidade", "Unidade", "Convertido", "Unidade convertida", "Notas"]].sort_values("Produto")
+            st.dataframe(agrupado, hide_index=True, use_container_width=True)
+            st.download_button(f"⬇️ Exportar {titulo} (CSV)", agrupado.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
+                file_name=f"{titulo.lower().replace(' ', '_')}_{mes_ativo}.csv", mime="text/csv", key=f"export_mov_{titulo}")
+        tabela_grupo_mov(df_mov[df_mov["Grupo"] == "Horte"], "Horte")
+        tabela_grupo_mov(df_mov[df_mov["Grupo"] == "Molhos"], "Molhos")
+        with st.expander("📋 Todos os produtos (outras categorias)"):
+            tabela_grupo_mov(df_mov, "Todos os produtos")
+        with st.expander("🔎 Notas de origem, códigos e conversões"):
+            st.dataframe(df_mov.drop(columns=["Chave"]), hide_index=True, use_container_width=True)
+        st.warning("Atenção: o catálogo eSupri descreve o molho branco código 760120 como caixa com 6 bags de 1,2 kg, diferente dos 15 bags informados. "
+                   "Somente descrições/códigos identificados com segurança recebem conversão automática. "
+                   "Embalagens divergentes devem ser conferidas na nota antes de converter.")
+    if pendencias:
+        with st.expander(f"⚠️ {len(pendencias)} itens/notas exigem revisão"):
+            st.warning("Itens sem quantidade ou unidade confiável não entram na soma. Revise a nota de origem.")
+            st.write("\n".join(f"- {x}" for x in pendencias[:200]))
+    st.info("Consumo real por produto exige estoque inicial e final na mesma unidade e identificação exata do produto. "
+            "O inventário atual guarda contagens por produto cadastrado, mas as notas podem usar nomes e embalagens diferentes. "
+            "Por segurança, esta versão não apresenta compras como se fossem consumo.")
 
 elif menu == "📦 Inventário e Produtos":
     st.subheader(f"📦 Inventário e Produtos — {NOMES_MESES[mes_ativo]}")
