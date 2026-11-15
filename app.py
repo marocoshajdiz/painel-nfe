@@ -589,10 +589,9 @@ def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_pro
     numero_nota = normalizar_identificador_fiscal(numero_nota)
     serie_nota = normalizar_identificador_fiscal(serie_nota)
     modelo_nota = normalizar_identificador_fiscal(modelo_nota)
-    if not numero_nota or not serie_nota or not modelo_nota:
-        raise ValueError("Informe número, série e modelo fiscal da nota para impedir duplicidades.")
-    if not normalizar_identificador_fiscal(cnpj):
-        raise ValueError("Informe o CNPJ/CPF do emitente para conferir duplicidades.")
+    identificacao_fiscal_completa = bool(numero_nota and serie_nota and modelo_nota and normalizar_identificador_fiscal(cnpj))
+    # Compras sem documento fiscal podem ser lançadas, sem criar identificação fictícia.
+    # Quando houver identificação completa, a proteção fiscal contra duplicidade é obrigatória.
     if data_nota.strftime("%Y-%m") != mes_ref:
         raise ValueError("A data de emissão não pertence ao mês selecionado. Selecione o mês correto antes de lançar.")
     total, normalizados = validar_nota_para_gravacao(valor_total, lista_produtos)
@@ -604,18 +603,19 @@ def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_pro
     conn = conectar_db()
     try:
         cursor = conn.cursor()
-        # Serializa a identificação fiscal, inclusive entre sessões simultâneas.
-        identidade_fiscal = ":".join((normalizar_identificador_fiscal(cnpj), modelo_nota, serie_nota, numero_nota))
-        cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (identidade_fiscal,))
-        cursor.execute("""SELECT mes_referencia FROM notas WHERE
-            regexp_replace(COALESCE(cnpj,''), '[^0-9]', '', 'g')=%s
-            AND regexp_replace(COALESCE(numero_nota,''), '[^0-9]', '', 'g')=%s
-            AND regexp_replace(COALESCE(serie_nota,''), '[^0-9]', '', 'g')=%s
-            AND regexp_replace(COALESCE(modelo_nota,''), '[^0-9]', '', 'g')=%s LIMIT 1""",
-            (normalizar_identificador_fiscal(cnpj), numero_nota, serie_nota, modelo_nota))
-        existente = cursor.fetchone()
-        if existente:
-            raise ValueError(f"Nota fiscal nº {numero_nota}, série {serie_nota}, já lançada no mês {existente[0]}.")
+        if identificacao_fiscal_completa:
+            # Serializa a identificação fiscal, inclusive entre sessões simultâneas.
+            identidade_fiscal = ":".join((normalizar_identificador_fiscal(cnpj), modelo_nota, serie_nota, numero_nota))
+            cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (identidade_fiscal,))
+            cursor.execute("""SELECT mes_referencia FROM notas WHERE
+                regexp_replace(COALESCE(cnpj,''), '[^0-9]', '', 'g')=%s
+                AND regexp_replace(COALESCE(numero_nota,''), '[^0-9]', '', 'g')=%s
+                AND regexp_replace(COALESCE(serie_nota,''), '[^0-9]', '', 'g')=%s
+                AND regexp_replace(COALESCE(modelo_nota,''), '[^0-9]', '', 'g')=%s LIMIT 1""",
+                (normalizar_identificador_fiscal(cnpj), numero_nota, serie_nota, modelo_nota))
+            existente = cursor.fetchone()
+            if existente:
+                raise ValueError(f"Nota fiscal nº {numero_nota}, série {serie_nota}, já lançada no mês {existente[0]}.")
         if not permitir_repetida:
             # Lock transacional impede dois operadores de gravarem simultaneamente a mesma nota.
             cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (chave,))
@@ -2768,23 +2768,23 @@ elif menu.startswith("📸 Escanear"):
         st.markdown("#### 🧾 Identificação fiscal da nota")
         c_num, c_ser, c_mod = st.columns(3)
         with c_num:
-            numero_nota_input = st.text_input("Número da nota *", value=str(dados.get("numero_nota") or ""), key=f"nf_num_{ukey}")
+            numero_nota_input = st.text_input("Número da nota (opcional)", value=str(dados.get("numero_nota") or ""), key=f"nf_num_{ukey}")
         with c_ser:
-            serie_nota_input = st.text_input("Série *", value=str(dados.get("serie_nota") or ""), key=f"nf_serie_{ukey}")
+            serie_nota_input = st.text_input("Série (opcional)", value=str(dados.get("serie_nota") or ""), key=f"nf_serie_{ukey}")
         with c_mod:
-            modelo_nota_input = st.text_input("Modelo fiscal * (ex.: 55)", value=str(dados.get("modelo_nota") or ""), key=f"nf_mod_{ukey}")
+            modelo_nota_input = st.text_input("Modelo fiscal (opcional, ex.: 55)", value=str(dados.get("modelo_nota") or ""), key=f"nf_mod_{ukey}")
         data_extraida = normalizar_data_fiscal(dados.get("data_emissao"))
         data_nota_escolhida = st.date_input(
-            "📅 Data de emissão da nota *",
-            value=data_extraida,
+            "📅 Data da compra / emissão",
+            value=data_extraida or date.today(),
             format="DD/MM/YYYY",
             key=f"data_nota_revisao_{ukey}",
             help="Preenchida automaticamente quando identificada na nota; confira antes de lançar.",
         )
         if not data_extraida:
-            st.warning("Data de emissão não identificada. Preencha a data que consta na nota antes de salvar.")
+            st.info("Data não identificada: foi sugerida a data de hoje. Ajuste para a data real da compra, se necessário.")
         if not all((numero_nota_input.strip(), serie_nota_input.strip(), modelo_nota_input.strip())):
-            st.warning("Número, série ou modelo não identificado. Confira a nota e complete os campos.")
+            st.info("Identificação fiscal incompleta: você pode lançar sem esses dados. Para notas fiscais identificadas, preencha todos os campos para ativar o bloqueio por número.")
         if numero_nota_input.strip() and serie_nota_input.strip() and modelo_nota_input.strip() and normalizar_identificador_fiscal(cnpj_input):
             duplicada = consultar_nota_duplicada(cnpj_input, numero_nota_input, serie_nota_input, modelo_nota_input)
             if duplicada:
@@ -2877,7 +2877,7 @@ elif menu.startswith("📸 Escanear"):
             key=f"confirmacao_mes_nota_{identidade_nota}",
         )
         with col_save_det:
-            if st.button(f"🚀 Confirmar & Lançar no DRE ({NOMES_MESES[mes_ativo]})", type="primary", use_container_width=True, disabled=(not mes_confirmado or bool(duplicada) or not data_nota_escolhida or not numero_nota_input.strip() or not serie_nota_input.strip() or not modelo_nota_input.strip() or data_nota_escolhida.strftime("%Y-%m") != mes_ativo)):
+            if st.button(f"🚀 Confirmar & Lançar no DRE ({NOMES_MESES[mes_ativo]})", type="primary", use_container_width=True, disabled=(not mes_confirmado or bool(duplicada) or not data_nota_escolhida or data_nota_escolhida.strftime("%Y-%m") != mes_ativo)):
                 linhas_preenchidas = df_edit[df_edit["Produto"] != ""].copy()
                 linhas_validas = linhas_preenchidas[linhas_preenchidas["TotalItem"] > 0]
                 if linhas_validas.empty:
