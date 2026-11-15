@@ -30,6 +30,7 @@ MODULOS_PERMISSOES = {
     "regras": "🧠 Regras Inteligentes", "contagem": "📋 Contagem de Estoque",
     "inventario": "📦 Inventário e Produtos",
     "movimentacao": "📦 Movimentação de Produtos",
+    "fornecedores": "🏢 Cadastro de Fornecedores",
 }
 
 def conectar_usuarios():
@@ -1599,7 +1600,8 @@ opcoes_menu = [("dre", f"📊 DRE Spoleto ({NOMES_MESES[mes_ativo]})"),
     ("regras", "🧠 Regras Inteligentes"),
     ("contagem", "📋 Contagem de Estoque"),
     ("inventario", "📦 Inventário e Produtos"),
-    ("movimentacao", "📦 Movimentação de Produtos")]
+    ("movimentacao", "📦 Movimentação de Produtos"),
+    ("fornecedores", "🏢 Cadastro de Fornecedores")]
 permitidos = list(MODULOS_PERMISSOES) if identidade["admin"] else identidade["permissoes"]
 visiveis = [nome for codigo, nome in opcoes_menu if codigo in permitidos]
 if identidade["admin"]:
@@ -1608,6 +1610,118 @@ if not visiveis:
     st.warning("Sua conta não possui módulos liberados. Procure o administrador.")
     st.stop()
 menu = st.sidebar.radio("Módulo:", visiveis)
+
+# ----------------- CADASTRO DE FORNECEDORES -----------------
+def preparar_cadastro_fornecedores():
+    with conectar_db() as conn, conn.cursor() as cur:
+        cur.execute("""CREATE TABLE IF NOT EXISTS cadastro_fornecedores_spoleto (
+            id BIGSERIAL PRIMARY KEY,
+            nome TEXT NOT NULL,
+            cnpj TEXT,
+            categoria TEXT NOT NULL DEFAULT 'Outros',
+            telefone TEXT,
+            email TEXT,
+            observacoes TEXT,
+            ativo BOOLEAN NOT NULL DEFAULT TRUE,
+            criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )""")
+        cur.execute("""CREATE UNIQUE INDEX IF NOT EXISTS uq_cadastro_fornecedores_cnpj
+                       ON cadastro_fornecedores_spoleto (cnpj) WHERE cnpj IS NOT NULL AND ativo""")
+
+if menu == "🏢 Cadastro de Fornecedores":
+    st.title("🏢 Cadastro de Fornecedores")
+    st.caption("Cadastre, edite e desative fornecedores. As notas antigas e a DRE não são alteradas.")
+    try:
+        preparar_cadastro_fornecedores()
+        with conectar_db() as conn, conn.cursor() as cur:
+            cur.execute("""SELECT id, nome, cnpj, categoria, telefone, email, observacoes, ativo
+                           FROM cadastro_fornecedores_spoleto ORDER BY nome, id""")
+            fornecedores_cadastrados = cur.fetchall()
+    except Exception as erro:
+        st.error(f"Não foi possível carregar fornecedores: {erro}")
+        st.stop()
+
+    categorias_forn = ["Horte especializado", "Supermercado", "Molhos e alimentos", "Bebidas", "Descartáveis", "Limpeza", "Outros"]
+    with st.expander("➕ Cadastrar fornecedor", expanded=not bool(fornecedores_cadastrados)):
+        with st.form("form_novo_fornecedor", clear_on_submit=True):
+            nome_f = st.text_input("Nome / Razão social *")
+            cnpj_f = st.text_input("CNPJ (opcional)")
+            categoria_f = st.selectbox("Tipo de fornecedor", categorias_forn)
+            telefone_f = st.text_input("Telefone")
+            email_f = st.text_input("E-mail")
+            obs_f = st.text_area("Observações")
+            if st.form_submit_button("Salvar fornecedor", type="primary"):
+                digitos = re.sub(r"\D", "", cnpj_f)
+                if not nome_f.strip():
+                    st.error("Informe o nome do fornecedor.")
+                elif digitos and len(digitos) != 14:
+                    st.error("O CNPJ deve ter 14 dígitos, ou ficar em branco.")
+                else:
+                    try:
+                        with conectar_db() as conn, conn.cursor() as cur:
+                            cur.execute("""INSERT INTO cadastro_fornecedores_spoleto
+                                (nome,cnpj,categoria,telefone,email,observacoes)
+                                VALUES (%s,%s,%s,%s,%s,%s)""",
+                                (nome_f.strip(), digitos or None, categoria_f, telefone_f.strip(), email_f.strip(), obs_f.strip()))
+                        st.success("Fornecedor cadastrado com sucesso.")
+                        st.rerun()
+                    except psycopg2.errors.UniqueViolation:
+                        st.error("Já existe um fornecedor ativo com esse CNPJ.")
+                    except Exception as erro:
+                        st.error(f"Erro ao salvar fornecedor: {erro}")
+
+    busca_f = st.text_input("🔎 Pesquisar fornecedor", placeholder="Nome ou CNPJ")
+    mostrar_inativos = st.checkbox("Mostrar fornecedores desativados")
+    registros_f = [f for f in fornecedores_cadastrados if (f[7] or mostrar_inativos)
+                   and (not busca_f or busca_f.casefold() in str(f[1]).casefold() or busca_f in str(f[2] or ""))]
+    st.write(f"{len(registros_f)} fornecedor(es) encontrado(s)")
+    if registros_f:
+        st.dataframe(pd.DataFrame([{"ID":f[0], "Fornecedor":f[1], "CNPJ":f[2] or "", "Tipo":f[3], "Telefone":f[4] or "", "Ativo":f[7]} for f in registros_f]), use_container_width=True, hide_index=True)
+        opcoes_f = {f[0]: f"{f[1]} — ID {f[0]}" for f in registros_f}
+        selecionado_f = st.selectbox("Selecione para editar ou desativar", list(opcoes_f), format_func=lambda k: opcoes_f[k])
+        f = next(x for x in registros_f if x[0] == selecionado_f)
+        with st.form(f"editar_fornecedor_{selecionado_f}"):
+            novo_nome = st.text_input("Nome / Razão social", value=f[1])
+            novo_cnpj = st.text_input("CNPJ", value=f[2] or "")
+            novo_tipo = st.selectbox("Tipo", categorias_forn, index=categorias_forn.index(f[3]) if f[3] in categorias_forn else len(categorias_forn)-1)
+            novo_tel = st.text_input("Telefone", value=f[4] or "")
+            novo_email = st.text_input("E-mail", value=f[5] or "")
+            novo_obs = st.text_area("Observações", value=f[6] or "")
+            salvar_f = st.form_submit_button("💾 Salvar alterações", type="primary")
+            if salvar_f:
+                digitos = re.sub(r"\D", "", novo_cnpj)
+                if not novo_nome.strip() or (digitos and len(digitos) != 14):
+                    st.error("Informe o nome e um CNPJ válido de 14 dígitos (ou deixe vazio).")
+                else:
+                    try:
+                        with conectar_db() as conn, conn.cursor() as cur:
+                            cur.execute("""UPDATE cadastro_fornecedores_spoleto SET nome=%s,cnpj=%s,categoria=%s,
+                                telefone=%s,email=%s,observacoes=%s,atualizado_em=NOW() WHERE id=%s""",
+                                (novo_nome.strip(), digitos or None, novo_tipo, novo_tel.strip(), novo_email.strip(), novo_obs.strip(), selecionado_f))
+                        st.success("Alterações salvas.")
+                        st.rerun()
+                    except psycopg2.errors.UniqueViolation:
+                        st.error("Esse CNPJ já está cadastrado para outro fornecedor ativo.")
+                    except Exception as erro:
+                        st.error(f"Erro ao atualizar: {erro}")
+        if f[7]:
+            confirmar_f = st.checkbox("Confirmo a desativação deste fornecedor", key=f"confirma_f_{selecionado_f}")
+            if st.button("🗑️ Desativar fornecedor", disabled=not confirmar_f, key=f"desativar_f_{selecionado_f}"):
+                with conectar_db() as conn, conn.cursor() as cur:
+                    cur.execute("UPDATE cadastro_fornecedores_spoleto SET ativo=FALSE, atualizado_em=NOW() WHERE id=%s", (selecionado_f,))
+                st.success("Fornecedor desativado. Histórico preservado.")
+                st.rerun()
+        else:
+            if st.button("♻️ Reativar fornecedor", key=f"reativar_f_{selecionado_f}"):
+                try:
+                    with conectar_db() as conn, conn.cursor() as cur:
+                        cur.execute("UPDATE cadastro_fornecedores_spoleto SET ativo=TRUE, atualizado_em=NOW() WHERE id=%s", (selecionado_f,))
+                    st.rerun()
+                except psycopg2.errors.UniqueViolation:
+                    st.error("Outro fornecedor ativo já utiliza esse CNPJ.")
+    else:
+        st.info("Nenhum fornecedor encontrado.")
 
 if menu == "🔐 Administração de Usuários":
     st.title("🔐 Administração de Usuários")
@@ -2521,16 +2635,35 @@ elif menu.startswith("📸 Escanear"):
             "Preencha o fornecedor e os produtos. Você poderá revisar a nota "
             "antes de gravá-la no Supabase e na DRE."
         )
+        # Fornecedores ativos do cadastro central: nome e CNPJ vêm do mesmo registro.
+        # Não escreve nem altera os dados financeiros ou fiscais do cadastro.
+        try:
+            preparar_cadastro_fornecedores()
+            with conectar_db() as conn, conn.cursor() as cur:
+                cur.execute("""SELECT id, nome, cnpj, categoria
+                               FROM cadastro_fornecedores_spoleto
+                               WHERE ativo=TRUE ORDER BY nome, id""")
+                fornecedores_para_manual = cur.fetchall()
+        except Exception as erro:
+            fornecedores_para_manual = []
+            st.error(f"Não foi possível consultar o cadastro de fornecedores: {erro}")
+
+        if not fornecedores_para_manual:
+            st.warning("Cadastre primeiro um fornecedor ativo em 🏢 Cadastro de Fornecedores.")
         with st.form(key=f"form_nota_manual_{ukey}"):
-            col_fornec, col_cnpj = st.columns([2, 1])
-            with col_fornec:
-                fornecedor_manual = st.text_input(
-                    "Fornecedor / Emitente *", placeholder="Nome do fornecedor"
-                )
-            with col_cnpj:
-                cnpj_manual = st.text_input(
-                    "CNPJ (opcional)", placeholder="00.000.000/0000-00"
-                )
+            opcoes_fornecedor = {int(f[0]): f for f in fornecedores_para_manual}
+            fornecedor_id_manual = st.selectbox(
+                "Fornecedor cadastrado *",
+                options=list(opcoes_fornecedor),
+                index=None,
+                placeholder="Selecione um fornecedor já cadastrado",
+                format_func=lambda fid: (
+                    f"{opcoes_fornecedor[fid][1]} — {opcoes_fornecedor[fid][3]}"
+                    + (f" — CNPJ {opcoes_fornecedor[fid][2]}" if opcoes_fornecedor[fid][2] else "")
+                ),
+                disabled=not bool(opcoes_fornecedor),
+            )
+            st.caption("O nome e o CNPJ serão preenchidos automaticamente a partir do cadastro. Para corrigir esses dados, use o módulo Cadastro de Fornecedores.")
 
             st.markdown("**Produtos da nota**")
             st.caption(
@@ -2573,7 +2706,9 @@ elif menu.startswith("📸 Escanear"):
             )
 
         if preparar_manual:
-            fornecedor_limpo = fornecedor_manual.strip()
+            fornecedor_selecionado = opcoes_fornecedor.get(fornecedor_id_manual)
+            fornecedor_limpo = str(fornecedor_selecionado[1]).strip() if fornecedor_selecionado else ""
+            cnpj_manual = str(fornecedor_selecionado[2] or "Não informado") if fornecedor_selecionado else "Não informado"
             df_validar = df_manual.copy()
             df_validar["Produto"] = df_validar["Produto"].fillna("").astype(str).str.strip()
             df_validar = df_validar[df_validar["Produto"] != ""].copy()
@@ -2591,7 +2726,7 @@ elif menu.startswith("📸 Escanear"):
                 * df_validar.loc[sem_subtotal, "PrecoUnitario"]
             )
             if not fornecedor_limpo:
-                st.error("Informe o nome do fornecedor.")
+                st.error("Selecione um fornecedor cadastrado e ativo.")
             elif df_validar.empty:
                 st.error("Inclua pelo menos um produto.")
             elif (df_validar["TotalItem"] <= 0).any():
