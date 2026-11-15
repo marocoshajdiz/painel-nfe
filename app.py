@@ -2648,22 +2648,42 @@ elif menu.startswith("📸 Escanear"):
             fornecedores_para_manual = []
             st.error(f"Não foi possível consultar o cadastro de fornecedores: {erro}")
 
-        if not fornecedores_para_manual:
-            st.warning("Cadastre primeiro um fornecedor ativo em 🏢 Cadastro de Fornecedores.")
         with st.form(key=f"form_nota_manual_{ukey}"):
             opcoes_fornecedor = {int(f[0]): f for f in fornecedores_para_manual}
-            fornecedor_id_manual = st.selectbox(
-                "Fornecedor cadastrado *",
-                options=list(opcoes_fornecedor),
-                index=None,
-                placeholder="Selecione um fornecedor já cadastrado",
-                format_func=lambda fid: (
-                    f"{opcoes_fornecedor[fid][1]} — {opcoes_fornecedor[fid][3]}"
-                    + (f" — CNPJ {opcoes_fornecedor[fid][2]}" if opcoes_fornecedor[fid][2] else "")
-                ),
-                disabled=not bool(opcoes_fornecedor),
+            tipo_fornecedor_manual = st.radio(
+                "Como deseja informar o fornecedor?",
+                ["Fornecedor já cadastrado", "Fornecedor não cadastrado"],
+                horizontal=True,
+                key=f"tipo_fornecedor_manual_{ukey}",
             )
-            st.caption("O nome e o CNPJ serão preenchidos automaticamente a partir do cadastro. Para corrigir esses dados, use o módulo Cadastro de Fornecedores.")
+            fornecedor_id_manual = None
+            nome_fornecedor_avulso = ""
+            cnpj_fornecedor_avulso = ""
+            if tipo_fornecedor_manual == "Fornecedor já cadastrado":
+                fornecedor_id_manual = st.selectbox(
+                    "Fornecedor cadastrado",
+                    options=list(opcoes_fornecedor),
+                    index=None,
+                    placeholder="Selecione um fornecedor já cadastrado",
+                    format_func=lambda fid: (
+                        f"{opcoes_fornecedor[fid][1]} — {opcoes_fornecedor[fid][3]}"
+                        + (f" — CNPJ {opcoes_fornecedor[fid][2]}" if opcoes_fornecedor[fid][2] else "")
+                    ),
+                    disabled=not bool(opcoes_fornecedor),
+                )
+                if not opcoes_fornecedor:
+                    st.info("Nenhum fornecedor ativo cadastrado. Escolha 'Fornecedor não cadastrado' para lançar normalmente.")
+                else:
+                    st.caption("Nome e CNPJ vêm do cadastro central.")
+            else:
+                nome_fornecedor_avulso = st.text_input(
+                    "Nome do fornecedor (sem cadastro)",
+                    placeholder="Ex.: Compra avulsa / Mercado do bairro",
+                )
+                cnpj_fornecedor_avulso = st.text_input(
+                    "CNPJ (opcional)", placeholder="Deixe em branco se não houver",
+                )
+                st.caption("Este lançamento não cadastra o fornecedor automaticamente. Você poderá cadastrá-lo depois, se desejar.")
 
             st.markdown("**Produtos da nota**")
             st.caption(
@@ -2707,8 +2727,12 @@ elif menu.startswith("📸 Escanear"):
 
         if preparar_manual:
             fornecedor_selecionado = opcoes_fornecedor.get(fornecedor_id_manual)
-            fornecedor_limpo = str(fornecedor_selecionado[1]).strip() if fornecedor_selecionado else ""
-            cnpj_manual = str(fornecedor_selecionado[2] or "Não informado") if fornecedor_selecionado else "Não informado"
+            if tipo_fornecedor_manual == "Fornecedor já cadastrado":
+                fornecedor_limpo = str(fornecedor_selecionado[1]).strip() if fornecedor_selecionado else ""
+                cnpj_manual = str(fornecedor_selecionado[2] or "Não informado") if fornecedor_selecionado else "Não informado"
+            else:
+                fornecedor_limpo = nome_fornecedor_avulso.strip()
+                cnpj_manual = cnpj_fornecedor_avulso.strip() or "Não informado"
             df_validar = df_manual.copy()
             df_validar["Produto"] = df_validar["Produto"].fillna("").astype(str).str.strip()
             df_validar = df_validar[df_validar["Produto"] != ""].copy()
@@ -2726,7 +2750,7 @@ elif menu.startswith("📸 Escanear"):
                 * df_validar.loc[sem_subtotal, "PrecoUnitario"]
             )
             if not fornecedor_limpo:
-                st.error("Selecione um fornecedor cadastrado e ativo.")
+                st.error("Selecione um fornecedor cadastrado ou informe o nome do fornecedor avulso.")
             elif df_validar.empty:
                 st.error("Inclua pelo menos um produto.")
             elif (df_validar["TotalItem"] <= 0).any():
