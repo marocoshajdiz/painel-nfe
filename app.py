@@ -577,7 +577,49 @@ def consultar_nota_duplicada(cnpj, numero, serie, modelo):
 preparar_identificacao_notas()
 
 
-def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_produtos, data_nota=None, permitir_repetida=False, numero_nota="", serie_nota="", modelo_nota=""):
+def preparar_cadastro_fornecedores_na_transacao(cur):
+    """Garante o cadastro disponível mesmo antes de abrir o menu de fornecedores."""
+    cur.execute("""CREATE TABLE IF NOT EXISTS cadastro_fornecedores_spoleto (
+        id BIGSERIAL PRIMARY KEY, nome TEXT NOT NULL, cnpj TEXT,
+        categoria TEXT NOT NULL DEFAULT 'Outros', telefone TEXT, email TEXT,
+        observacoes TEXT, ativo BOOLEAN NOT NULL DEFAULT TRUE,
+        criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+    cur.execute("""CREATE UNIQUE INDEX IF NOT EXISTS uq_cadastro_fornecedores_cnpj
+        ON cadastro_fornecedores_spoleto (cnpj) WHERE cnpj IS NOT NULL AND ativo""")
+
+
+def cadastrar_fornecedor_automaticamente(cur, nome, cnpj):
+    """Cadastra emitente de nota confirmada, sem duplicar nem alterar cadastros existentes.
+
+    Executa na mesma transação da nota e da DRE. Nunca cadastra nomes genéricos.
+    """
+    nome = " ".join(str(nome or "").split()).strip()
+    cnpj_digitos = re.sub(r"\D", "", str(cnpj or ""))
+    if not nome or nome.casefold() in {"fornecedor não identificado", "nao informado", "não informado", "desconhecido"}:
+        return "ignorado"
+    if len(cnpj_digitos) != 14:
+        cnpj_digitos = None
+
+    # Evita cadastros simultâneos duplicados mesmo quando não há CNPJ.
+    chave = "fornecedor:" + (cnpj_digitos or nome.casefold())
+    cur.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (chave,))
+    if cnpj_digitos:
+        cur.execute("SELECT id FROM cadastro_fornecedores_spoleto WHERE cnpj=%s LIMIT 1", (cnpj_digitos,))
+        if cur.fetchone():
+            return "existente"
+    # Sem CNPJ, ou com CNPJ ainda não encontrado, verifica também o nome.
+    cur.execute("SELECT id FROM cadastro_fornecedores_spoleto WHERE lower(trim(nome))=lower(%s) LIMIT 1", (nome,))
+    if cur.fetchone():
+        return "existente"
+    cur.execute("""INSERT INTO cadastro_fornecedores_spoleto
+        (nome, cnpj, categoria, observacoes)
+        VALUES (%s, %s, 'Outros', 'Cadastrado automaticamente após lançamento de nota digitalizada')
+        ON CONFLICT DO NOTHING RETURNING id""", (nome, cnpj_digitos))
+    return "criado" if cur.fetchone() else "existente"
+
+
+def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_produtos, data_nota=None, permitir_repetida=False, numero_nota="", serie_nota="", modelo_nota="", cadastrar_emitente=False):
     # Data fiscal escolhida pelo operador; se omitida, usa a data atual.
     if data_nota is None:
         data_nota = date.today()
@@ -658,6 +700,11 @@ def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_pro
             cursor.execute("""INSERT INTO regras_classificacao (produto, categoria)
                 VALUES (%s, %s) ON CONFLICT(produto)
                 DO UPDATE SET categoria=excluded.categoria""", (prod, categoria))
+        # Cadastro automático só depois de a nota passar nas validações e estar pronta
+        # para gravação. Se houver rollback, o cadastro também será revertido.
+        if cadastrar_emitente:
+            preparar_cadastro_fornecedores_na_transacao(cursor)
+            cadastrar_fornecedor_automaticamente(cursor, razao_social, cnpj)
         conn.commit()
     except Exception:
         conn.rollback()
@@ -3063,6 +3110,7 @@ elif menu.startswith("📸 Escanear"):
                             serie_nota=serie_nota_input,
                             modelo_nota=modelo_nota_input,
                             permitir_repetida=st.session_state.get("nota_origem_manual", False),
+                            cadastrar_emitente=not st.session_state.get("nota_origem_manual", False),
                         )
                     except ValueError as erro:
                         st.error(f"Nota não lançada: {erro}")
@@ -3070,6 +3118,8 @@ elif menu.startswith("📸 Escanear"):
                         st.error("Não foi possível gravar a nota. Os dados conferidos foram mantidos; tente novamente após verificar a conexão.")
                     else:
                         st.success(f"✅ {len(lista_salvar)} produto(s) lançados no DRE de {NOMES_MESES[mes_ativo]}!")
+                        if not st.session_state.get("nota_origem_manual", False):
+                            st.info("🏢 Fornecedor identificado: cadastro automático realizado quando ainda não existia. Confira em Cadastro de Fornecedores (tipo inicial: Outros).")
                         if st.session_state.get("nome_nota_ativa"):
                             avancar_fila_notas()
                         else:
