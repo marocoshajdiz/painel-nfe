@@ -522,7 +522,61 @@ def validar_nota_para_gravacao(valor_total, lista_produtos):
     return total, normalizados
 
 
-def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_produtos, data_nota=None, permitir_repetida=False):
+def normalizar_data_fiscal(valor):
+    if isinstance(valor, datetime):
+        return valor.date()
+    if isinstance(valor, date):
+        return valor
+    txt = str(valor or "").strip()
+    if not txt:
+        return None
+    try:
+        return date.fromisoformat(txt[:10])
+    except ValueError:
+        pass
+    for fmt in ("%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(txt[:10], fmt).date()
+        except ValueError:
+            pass
+    return None
+
+
+def normalizar_identificador_fiscal(valor):
+    return re.sub(r"\D", "", str(valor or ""))
+
+
+def preparar_identificacao_notas():
+    # Campos adicionais não alteram os lançamentos financeiros existentes.
+    with conectar_db() as conn, conn.cursor() as cur:
+        cur.execute("ALTER TABLE notas ADD COLUMN IF NOT EXISTS numero_nota TEXT")
+        cur.execute("ALTER TABLE notas ADD COLUMN IF NOT EXISTS serie_nota TEXT")
+        cur.execute("ALTER TABLE notas ADD COLUMN IF NOT EXISTS modelo_nota TEXT")
+        cur.execute("ALTER TABLE notas ADD COLUMN IF NOT EXISTS data_emissao DATE")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_notas_identificacao_fiscal ON notas (cnpj, modelo_nota, serie_nota, numero_nota)")
+
+
+def consultar_nota_duplicada(cnpj, numero, serie, modelo):
+    numero = normalizar_identificador_fiscal(numero)
+    if not numero:
+        return None
+    cnpj = normalizar_identificador_fiscal(cnpj)
+    serie = normalizar_identificador_fiscal(serie)
+    modelo = normalizar_identificador_fiscal(modelo)
+    with conectar_db() as conn, conn.cursor() as cur:
+        cur.execute("""SELECT mes_referencia, data_emissao FROM notas
+            WHERE regexp_replace(COALESCE(cnpj,''), '[^0-9]', '', 'g')=%s
+            AND regexp_replace(COALESCE(numero_nota,''), '[^0-9]', '', 'g')=%s
+            AND regexp_replace(COALESCE(serie_nota,''), '[^0-9]', '', 'g')=%s
+            AND regexp_replace(COALESCE(modelo_nota,''), '[^0-9]', '', 'g')=%s
+            LIMIT 1""", (cnpj, numero, serie, modelo))
+        return cur.fetchone()
+
+
+preparar_identificacao_notas()
+
+
+def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_produtos, data_nota=None, permitir_repetida=False, numero_nota="", serie_nota="", modelo_nota=""):
     # Data fiscal escolhida pelo operador; se omitida, usa a data atual.
     if data_nota is None:
         data_nota = date.today()
@@ -532,6 +586,15 @@ def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_pro
         data_nota = date.fromisoformat(data_nota)
     if not isinstance(data_nota, date):
         raise ValueError("Data da nota inválida.")
+    numero_nota = normalizar_identificador_fiscal(numero_nota)
+    serie_nota = normalizar_identificador_fiscal(serie_nota)
+    modelo_nota = normalizar_identificador_fiscal(modelo_nota)
+    if not numero_nota or not serie_nota or not modelo_nota:
+        raise ValueError("Informe número, série e modelo fiscal da nota para impedir duplicidades.")
+    if not normalizar_identificador_fiscal(cnpj):
+        raise ValueError("Informe o CNPJ/CPF do emitente para conferir duplicidades.")
+    if data_nota.strftime("%Y-%m") != mes_ref:
+        raise ValueError("A data de emissão não pertence ao mês selecionado. Selecione o mês correto antes de lançar.")
     total, normalizados = validar_nota_para_gravacao(valor_total, lista_produtos)
     # Assinatura estável para bloquear uma segunda gravação do mesmo conjunto de itens.
     assinatura = json.dumps({"mes": mes_ref, "cnpj": str(cnpj).strip(),
@@ -541,6 +604,18 @@ def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_pro
     conn = conectar_db()
     try:
         cursor = conn.cursor()
+        # Serializa a identificação fiscal, inclusive entre sessões simultâneas.
+        identidade_fiscal = ":".join((normalizar_identificador_fiscal(cnpj), modelo_nota, serie_nota, numero_nota))
+        cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (identidade_fiscal,))
+        cursor.execute("""SELECT mes_referencia FROM notas WHERE
+            regexp_replace(COALESCE(cnpj,''), '[^0-9]', '', 'g')=%s
+            AND regexp_replace(COALESCE(numero_nota,''), '[^0-9]', '', 'g')=%s
+            AND regexp_replace(COALESCE(serie_nota,''), '[^0-9]', '', 'g')=%s
+            AND regexp_replace(COALESCE(modelo_nota,''), '[^0-9]', '', 'g')=%s LIMIT 1""",
+            (normalizar_identificador_fiscal(cnpj), numero_nota, serie_nota, modelo_nota))
+        existente = cursor.fetchone()
+        if existente:
+            raise ValueError(f"Nota fiscal nº {numero_nota}, série {serie_nota}, já lançada no mês {existente[0]}.")
         if not permitir_repetida:
             # Lock transacional impede dois operadores de gravarem simultaneamente a mesma nota.
             cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (chave,))
@@ -561,9 +636,10 @@ def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_pro
         data_registo = datetime.now().strftime("%Y-%m-%d %H:%M")
         itens_json = json.dumps(lista_produtos, ensure_ascii=False)
         cursor.execute("""INSERT INTO notas
-            (mes_referencia, data_registo, razao_social, cnpj, valor_total, itens_json)
-            VALUES (%s, %s, %s, %s, %s, %s)""",
-            (mes_ref, data_registo, razao_social, cnpj, total, itens_json))
+            (mes_referencia, data_registo, razao_social, cnpj, valor_total, itens_json,
+             numero_nota, serie_nota, modelo_nota, data_emissao)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+            (mes_ref, data_registo, razao_social, cnpj, total, itens_json, numero_nota, serie_nota, modelo_nota, data_nota))
         totais = {}
         for _, categoria, valor in normalizados:
             totais[categoria] = totais.get(categoria, 0.0) + valor
@@ -935,6 +1011,10 @@ def validar_e_normalizar_resultado(dados):
         valor_total = soma_itens
 
     dados_normalizados = {
+        "numero_nota": normalizar_identificador_fiscal(dados.get("numero_nota") or dados.get("nNF")),
+        "serie_nota": normalizar_identificador_fiscal(dados.get("serie_nota") or dados.get("serie")),
+        "modelo_nota": normalizar_identificador_fiscal(dados.get("modelo_nota") or dados.get("modelo") or dados.get("mod")),
+        "data_emissao": (normalizar_data_fiscal(dados.get("data_emissao") or dados.get("dhEmi") or dados.get("dEmi")) or "").isoformat() if normalizar_data_fiscal(dados.get("data_emissao") or dados.get("dhEmi") or dados.get("dEmi")) else "",
         "razao_social": fornecedor or "Fornecedor não identificado",
         "cnpj": cnpj or "Não informado",
         "valor_total": valor_total,
@@ -954,6 +1034,10 @@ Retorne apenas JSON válido neste formato:
   "razao_social": "nome do emitente/fornecedor",
   "cnpj": "CNPJ do emitente",
   "valor_total": 0.0,
+  "numero_nota": "numero fiscal da nota, apenas digitos",
+  "serie_nota": "serie fiscal, apenas digitos",
+  "modelo_nota": "55 ou 65 ou outro modelo impresso",
+  "data_emissao": "AAAA-MM-DD (data de emissao, nao data da leitura)",
   "itens": [
     {
       "Produto": "nome do produto",
@@ -971,6 +1055,7 @@ Categorias permitidas: utilize apenas uma classificação da lista disponibiliza
 pelo aplicativo. Para itens de alimentação, bebidas e descartáveis, mantenha as
 categorias de compras correspondentes.
 Use "Horte" para hortifrúti. Não confunda valor total da nota com subtotal dos produtos.
+Extraia data de EMISSÃO, número, série e modelo fiscal da própria nota. Se ilegíveis, use texto vazio. Nunca use a data atual como data de emissão.
 """
 
 
@@ -1321,7 +1406,12 @@ def processar_documento_fiscal_individual(doc, api_key):
                     f"da soma dos produtos (R$ {formatar_numero_br(soma_produtos_xml)}). "
                     "Confira descontos, fretes e outros valores antes de confirmar."
                 )
+            ide = inf.get("ide", {})
             resultado_documento = {
+                "numero_nota": str(ide.get("nNF", "")),
+                "serie_nota": str(ide.get("serie", "")),
+                "modelo_nota": str(ide.get("mod", "")),
+                "data_emissao": str(ide.get("dhEmi") or ide.get("dEmi") or "")[:10],
                 "razao_social": emit.get("xNome", "Fornecedor não identificado"),
                 "cnpj": emit.get("CNPJ") or emit.get("CPF") or "Não informado",
                 "valor_total": total_xml,
@@ -2675,16 +2765,35 @@ elif menu.startswith("📸 Escanear"):
         with c_c:
             st.metric("Valor Total Identificado", f"R$ {numero_seguro(dados.get('valor_total')):,.2f}")
 
-        # Data escolhida é usada no lançamento financeiro; o registro de inclusão
-        # continua guardando a data/hora real em notas.data_registo.
+        st.markdown("#### 🧾 Identificação fiscal da nota")
+        c_num, c_ser, c_mod = st.columns(3)
+        with c_num:
+            numero_nota_input = st.text_input("Número da nota *", value=str(dados.get("numero_nota") or ""), key=f"nf_num_{ukey}")
+        with c_ser:
+            serie_nota_input = st.text_input("Série *", value=str(dados.get("serie_nota") or ""), key=f"nf_serie_{ukey}")
+        with c_mod:
+            modelo_nota_input = st.text_input("Modelo fiscal * (ex.: 55)", value=str(dados.get("modelo_nota") or ""), key=f"nf_mod_{ukey}")
+        data_extraida = normalizar_data_fiscal(dados.get("data_emissao"))
         data_nota_escolhida = st.date_input(
-            "📅 Data da nota fiscal",
-            value=date.today(),
+            "📅 Data de emissão da nota *",
+            value=data_extraida,
             format="DD/MM/YYYY",
-            help="Escolha a data da nota. Se não alterar, será usada a data de hoje.",
-            key=f"data_nota_revisao_{ukey}_{st.session_state.get('nome_nota_ativa', 'manual')}",
+            key=f"data_nota_revisao_{ukey}",
+            help="Preenchida automaticamente quando identificada na nota; confira antes de lançar.",
         )
-        st.caption("Sem alteração, o lançamento usa a data de hoje. A DRE continua no mês de trabalho selecionado.")
+        if not data_extraida:
+            st.warning("Data de emissão não identificada. Preencha a data que consta na nota antes de salvar.")
+        if not all((numero_nota_input.strip(), serie_nota_input.strip(), modelo_nota_input.strip())):
+            st.warning("Número, série ou modelo não identificado. Confira a nota e complete os campos.")
+        if numero_nota_input.strip() and serie_nota_input.strip() and modelo_nota_input.strip() and normalizar_identificador_fiscal(cnpj_input):
+            duplicada = consultar_nota_duplicada(cnpj_input, numero_nota_input, serie_nota_input, modelo_nota_input)
+            if duplicada:
+                st.error(f"⛔ Esta nota já foi registrada no mês {duplicada[0]}. O sistema bloqueará uma nova gravação.")
+        else:
+            duplicada = None
+        if data_nota_escolhida and data_nota_escolhida.strftime("%Y-%m") != mes_ativo:
+            st.error("⚠️ Data de emissão diferente do mês de trabalho selecionado. Troque o mês para lançar corretamente.")
+        st.caption("A data original de inclusão no sistema continua registrada. Os cálculos da DRE não foram modificados.")
         if st.session_state.get("nota_origem_manual", False):
             st.info("Lançamento manual: compras repetidas do mesmo fornecedor, com igual descrição e valor, são permitidas. Confira a data antes de confirmar.")
 
@@ -2757,7 +2866,8 @@ elif menu.startswith("📸 Escanear"):
             "mes": mes_ativo,
             "fornecedor": fornec_input.strip(),
             "cnpj": cnpj_input.strip(),
-            "data": data_nota_escolhida.isoformat(),
+            "data": data_nota_escolhida.isoformat() if data_nota_escolhida else "",
+            "numero": numero_nota_input, "serie": serie_nota_input, "modelo": modelo_nota_input,
             "itens": df_edit.to_dict(orient="records"),
         }, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")).hexdigest()[:20]
         st.warning(f"⚠️ ATENÇÃO: esta nota será lançada em **{NOMES_MESES[mes_ativo]}**. Confira o mês antes de salvar.")
@@ -2767,7 +2877,7 @@ elif menu.startswith("📸 Escanear"):
             key=f"confirmacao_mes_nota_{identidade_nota}",
         )
         with col_save_det:
-            if st.button(f"🚀 Confirmar & Lançar no DRE ({NOMES_MESES[mes_ativo]})", type="primary", use_container_width=True, disabled=not mes_confirmado):
+            if st.button(f"🚀 Confirmar & Lançar no DRE ({NOMES_MESES[mes_ativo]})", type="primary", use_container_width=True, disabled=(not mes_confirmado or bool(duplicada) or not data_nota_escolhida or not numero_nota_input.strip() or not serie_nota_input.strip() or not modelo_nota_input.strip() or data_nota_escolhida.strftime("%Y-%m") != mes_ativo)):
                 linhas_preenchidas = df_edit[df_edit["Produto"] != ""].copy()
                 linhas_validas = linhas_preenchidas[linhas_preenchidas["TotalItem"] > 0]
                 if linhas_validas.empty:
@@ -2788,6 +2898,9 @@ elif menu.startswith("📸 Escanear"):
                             valor_total=total_salvar,
                             lista_produtos=lista_salvar,
                             data_nota=data_nota_escolhida,
+                            numero_nota=numero_nota_input,
+                            serie_nota=serie_nota_input,
+                            modelo_nota=modelo_nota_input,
                             permitir_repetida=st.session_state.get("nota_origem_manual", False),
                         )
                     except ValueError as erro:
