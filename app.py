@@ -2648,14 +2648,16 @@ elif menu.startswith("📸 Escanear"):
             fornecedores_para_manual = []
             st.error(f"Não foi possível consultar o cadastro de fornecedores: {erro}")
 
+        # Fora do formulário: o Streamlit atualiza imediatamente a escolha.
+        # Dentro de st.form, alterações só aparecem após clicar em Enviar.
+        tipo_fornecedor_manual = st.radio(
+            "Como deseja informar o fornecedor?",
+            ["Fornecedor já cadastrado", "Fornecedor não cadastrado"],
+            horizontal=True,
+            key=f"tipo_fornecedor_manual_{ukey}",
+        )
         with st.form(key=f"form_nota_manual_{ukey}"):
             opcoes_fornecedor = {int(f[0]): f for f in fornecedores_para_manual}
-            tipo_fornecedor_manual = st.radio(
-                "Como deseja informar o fornecedor?",
-                ["Fornecedor já cadastrado", "Fornecedor não cadastrado"],
-                horizontal=True,
-                key=f"tipo_fornecedor_manual_{ukey}",
-            )
             fornecedor_id_manual = None
             nome_fornecedor_avulso = ""
             cnpj_fornecedor_avulso = ""
