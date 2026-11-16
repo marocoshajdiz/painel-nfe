@@ -3824,10 +3824,31 @@ elif menu == "📦 Movimentação de Produtos":
         # Aplica somente associações confirmadas pelo operador. Preserva os nomes
         # originais para auditoria, pesquisa e eventual reversão das equivalências.
         df_mov["Produto original"] = df_mov["Produto"]
-        df_mov["Produto padronizado"] = df_mov["Chave"].map(equivalencias_mov).fillna(df_mov["Produto"])
+        # Normalização conservadora de descrições equivalentes entre fornecedores.
+        # As regras manuais do Supabase têm prioridade sobre estes padrões.
+        def _padrao_automatico_horte(nome, categoria):
+            chave = _chave_produto_mov(nome)
+            if "HORTE" not in _chave_produto_mov(categoria):
+                return None
+            palavras = set(chave.replace(".", " ").split())
+            if "ALFACE" in palavras and any(p.startswith("HIDROPONIC") for p in palavras):
+                if "ROXA" in palavras or "ROXO" in palavras:
+                    return "ALFACE ROXA HIDROPÔNICA"
+                if "CRESPA" in palavras or "CRESPA" in chave:
+                    return "ALFACE CRESPA HIDROPÔNICA"
+                return "ALFACE HIDROPÔNICA"
+            if "BERINJELA" in palavras and not any(p in palavras for p in ("CONG", "CONGELADA")):
+                return "BERINJELA"
+            if "CEBOLA" in palavras and not any(p in palavras for p in ("ROXA", "ROXO", "BRANCA", "BRANCO", "PORO")):
+                return "CEBOLA"
+            return None
+        df_mov["Produto padronizado"] = df_mov.apply(
+            lambda r: equivalencias_mov.get(r["Chave"])
+            or _padrao_automatico_horte(r["Produto"], r["Categoria"])
+            or r["Produto"], axis=1)
         df_mov["Produto"] = df_mov["Produto padronizado"]
         df_mov["Chave"] = df_mov["Produto"].map(_chave_produto_mov)
-        st.caption("As três tabelas são apenas de consulta: não alteram notas, inventário, CMV nem DRE.")
+        st.caption("Os relatórios são apenas de consulta: não alteram notas, inventário, CMV nem DRE. Descrições comuns de alface hidropônica, cebola e berinjela são padronizadas automaticamente; associações manuais têm prioridade.")
         with st.expander("🔗 Unificar Produtos — cadastrar equivalências", expanded=False):
             st.caption("Escolha descrições de notas que representam exatamente o mesmo produto. "
                        "O agrupamento é válido para todos os meses e fornecedores; KG, UN, CX e MAÇO "
@@ -3953,25 +3974,22 @@ elif menu == "📦 Movimentação de Produtos":
                 column_config={"Valor total gasto (R$)": st.column_config.NumberColumn("Valor total gasto (R$)", format="R$ %.2f")})
             st.download_button(f"⬇️ Exportar {titulo} (CSV)", agrupado.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
                 file_name=f"{titulo.lower().replace(' ', '_')}_{mes_ativo}.csv", mime="text/csv", key=f"export_mov_{titulo}")
-        st.markdown("### 🥬 Horte por origem da compra")
-        st.caption("Selecione o fornecedor especializado de Horte. As notas dos demais fornecedores ficam separadas; "
-                   "o total geral soma todas as origens sem duplicar notas. Nenhuma alteração é feita na DRE.")
+        st.markdown("### 🥬 Horte — fornecedor especializado e total geral")
+        st.caption("Selecione o fornecedor especializado de Horte. O total geral reúne as compras de todos os fornecedores, sem duplicar notas nem alterar a DRE.")
         df_horte = df_mov[df_mov["Grupo"] == "Horte"].copy()
         fornecedores_horte = sorted(df_horte["Fornecedor"].fillna("Não informado").astype(str).unique().tolist())
         fornecedores_especializados = st.multiselect(
             "Fornecedor(es) especializado(s) de Horte",
             options=fornecedores_horte,
             key="fornecedores_especializados_horte_mov",
-            help="Escolha pelo nome que aparece nas notas fiscais. Fornecedores não escolhidos ficam na tabela de outras origens (inclusive supermercados).")
+            help="Escolha pelo nome que aparece nas notas fiscais. O total geral inclui também os demais fornecedores.")
         if not fornecedores_especializados:
             st.info("Selecione acima o fornecedor de Horte para separar suas entradas das compras em supermercados e outras origens.")
         df_especial = df_horte[(df_horte["Fornecedor"].fillna("Não informado").astype(str).isin(fornecedores_especializados)) | (df_horte["Origem"] == "Fornecedor especializado")]
         df_outras = df_horte[~df_horte.index.isin(df_especial.index)]
         tabela_grupo_mov(df_especial, "Horte - Fornecedor especializado")
-        tabela_grupo_mov(df_outras, "Horte - Outras origens e supermercados")
         tabela_grupo_mov(df_horte, "Horte - Total geral")
-        st.caption("O total geral inclui cada item de nota uma única vez. Agrupamento por produto e unidade: "
-                   "KG não é somado a caixas, maços ou unidades. 'Outras origens' não significa necessariamente supermercado.")
+        st.caption("O total geral inclui cada item de nota uma única vez. Produtos equivalentes são agrupados por nome padronizado e unidade; KG não é somado a caixas, maços ou unidades.")
         with st.expander("🔎 Conferir notas e fornecedores do Horte"):
             st.dataframe(df_horte.drop(columns=["Chave"]), hide_index=True, use_container_width=True)
         tabela_grupo_mov(df_mov[df_mov["Grupo"] == "Molhos"], "Molhos")
