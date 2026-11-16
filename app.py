@@ -3730,11 +3730,20 @@ elif menu == "📦 Movimentação de Produtos":
                     unidade TEXT, grupo_origem TEXT, fator_conversao DOUBLE PRECISION,
                     unidade_conversao TEXT, valor_total NUMERIC(15,2), atualizado_em TIMESTAMPTZ DEFAULT NOW(),
                     PRIMARY KEY (mes, nota_id, item_indice))""")
+                # Equivalências independentes das notas e dos lançamentos financeiros.
+                cur.execute("""CREATE TABLE IF NOT EXISTS equivalencias_produtos_mov_spoleto (
+                    chave_original TEXT PRIMARY KEY,
+                    nome_padrao TEXT NOT NULL,
+                    atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )""")
                 cur.execute("ALTER TABLE ajustes_movimentacao_spoleto ADD COLUMN IF NOT EXISTS valor_total NUMERIC(15,2)")
                 cur.execute("""SELECT nota_id, item_indice, produto, fornecedor, categoria, quantidade,
                            unidade, grupo_origem, fator_conversao, unidade_conversao, valor_total
                            FROM ajustes_movimentacao_spoleto WHERE mes=%s""", (mes_ativo,))
                 ajustes_mov = {(str(r[0]), int(r[1])): r[2:] for r in cur.fetchall()}
+                cur.execute("SELECT chave_original, nome_padrao FROM equivalencias_produtos_mov_spoleto")
+                equivalencias_mov = {str(chave): str(padrao) for chave, padrao in cur.fetchall()}
+
     except Exception as erro_mov:
         st.error(f"Não foi possível preparar os ajustes de movimentação: {erro_mov}")
         st.stop()
@@ -3812,11 +3821,69 @@ elif menu == "📦 Movimentação de Produtos":
         st.info("Nenhum item com quantidade e unidade válidas foi encontrado nas notas deste mês.")
     else:
         df_mov = pd.DataFrame(registros)
+        # Aplica somente associações confirmadas pelo operador. Preserva os nomes
+        # originais para auditoria, pesquisa e eventual reversão das equivalências.
+        df_mov["Produto original"] = df_mov["Produto"]
+        df_mov["Produto padronizado"] = df_mov["Chave"].map(equivalencias_mov).fillna(df_mov["Produto"])
+        df_mov["Produto"] = df_mov["Produto padronizado"]
+        df_mov["Chave"] = df_mov["Produto"].map(_chave_produto_mov)
         st.caption("As três tabelas são apenas de consulta: não alteram notas, inventário, CMV nem DRE.")
+        with st.expander("🔗 Unificar Produtos — cadastrar equivalências", expanded=False):
+            st.caption("Escolha descrições de notas que representam exatamente o mesmo produto. "
+                       "O agrupamento é válido para todos os meses e fornecedores; KG, UN, CX e MAÇO "
+                       "continuam separados. Não una variedades ou embalagens diferentes sem conferir.")
+            nomes_originais = sorted(df_mov["Produto original"].dropna().astype(str).unique().tolist())
+            opcoes_nome_padrao = sorted(set(nomes_originais) | set(equivalencias_mov.values()))
+            nome_escolhido = st.selectbox("Produto principal (nome padronizado)",
+                options=["— Digitar novo nome —"] + opcoes_nome_padrao,
+                key="mov_produto_principal")
+            nome_novo = st.text_input("Novo nome padronizado (se necessário)",
+                placeholder="Ex.: ALFACE HIDROPÔNICA", key="mov_nome_padrao_novo")
+            variantes = st.multiselect("Descrições que devem ser unificadas",
+                options=nomes_originais, key="mov_variantes_unificar")
+            if st.button("💾 Salvar equivalências", type="primary", key="mov_salvar_equivalencias"):
+                nome_final = (nome_novo if nome_escolhido == "— Digitar novo nome —" else nome_escolhido).strip().upper()
+                if not nome_final or not variantes:
+                    st.error("Informe o nome padronizado e selecione pelo menos uma descrição.")
+                else:
+                    try:
+                        with conectar_db() as conn, conn.cursor() as cur:
+                            for variante in variantes:
+                                cur.execute("""INSERT INTO equivalencias_produtos_mov_spoleto
+                                    (chave_original, nome_padrao) VALUES (%s,%s)
+                                    ON CONFLICT (chave_original) DO UPDATE SET
+                                    nome_padrao=EXCLUDED.nome_padrao, atualizado_em=NOW()""",
+                                    (_chave_produto_mov(variante), nome_final))
+                        st.success("Equivalências salvas para todos os meses.")
+                        st.rerun()
+                    except Exception as erro_equiv:
+                        st.error(f"Erro ao salvar equivalências: {erro_equiv}")
+            if equivalencias_mov:
+                st.markdown("**Equivalências já cadastradas**")
+                st.dataframe(pd.DataFrame([
+                    {"Descrição original": k, "Produto padronizado": v}
+                    for k, v in sorted(equivalencias_mov.items())]),
+                    hide_index=True, use_container_width=True)
+                remover_equiv = st.selectbox("Remover equivalência", ["— Selecione —"] + sorted(equivalencias_mov),
+                    key="mov_remover_equiv")
+                if st.button("🗑️ Remover equivalência selecionada", key="mov_excluir_equiv"):
+                    if remover_equiv == "— Selecione —":
+                        st.warning("Selecione uma equivalência para remover.")
+                    else:
+                        try:
+                            with conectar_db() as conn, conn.cursor() as cur:
+                                cur.execute("DELETE FROM equivalencias_produtos_mov_spoleto WHERE chave_original=%s",
+                                            (remover_equiv,))
+                            st.success("Equivalência removida.")
+                            st.rerun()
+                        except Exception as erro_equiv:
+                            st.error(f"Erro ao remover equivalência: {erro_equiv}")
+
         with st.expander("✏️ Editar produtos, fornecedores, quantidades e conversões", expanded=False):
             st.caption("Edite as linhas abaixo e clique em Salvar. Os ajustes são guardados em tabela separada no Supabase; as notas fiscais originais e a DRE não são modificadas. Para alterar a origem, selecione Fornecedor especializado ou Outras origens.")
             colunas_edicao = ["Nota", "Índice do item", "Produto", "Fornecedor", "Categoria", "Quantidade", "Unidade", "Valor total gasto (R$)", "Origem", "Fator conversão", "Unidade convertida"]
             edicao_mov = df_mov[colunas_edicao].copy()
+            edicao_mov["Produto"] = df_mov["Produto original"]
             edicao_mov["Fator conversão"] = edicao_mov["Fator conversão"].astype(float)
             tabela_editada = st.data_editor(edicao_mov, hide_index=True, use_container_width=True,
                 disabled=["Nota", "Índice do item"], num_rows="fixed", key=f"editor_mov_{mes_ativo}",
@@ -3866,7 +3933,7 @@ elif menu == "📦 Movimentação de Produtos":
             df_mov = df_mov[df_mov["Categoria"] == categoria_mov]
         if pesquisa_mov.strip():
             termo = re.escape(pesquisa_mov.strip())
-            df_mov = df_mov[df_mov["Produto"].str.contains(termo, case=False, na=False) | df_mov["Código catálogo"].str.contains(termo, na=False)]
+            df_mov = df_mov[df_mov["Produto"].str.contains(termo, case=False, na=False) | df_mov["Produto original"].str.contains(termo, case=False, na=False) | df_mov["Código catálogo"].str.contains(termo, na=False)]
         def tabela_grupo_mov(dados, titulo):
             st.markdown(f"#### {titulo}")
             if dados.empty:
