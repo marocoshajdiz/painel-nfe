@@ -3827,30 +3827,43 @@ elif menu == "📦 Movimentação de Produtos":
         # Normalização conservadora de descrições equivalentes entre fornecedores.
         # As regras manuais do Supabase têm prioridade sobre estes padrões.
         def _padrao_automatico_horte(nome, categoria):
+            """Agrupa somente variantes reconhecíveis do mesmo hortifruti.
+
+            Preserva variedades (roxa/crespa), processamento e embalagens;
+            nunca altera os itens fiscais originais.
+            """
             chave = _chave_produto_mov(nome)
-            # O nome da alface deve ser unificado mesmo se a nota tiver sido
-            # classificada originalmente em outra categoria.
-            palavras = set(chave.replace(".", " ").split())
-            if "ALFACE" in palavras and any(p.startswith("HIDROPONIC") for p in palavras):
-                if "ROXA" in palavras or "ROXO" in palavras:
-                    return "ALFACE ROXA HIDROPÔNICA"
-                if "CRESPA" in palavras or "CRESPA" in chave:
-                    return "ALFACE CRESPA HIDROPÔNICA"
-                return "ALFACE HIDROPÔNICA"
+            palavras = set(re.findall(r"[A-Z0-9]+", chave))
+            if "ALFACE" in palavras:
+                # Algumas notas abreviam HIDROPONICA como HIDROPONI ou HID.
+                hidro = any(p.startswith("HIDROPON") or p == "HID" for p in palavras)
+                if hidro:
+                    if any(p.startswith("ROX") for p in palavras):
+                        return "ALFACE ROXA HIDROPÔNICA"
+                    if any(p.startswith("CRESP") for p in palavras):
+                        return "ALFACE CRESPA HIDROPÔNICA"
+                    return "ALFACE HIDROPÔNICA"
+            # Estes nomes são variações comerciais de produtos frescos.
+            # Não mistura produtos congelados ou variedades explicitamente diferentes.
             if "HORTE" not in _chave_produto_mov(categoria):
                 return None
-            if "BERINJELA" in palavras and not any(p in palavras for p in ("CONG", "CONGELADA")):
+            if "BERINJELA" in palavras and not any(p.startswith("CONG") for p in palavras):
                 return "BERINJELA"
+            if "ABOBRINHA" in palavras and not any(p.startswith("CONG") for p in palavras):
+                if "ITALIANA" in palavras or palavras <= {"ABOBRINHA", "P", "KG", "G", "PKG"}:
+                    return "ABOBRINHA ITALIANA"
             if "CEBOLA" in palavras and not any(p in palavras for p in ("ROXA", "ROXO", "BRANCA", "BRANCO", "PORO")):
                 return "CEBOLA"
             return None
+        # Uma equivalência salva manualmente tem prioridade. A regra automática
+        # só entra quando o usuário não definiu o nome principal desse item.
         df_mov["Produto padronizado"] = df_mov.apply(
-            lambda r: _padrao_automatico_horte(r["Produto"], r["Categoria"])
-            or equivalencias_mov.get(r["Chave"])
+            lambda r: equivalencias_mov.get(r["Chave"])
+            or _padrao_automatico_horte(r["Produto"], r["Categoria"])
             or r["Produto"], axis=1)
         df_mov["Produto"] = df_mov["Produto padronizado"]
         df_mov["Chave"] = df_mov["Produto"].map(_chave_produto_mov)
-        st.caption("Os relatórios são apenas de consulta: não alteram notas, inventário, CMV nem DRE. Descrições comuns de alface hidropônica, cebola e berinjela são padronizadas automaticamente; associações manuais têm prioridade.")
+        st.caption("Os relatórios são apenas de consulta: não alteram notas, inventário, CMV nem DRE. Descrições equivalentes de alfaces, cebola, berinjela e abobrinha são agrupadas; suas associações manuais têm prioridade.")
         with st.expander("🔗 Unificar Produtos — cadastrar equivalências", expanded=False):
             st.caption("Escolha descrições de notas que representam exatamente o mesmo produto. "
                        "O agrupamento é válido para todos os meses e fornecedores; KG, UN, CX e MAÇO "
@@ -3985,7 +3998,7 @@ elif menu == "📦 Movimentação de Produtos":
                     "Quantidade": quantidade,
                     "Unidade": unidade,
                     "Valor total gasto (R$)": grupo["Valor total gasto (R$)"].sum(min_count=1),
-                    "Convertido": convertido,
+                    "Convertido": convertido if convertido is not None else "",
                     "Unidade convertida": conv_unidades[0] if len(conv_unidades) == 1 else "",
                     "Notas": grupo["Nota"].nunique(),
                 })
