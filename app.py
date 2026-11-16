@@ -3748,7 +3748,7 @@ elif menu == "📦 Movimentação de Produtos":
         st.error(f"Não foi possível preparar os ajustes de movimentação: {erro_mov}")
         st.stop()
     registros, pendencias = [], []
-    for nota_id, fornecedor, itens_json in notas_mov:
+    for nota_id, fornecedor_nota, itens_json in notas_mov:
         try:
             itens = json.loads(itens_json) if isinstance(itens_json, str) else itens_json
             if isinstance(itens, dict):
@@ -3761,6 +3761,7 @@ elif menu == "📦 Movimentação de Produtos":
         for indice_item, item in enumerate(itens):
             if not isinstance(item, dict):
                 continue
+            fornecedor = fornecedor_nota
             nome = str(item.get("Produto", item.get("produto", ""))).strip()
             qtd = numero_seguro(item.get("Quantidade", item.get("quantidade")), float('nan'))
             un = _unidade_mov(item.get("Unid", item.get("unid", "")))
@@ -3827,33 +3828,54 @@ elif menu == "📦 Movimentação de Produtos":
         # Normalização conservadora de descrições equivalentes entre fornecedores.
         # As regras manuais do Supabase têm prioridade sobre estes padrões.
         def _padrao_automatico_horte(nome, categoria):
-            """Agrupa somente variantes reconhecíveis do mesmo hortifruti.
+            """Normaliza nomes comerciais de hortifruti sem mudar a nota original.
 
-            Preserva variedades (roxa/crespa), processamento e embalagens;
-            nunca altera os itens fiscais originais.
+            Agrupa fornecedores e abreviações, mas mantém variedades e formas
+            de apresentação distintas (por exemplo alho-poró e alho inteiro).
             """
+            if "HORTE" not in _chave_produto_mov(categoria) and "HORTIFRUT" not in _chave_produto_mov(categoria):
+                return None
             chave = _chave_produto_mov(nome)
             palavras = set(re.findall(r"[A-Z0-9]+", chave))
-            if "ALFACE" in palavras:
-                # Algumas notas abreviam HIDROPONICA como HIDROPONI ou HID.
-                hidro = any(p.startswith("HIDROPON") or p == "HID" for p in palavras)
-                if hidro:
-                    if any(p.startswith("ROX") for p in palavras):
-                        return "ALFACE ROXA HIDROPÔNICA"
-                    if any(p.startswith("CRESP") for p in palavras):
-                        return "ALFACE CRESPA HIDROPÔNICA"
-                    return "ALFACE HIDROPÔNICA"
-            # Estes nomes são variações comerciais de produtos frescos.
-            # Não mistura produtos congelados ou variedades explicitamente diferentes.
-            if "HORTE" not in _chave_produto_mov(categoria):
+            if not palavras:
                 return None
-            if "BERINJELA" in palavras and not any(p.startswith("CONG") for p in palavras):
+            if "ALFACE" in palavras:
+                hidro = any(p.startswith("HIDROPON") or p == "HID" for p in palavras)
+                roxa = any(p.startswith("ROX") for p in palavras)
+                crespa = any(p.startswith("CRESP") for p in palavras)
+                if roxa and hidro:
+                    return "ALFACE ROXA HIDROPÔNICA"
+                if crespa and hidro:
+                    return "ALFACE CRESPA HIDROPÔNICA"
+                if hidro:
+                    return "ALFACE HIDROPÔNICA"
+                if roxa:
+                    return "ALFACE ROXA"
+                if crespa:
+                    return "ALFACE CRESPA"
+                return None
+            # Não agrupar itens processados, congelados ou embalagens de peso
+            # específico com os produtos frescos genéricos.
+            if any(p.startswith(("CONG", "DESIDR", "SECO", "PICAD", "FLORETE")) for p in palavras):
+                return None
+            if "CEBOLINHA" in palavras:
+                return "CEBOLINHA"
+            if "MANJERICAO" in palavras:
+                return "MANJERICÃO"
+            if "JAMBU" in palavras:
+                return "JAMBU"
+            if "CENOURA" in palavras:
+                return "CENOURA"
+            if "BERINJELA" in palavras:
                 return "BERINJELA"
-            if "ABOBRINHA" in palavras and not any(p.startswith("CONG") for p in palavras):
+            if "ABOBRINHA" in palavras:
                 if "ITALIANA" in palavras or palavras <= {"ABOBRINHA", "P", "KG", "G", "PKG"}:
                     return "ABOBRINHA ITALIANA"
             if "CEBOLA" in palavras and not any(p in palavras for p in ("ROXA", "ROXO", "BRANCA", "BRANCO", "PORO")):
                 return "CEBOLA"
+            if "RUCULA" in palavras:
+                # Mantém a variedade hidropônica separada quando identificada.
+                return "RÚCULA HIDROPÔNICA" if any(p.startswith("HIDROPON") for p in palavras) else "RÚCULA"
             return None
         # Uma equivalência salva manualmente tem prioridade. A regra automática
         # só entra quando o usuário não definiu o nome principal desse item.
@@ -3863,7 +3885,7 @@ elif menu == "📦 Movimentação de Produtos":
             or r["Produto"], axis=1)
         df_mov["Produto"] = df_mov["Produto padronizado"]
         df_mov["Chave"] = df_mov["Produto"].map(_chave_produto_mov)
-        st.caption("Os relatórios são apenas de consulta: não alteram notas, inventário, CMV nem DRE. Descrições equivalentes de alfaces, cebola, berinjela e abobrinha são agrupadas; suas associações manuais têm prioridade.")
+        st.caption("Os relatórios são apenas de consulta: não alteram notas, inventário, CMV nem DRE. Descrições equivalentes de hortifruti (alface, cebolinha, manjericão, jambu, cenoura e outros) são agrupadas; suas associações manuais têm prioridade.")
         with st.expander("🔗 Unificar Produtos — cadastrar equivalências", expanded=False):
             st.caption("Escolha descrições de notas que representam exatamente o mesmo produto. "
                        "O agrupamento é válido para todos os meses e fornecedores; KG, UN, CX e MAÇO "
@@ -3987,7 +4009,7 @@ elif menu == "📦 Movimentação de Produtos":
                     quantidade = float(unidades.iloc[0])
                     unidade = str(unidades.index[0])
                 else:
-                    quantidade = " + ".join(f"{formatar_numero_br(q)} {u or 'SEM UNIDADE'}" for u, q in unidades.items())
+                    quantidade = " + ".join(f"{q:,.3f}".replace(",", "X").replace(".", ",").replace("X", ".").rstrip("0").rstrip(",") + f" {u or 'SEM UNIDADE'}" for u, q in unidades.items())
                     unidade = "MISTAS"
                 convertidas = grupo[grupo["Unidade convertida"].fillna("").astype(str).str.strip() != ""]
                 conv_unidades = convertidas["Unidade convertida"].dropna().astype(str).str.upper().unique().tolist()
@@ -3995,7 +4017,7 @@ elif menu == "📦 Movimentação de Produtos":
                               if len(conv_unidades) == 1 and not convertidas.empty else None)
                 linhas.append({
                     "Produto": str(grupo["Produto"].iloc[0]),
-                    "Quantidade": quantidade,
+                    "Quantidade": round(quantidade, 3) if isinstance(quantidade, (int, float)) else quantidade,
                     "Unidade": unidade,
                     "Valor total gasto (R$)": grupo["Valor total gasto (R$)"].sum(min_count=1),
                     "Convertido": convertido if convertido is not None else "",
