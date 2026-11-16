@@ -3839,17 +3839,23 @@ elif menu == "📦 Movimentação de Produtos":
             palavras = set(re.findall(r"[A-Z0-9]+", chave))
             if not palavras:
                 return None
-            # O usuário solicitou ALFACE HIDROPÔNICA como uma única linha,
-            # inclusive quando o fornecedor especifica crespa, roxa ou abrevia.
-            # Alface comum sem menção a hidroponia fica separada.
+            # Uma linha por família solicitada no Horte geral. A variedade
+            # roxa continua separada, mas crespa e hidropônica são equivalentes
+            # para o relatório gerencial conforme orientação do operador.
             if "ALFACE" in palavras:
-                if any(p.startswith("HIDROPON") or p == "HID" for p in palavras):
-                    return "ALFACE HIDROPÔNICA"
                 if any(p.startswith("ROX") for p in palavras):
                     return "ALFACE ROXA"
-                if any(p.startswith("CRESP") for p in palavras):
-                    return "ALFACE CRESPA"
-                return "ALFACE"
+                return "ALFACE HIDROPÔNICA"
+            # Tomates de fornecedores e variedades comerciais consolidados.
+            if "TOMATE" in palavras:
+                return "TOMATE"
+            # Brócolis fresco agrupado; congelado e processado seguem separados.
+            if any(p.startswith("BROCOL") or p.startswith("BROCOLI") for p in palavras):
+                if any(p.startswith(("CONG", "FLORETE", "DESIDR", "SECO")) for p in palavras):
+                    return None
+                return "BRÓCOLIS"
+            if "SALSINHA" in palavras or "SALSA" in palavras:
+                return "SALSA"
             # Itens processados ou congelados não devem ser misturados com frescos.
             if any(p.startswith(("CONG", "DESIDR", "SECO", "PICAD", "FLORETE")) for p in palavras):
                 # Exceção: mesmo alho inteiro descascado congelado, com diferenças
