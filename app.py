@@ -3828,8 +3828,8 @@ elif menu == "📦 Movimentação de Produtos":
         # As regras manuais do Supabase têm prioridade sobre estes padrões.
         def _padrao_automatico_horte(nome, categoria):
             chave = _chave_produto_mov(nome)
-            if "HORTE" not in _chave_produto_mov(categoria):
-                return None
+            # O nome da alface deve ser unificado mesmo se a nota tiver sido
+            # classificada originalmente em outra categoria.
             palavras = set(chave.replace(".", " ").split())
             if "ALFACE" in palavras and any(p.startswith("HIDROPONIC") for p in palavras):
                 if "ROXA" in palavras or "ROXO" in palavras:
@@ -3837,14 +3837,16 @@ elif menu == "📦 Movimentação de Produtos":
                 if "CRESPA" in palavras or "CRESPA" in chave:
                     return "ALFACE CRESPA HIDROPÔNICA"
                 return "ALFACE HIDROPÔNICA"
+            if "HORTE" not in _chave_produto_mov(categoria):
+                return None
             if "BERINJELA" in palavras and not any(p in palavras for p in ("CONG", "CONGELADA")):
                 return "BERINJELA"
             if "CEBOLA" in palavras and not any(p in palavras for p in ("ROXA", "ROXO", "BRANCA", "BRANCO", "PORO")):
                 return "CEBOLA"
             return None
         df_mov["Produto padronizado"] = df_mov.apply(
-            lambda r: equivalencias_mov.get(r["Chave"])
-            or _padrao_automatico_horte(r["Produto"], r["Categoria"])
+            lambda r: _padrao_automatico_horte(r["Produto"], r["Categoria"])
+            or equivalencias_mov.get(r["Chave"])
             or r["Produto"], axis=1)
         df_mov["Produto"] = df_mov["Produto padronizado"]
         df_mov["Chave"] = df_mov["Produto"].map(_chave_produto_mov)
@@ -3960,13 +3962,34 @@ elif menu == "📦 Movimentação de Produtos":
             if dados.empty:
                 st.info("Nenhuma entrada encontrada neste grupo no mês selecionado.")
                 return
-            agrupado = (dados.groupby(["Chave", "Unidade", "Unidade convertida"], dropna=False, as_index=False)
-                .agg(Produto=("Produto", "first"), Quantidade=("Quantidade", "sum"),
-                     Convertido=("Quantidade convertida", "sum"),
-                     **{"Valor total gasto (R$)": ("Valor total gasto (R$)", lambda x: x.sum(min_count=1))},
-                     Notas=("Nota", "nunique")))
-            agrupado["Convertido"] = agrupado.apply(lambda r: None if not r["Unidade convertida"] else r["Convertido"], axis=1)
-            agrupado = agrupado[["Produto", "Quantidade", "Unidade", "Valor total gasto (R$)", "Convertido", "Unidade convertida", "Notas"]].sort_values("Produto")
+            # UMA linha por produto padronizado, independentemente da descrição
+            # do fornecedor. Unidades diferentes não são somadas entre si:
+            # aparecem discriminadas na mesma linha.
+            linhas = []
+            for chave, grupo in dados.groupby("Chave", dropna=False, sort=True):
+                unidades = (grupo.assign(Unidade=grupo["Unidade"].fillna("").astype(str).str.strip().str.upper())
+                    .groupby("Unidade", dropna=False)["Quantidade"].sum())
+                unidade_unica = len(unidades) == 1
+                if unidade_unica:
+                    quantidade = float(unidades.iloc[0])
+                    unidade = str(unidades.index[0])
+                else:
+                    quantidade = " + ".join(f"{formatar_numero_br(q)} {u or 'SEM UNIDADE'}" for u, q in unidades.items())
+                    unidade = "MISTAS"
+                convertidas = grupo[grupo["Unidade convertida"].fillna("").astype(str).str.strip() != ""]
+                conv_unidades = convertidas["Unidade convertida"].dropna().astype(str).str.upper().unique().tolist()
+                convertido = (float(convertidas["Quantidade convertida"].sum(min_count=1))
+                              if len(conv_unidades) == 1 and not convertidas.empty else None)
+                linhas.append({
+                    "Produto": str(grupo["Produto"].iloc[0]),
+                    "Quantidade": quantidade,
+                    "Unidade": unidade,
+                    "Valor total gasto (R$)": grupo["Valor total gasto (R$)"].sum(min_count=1),
+                    "Convertido": convertido,
+                    "Unidade convertida": conv_unidades[0] if len(conv_unidades) == 1 else "",
+                    "Notas": grupo["Nota"].nunique(),
+                })
+            agrupado = pd.DataFrame(linhas).sort_values("Produto")
             st.metric("Total gasto neste grupo", f"R$ {formatar_numero_br(dados['Valor total gasto (R$)'].sum())}")
             if dados["Valor total gasto (R$)"].isna().any():
                 st.caption("Alguns itens não têm valor informado: o total exibido é parcial.")
