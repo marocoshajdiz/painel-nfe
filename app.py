@@ -3828,61 +3828,71 @@ elif menu == "📦 Movimentação de Produtos":
         # Normalização conservadora de descrições equivalentes entre fornecedores.
         # As regras manuais do Supabase têm prioridade sobre estes padrões.
         def _padrao_automatico_horte(nome, categoria):
-            """Normaliza nomes comerciais de hortifruti sem mudar a nota original.
+            """Nome único por produto para a apresentação do Horte, sem editar notas.
 
-            Agrupa fornecedores e abreviações, mas mantém variedades e formas
-            de apresentação distintas (por exemplo alho-poró e alho inteiro).
+            A unidade continua sendo somada separadamente quando não há conversão.
+            Evita interpretar nomes de fornecedores e abreviações como produtos novos.
             """
-            if "HORTE" not in _chave_produto_mov(categoria) and "HORTIFRUT" not in _chave_produto_mov(categoria):
+            if not any(x in _chave_produto_mov(categoria) for x in ("HORTE", "HORTIFRUT")):
                 return None
             chave = _chave_produto_mov(nome)
             palavras = set(re.findall(r"[A-Z0-9]+", chave))
             if not palavras:
                 return None
+            # O usuário solicitou ALFACE HIDROPÔNICA como uma única linha,
+            # inclusive quando o fornecedor especifica crespa, roxa ou abrevia.
+            # Alface comum sem menção a hidroponia fica separada.
             if "ALFACE" in palavras:
-                hidro = any(p.startswith("HIDROPON") or p == "HID" for p in palavras)
-                roxa = any(p.startswith("ROX") for p in palavras)
-                crespa = any(p.startswith("CRESP") for p in palavras)
-                if roxa and hidro:
-                    return "ALFACE ROXA HIDROPÔNICA"
-                if crespa and hidro:
-                    return "ALFACE CRESPA HIDROPÔNICA"
-                if hidro:
+                if any(p.startswith("HIDROPON") or p == "HID" for p in palavras):
                     return "ALFACE HIDROPÔNICA"
-                if roxa:
+                if any(p.startswith("ROX") for p in palavras):
                     return "ALFACE ROXA"
-                if crespa:
+                if any(p.startswith("CRESP") for p in palavras):
                     return "ALFACE CRESPA"
-                return None
-            # Não agrupar itens processados, congelados ou embalagens de peso
-            # específico com os produtos frescos genéricos.
+                return "ALFACE"
+            # Itens processados ou congelados não devem ser misturados com frescos.
             if any(p.startswith(("CONG", "DESIDR", "SECO", "PICAD", "FLORETE")) for p in palavras):
+                # Exceção: mesmo alho inteiro descascado congelado, com diferenças
+                # apenas na pontuação e espaços da descrição da embalagem.
+                if {"ALHO", "INTEIRO", "DESC"}.issubset(palavras) and "CONG" in palavras:
+                    return "ALHO INTEIRO DESCASCADO CONGELADO"
                 return None
-            if "CEBOLINHA" in palavras:
-                return "CEBOLINHA"
-            if "MANJERICAO" in palavras:
-                return "MANJERICÃO"
-            if "JAMBU" in palavras:
-                return "JAMBU"
-            if "CENOURA" in palavras:
-                return "CENOURA"
-            if "BERINJELA" in palavras:
-                return "BERINJELA"
-            if "ABOBRINHA" in palavras:
-                if "ITALIANA" in palavras or palavras <= {"ABOBRINHA", "P", "KG", "G", "PKG"}:
-                    return "ABOBRINHA ITALIANA"
-            if "CEBOLA" in palavras and not any(p in palavras for p in ("ROXA", "ROXO", "BRANCA", "BRANCO", "PORO")):
+            familias = (
+                ("CEBOLINHA", "CEBOLINHA"),
+                ("MANJERICAO", "MANJERICÃO"),
+                ("JAMBU", "JAMBU"),
+                ("CENOURA", "CENOURA"),
+                ("BERINJELA", "BERINJELA"),
+                ("ABOBRINHA", "ABOBRINHA ITALIANA"),
+                ("SALSA", "SALSA"),
+                ("COENTRO", "COENTRO"),
+            )
+            for palavra, padrao in familias:
+                if palavra in palavras:
+                    return padrao
+            if "CEBOLA" in palavras:
+                if any(p in palavras for p in ("ROXA", "ROXO")):
+                    return "CEBOLA ROXA"
+                if any(p in palavras for p in ("BRANCA", "BRANCO")):
+                    return "CEBOLA BRANCA"
                 return "CEBOLA"
             if "RUCULA" in palavras:
-                # Mantém a variedade hidropônica separada quando identificada.
-                return "RÚCULA HIDROPÔNICA" if any(p.startswith("HIDROPON") for p in palavras) else "RÚCULA"
+                return "RÚCULA"
+            if "ALHO" in palavras and "PORO" in palavras:
+                return "ALHO-PORÓ"
             return None
-        # Uma equivalência salva manualmente tem prioridade. A regra automática
-        # só entra quando o usuário não definiu o nome principal desse item.
-        df_mov["Produto padronizado"] = df_mov.apply(
-            lambda r: equivalencias_mov.get(r["Chave"])
-            or _padrao_automatico_horte(r["Produto"], r["Categoria"])
-            or r["Produto"], axis=1)
+
+        def _nome_final_mov(linha):
+            # A padronização por família tem prioridade na tabela geral.
+            # A equivalência manual continua atendendo produtos sem regra de família.
+            automatico = _padrao_automatico_horte(linha["Produto original"], linha["Categoria"])
+            manual = equivalencias_mov.get(linha["Chave"])
+            nome = automatico or manual or linha["Produto original"]
+            # Aplica a mesma regra ao nome manual, evitando duas linhas para
+            # 'ALFACE HIDROPONICA' e 'ALFACE HIDROPÔNICA'.
+            return _padrao_automatico_horte(nome, linha["Categoria"]) or nome
+
+        df_mov["Produto padronizado"] = df_mov.apply(_nome_final_mov, axis=1)
         df_mov["Produto"] = df_mov["Produto padronizado"]
         df_mov["Chave"] = df_mov["Produto"].map(_chave_produto_mov)
         st.caption("Os relatórios são apenas de consulta: não alteram notas, inventário, CMV nem DRE. Descrições equivalentes de hortifruti (alface, cebolinha, manjericão, jambu, cenoura e outros) são agrupadas; suas associações manuais têm prioridade.")
@@ -4047,7 +4057,7 @@ elif menu == "📦 Movimentação de Produtos":
         df_outras = df_horte[~df_horte.index.isin(df_especial.index)]
         tabela_grupo_mov(df_especial, "Horte - Fornecedor especializado")
         tabela_grupo_mov(df_horte, "Horte - Total geral")
-        st.caption("O total geral inclui cada item de nota uma única vez. Produtos equivalentes são agrupados por nome padronizado e unidade; KG não é somado a caixas, maços ou unidades.")
+        st.caption("Uma linha por produto: quantidades e valores de todos os fornecedores são reunidos. Unidades diferentes ficam discriminadas, sem conversão presumida. As notas originais permanecem intactas.")
         with st.expander("🔎 Conferir notas e fornecedores do Horte"):
             st.dataframe(df_horte.drop(columns=["Chave"]), hide_index=True, use_container_width=True)
         tabela_grupo_mov(df_mov[df_mov["Grupo"] == "Molhos"], "Molhos")
