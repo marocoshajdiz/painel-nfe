@@ -620,7 +620,7 @@ def cadastrar_fornecedor_automaticamente(cur, nome, cnpj):
     return "criado" if cur.fetchone() else "existente"
 
 
-def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_produtos, data_nota=None, permitir_repetida=False, numero_nota="", serie_nota="", modelo_nota="", cadastrar_emitente=False):
+def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_produtos, data_nota=None, permitir_repetida=False, numero_nota="", serie_nota="", modelo_nota="", cadastrar_emitente=False, dados_boleto=None):
     # Data fiscal escolhida pelo operador; se omitida, usa a data atual.
     if data_nota is None:
         data_nota = date.today()
@@ -706,6 +706,35 @@ def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_pro
         if cadastrar_emitente:
             preparar_cadastro_fornecedores_na_transacao(cursor)
             cadastrar_fornecedor_automaticamente(cursor, razao_social, cnpj)
+        # O boleto opcional é gravado na mesma transação da nota: ou os dois
+        # registros são salvos, ou nenhum deles, evitando nota duplicada em retry.
+        if dados_boleto:
+            fornecedor_boleto_id = int(dados_boleto.get("fornecedor_id") or 0)
+            codigo_boleto = re.sub(r"\D", "", str(dados_boleto.get("codigo_barras") or ""))
+            linha_boleto = re.sub(r"\D", "", str(dados_boleto.get("linha_digitavel") or ""))
+            venc_boleto = dados_boleto.get("vencimento")
+            valor_boleto = float(dados_boleto.get("valor") or 0)
+            if not fornecedor_boleto_id:
+                raise ValueError("Selecione o fornecedor do boleto.")
+            if len(codigo_boleto) not in (0, 44) or len(linha_boleto) not in (0, 47, 48):
+                raise ValueError("Confira o código de barras (44 dígitos) ou a linha digitável (47/48 dígitos) do boleto.")
+            if not codigo_boleto and not linha_boleto:
+                raise ValueError("Informe o código de barras ou a linha digitável do boleto.")
+            if not venc_boleto or valor_boleto <= 0:
+                raise ValueError("Informe vencimento e valor válidos para o boleto.")
+            cursor.execute("SELECT id, nome, cnpj FROM cadastro_fornecedores_spoleto WHERE id=%s AND ativo=TRUE", (fornecedor_boleto_id,))
+            fornecedor_boleto = cursor.fetchone()
+            if not fornecedor_boleto:
+                raise ValueError("O fornecedor escolhido para o boleto não está mais ativo. Atualize a tela e selecione novamente.")
+            cnpj_boleto = re.sub(r"\D", "", str(fornecedor_boleto[2] or "")) or None
+            referencia_boleto = str(dados_boleto.get("descricao") or f"Boleto da nota {numero_nota or ''}").strip()
+            cursor.execute("""INSERT INTO boletos_horte_spoleto
+                (fornecedor_cnpj, fornecedor_id, fornecedor_nome, descricao, codigo_barras,
+                 linha_digitavel, valor, vencimento, observacoes)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (cnpj_boleto, fornecedor_boleto_id, fornecedor_boleto[1], referencia_boleto,
+                 codigo_boleto or None, linha_boleto or None, valor_boleto, venc_boleto,
+                 "Boleto cadastrado junto com o lançamento da nota fiscal."))
         conn.commit()
     except Exception:
         conn.rollback()
@@ -1931,6 +1960,55 @@ def pdf_boleto(registro):
     return saida.getvalue()
 
 
+def mostrar_lista_boletos():
+    """Exibe a lista de boletos como tela inicial do módulo."""
+    with conectar_db() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id,fornecedor_cnpj,fornecedor_nome,descricao,codigo_barras,linha_digitavel,valor,vencimento,status,observacoes FROM boletos_horte_spoleto ORDER BY CASE WHEN status='PENDENTE' THEN 0 ELSE 1 END, vencimento")
+        registros = cur.fetchall()
+    hoje = date.today()
+    pend = [r for r in registros if r[8] == 'PENDENTE']
+    vencidos = [r for r in pend if r[7] < hoje]
+    proximos = [r for r in pend if 0 <= (r[7] - hoje).days <= 5]
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Pendentes", len(pend))
+    m2.metric("Vencidos", len(vencidos))
+    m3.metric("Vencem em até 5 dias", len(proximos))
+    m4.metric("Total em aberto", f"R$ {sum(float(r[6] or 0) for r in pend):,.2f}")
+    if vencidos:
+        st.error("⚠️ Atenção: existem boletos vencidos. Confira a lista abaixo.")
+    elif proximos:
+        st.warning("⏰ Existem boletos com vencimento nos próximos 5 dias.")
+    if registros:
+        df = pd.DataFrame([{
+            "ID": r[0], "Fornecedor": r[2], "Referência": r[3] or "—",
+            "Valor (R$)": float(r[6] or 0), "Vencimento": r[7].strftime('%d/%m/%Y'),
+            "Status": ("VENCIDO" if r[8] == 'PENDENTE' and r[7] < hoje else r[8]),
+            "Linha digitável": r[5] or "—"
+        } for r in registros])
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        for r in registros:
+            with st.expander(f"Boleto #{r[0]} · {r[2]} · {r[3] or 'Sem referência'} · vence {r[7].strftime('%d/%m/%Y')}"):
+                if r[8] == 'PENDENTE' and r[7] < hoje:
+                    st.error("⚠️ Este boleto está vencido!")
+                elif r[8] == 'PENDENTE' and (r[7] - hoje).days <= 5:
+                    st.warning(f"⏰ Vence em {(r[7] - hoje).days} dia(s).")
+                else:
+                    st.write(f"Status: **{r[8]}**")
+                if r[5]:
+                    st.code(r[5], language=None)
+                elif r[4]:
+                    st.code(r[4], language=None)
+                st.download_button("📄 Baixar boleto em PDF", data=pdf_boleto(r),
+                    file_name=f"boleto_{r[0]}.pdf", mime="application/pdf", key=f"pdf_boleto_{r[0]}")
+                if r[8] == 'PENDENTE' and st.button("✅ Marcar como pago", key=f"pago_boleto_{r[0]}"):
+                    with conectar_db() as conn, conn.cursor() as cur:
+                        cur.execute("UPDATE boletos_horte_spoleto SET status='PAGO', pago_em=NOW() WHERE id=%s", (r[0],))
+                    st.success("Pagamento registrado.")
+                    st.rerun()
+    else:
+        st.info("Nenhum boleto cadastrado ainda. Clique em **Cadastrar boletos** para começar.")
+
+
 def interface_boletos_horte():
     preparar_tabela_boletos()
     preparar_cadastro_fornecedores()
@@ -1938,15 +2016,28 @@ def interface_boletos_horte():
         cur.execute("SELECT id, nome, cnpj FROM cadastro_fornecedores_spoleto WHERE ativo=TRUE ORDER BY nome, id")
         fornecedores = cur.fetchall()
     mapa_fornecedores = {int(f[0]): f for f in fornecedores}
-    if not fornecedores:
-        st.warning("Cadastre pelo menos um fornecedor em 🏢 Cadastro de Fornecedores antes de lançar boletos. Todos os fornecedores ativos ficarão disponíveis para seleção.")
-        return
 
     st.markdown("<style>.boleto-hero{padding:24px;border-radius:18px;background:linear-gradient(120deg,#102A43,#245B83);color:white;margin-bottom:18px}.boleto-hero h2{color:white;margin:0}.boleto-hero p{color:#E5EEF7;margin:6px 0 0}</style>", unsafe_allow_html=True)
     st.markdown("<div class='boleto-hero'><h2>💳 Boletos</h2><p>Controle boletos de todos os fornecedores cadastrados, com leitura, vencimentos e comprovantes em um só lugar</p></div>", unsafe_allow_html=True)
-    tab_scan, tab_manual, tab_lista = st.tabs(["📷 Escanear boleto", "✍️ Lançamento manual", "📚 Boletos cadastrados"])
+
+    if not st.session_state.get("boletos_modo_cadastro", False):
+        if st.button("➕ Cadastrar boletos", type="primary", use_container_width=True, key="abrir_cadastro_boletos"):
+            st.session_state["boletos_modo_cadastro"] = True
+            st.rerun()
+        st.subheader("📚 Boletos cadastrados")
+        mostrar_lista_boletos()
+        return
+
+    if st.button("⬅️ Voltar para a lista de boletos", key="voltar_lista_boletos"):
+        st.session_state["boletos_modo_cadastro"] = False
+        st.rerun()
+    if not fornecedores:
+        st.warning("Cadastre pelo menos um fornecedor em 🏢 Cadastro de Fornecedores antes de lançar boletos.")
+        return
+
+    tab_scan, tab_manual = st.tabs(["📷 Escanear boleto", "✍️ Lançamento manual"])
     with tab_scan:
-        arquivo = st.file_uploader("Envie o boleto em PDF ou foto", type=["pdf","png","jpg","jpeg"], key="boleto_scan_upload")
+        arquivo = st.file_uploader("Envie o boleto em PDF ou foto", type=["pdf", "png", "jpg", "jpeg"], key="boleto_scan_upload")
         if arquivo and st.button("🔎 Ler dados do boleto", type="primary", use_container_width=True):
             try:
                 with st.spinner("Lendo código de barras, valor, vencimento e dados do beneficiário..."):
@@ -1961,7 +2052,7 @@ def interface_boletos_horte():
             st.subheader("Confira os dados identificados")
             st.info("A leitura não escolhe o fornecedor automaticamente. Selecione qualquer fornecedor ativo do seu cadastro antes de salvar o boleto.")
             with st.form("confirmar_boleto_lido"):
-                c1,c2 = st.columns(2)
+                c1, c2 = st.columns(2)
                 with c1:
                     fornecedor_id = st.selectbox("Fornecedor", options=list(mapa_fornecedores), format_func=lambda fid: f"{mapa_fornecedores[fid][1]}" + (f" — CNPJ {mapa_fornecedores[fid][2]}" if mapa_fornecedores[fid][2] else ""), key="boleto_fornecedor_scan")
                     cnpj_lido = st.text_input("CNPJ identificado no boleto (informativo)", value=dados.get("cnpj", ""), help="Este campo serve apenas para conferência. Não determina o fornecedor escolhido.")
@@ -1974,20 +2065,25 @@ def interface_boletos_horte():
                     desc = st.text_input("Descrição / referência", value=dados.get("descricao", ""))
                 if st.form_submit_button("💾 Confirmar e salvar boleto", type="primary"):
                     cb = re.sub(r"\D", "", codigo); ld = re.sub(r"\D", "", linha)
-                    if len(cb) not in (0,44) or len(ld) not in (0,47,48): st.error("Confira o tamanho do código de barras ou da linha digitável.")
-                    elif not cb and not ld: st.error("Informe pelo menos o código de barras ou a linha digitável.")
-                    elif valor <= 0: st.error("Informe um valor maior que zero.")
+                    if len(cb) not in (0, 44) or len(ld) not in (0, 47, 48):
+                        st.error("Confira o tamanho do código de barras ou da linha digitável.")
+                    elif not cb and not ld:
+                        st.error("Informe pelo menos o código de barras ou a linha digitável.")
+                    elif valor <= 0:
+                        st.error("Informe um valor maior que zero.")
                     else:
                         fornecedor = mapa_fornecedores[int(fornecedor_id)]
                         cnpj_fornecedor = re.sub(r"\D", "", str(fornecedor[2] or "")) or None
                         with conectar_db() as conn, conn.cursor() as cur:
-                            cur.execute("INSERT INTO boletos_horte_spoleto (fornecedor_cnpj,fornecedor_id,fornecedor_nome,descricao,codigo_barras,linha_digitavel,valor,vencimento,documento_nome,observacoes) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (cnpj_fornecedor,int(fornecedor_id),fornecedor[1],desc,cb or None,ld or None,valor,venc,st.session_state.get("boleto_lido_nome"),f"CNPJ lido no documento: {cnpj_lido or 'não identificado'}"))
-                        st.session_state.pop("boleto_lido",None); st.session_state.pop("boleto_lido_nome",None)
-                        st.success("Boleto salvo e vinculado ao fornecedor escolhido!"); st.rerun()
+                            cur.execute("INSERT INTO boletos_horte_spoleto (fornecedor_cnpj,fornecedor_id,fornecedor_nome,descricao,codigo_barras,linha_digitavel,valor,vencimento,documento_nome,observacoes) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (cnpj_fornecedor, int(fornecedor_id), fornecedor[1], desc, cb or None, ld or None, valor, venc, st.session_state.get("boleto_lido_nome"), f"CNPJ lido no documento: {cnpj_lido or 'não identificado'}"))
+                        st.session_state.pop("boleto_lido", None); st.session_state.pop("boleto_lido_nome", None)
+                        st.session_state["boletos_modo_cadastro"] = False
+                        st.success("Boleto salvo e vinculado ao fornecedor escolhido!")
+                        st.rerun()
     with tab_manual:
         st.caption("Cadastre boletos de qualquer fornecedor ativo. O lançamento manual não cria uma nova nota nem altera o CMV/DRE.")
         with st.form("boleto_manual_form", clear_on_submit=True):
-            a,b = st.columns(2)
+            a, b = st.columns(2)
             with a:
                 fornecedor_id_manual = st.selectbox("Fornecedor", options=list(mapa_fornecedores), format_func=lambda fid: f"{mapa_fornecedores[fid][1]}" + (f" — CNPJ {mapa_fornecedores[fid][2]}" if mapa_fornecedores[fid][2] else ""), key="boleto_fornecedor_manual")
                 ref = st.text_input("Descrição / número da nota", placeholder="Ex.: Nota já lançada nº 123")
@@ -1998,43 +2094,21 @@ def interface_boletos_horte():
                 valor = st.number_input("Valor do boleto (R$)", min_value=0.0, step=0.01, key="boleto_manual_valor")
                 obs = st.text_input("Observações")
             if st.form_submit_button("➕ Cadastrar boleto", type="primary"):
-                cb=re.sub(r"\D","",cod); ld=re.sub(r"\D","",linha)
-                if len(cb) not in (0,44) or len(ld) not in (0,47,48): st.error("Código de barras deve ter 44 dígitos e linha digitável 47 ou 48.")
-                elif not cb and not ld: st.error("Informe o código de barras ou a linha digitável.")
-                elif valor <= 0: st.error("Informe um valor maior que zero.")
+                cb = re.sub(r"\D", "", cod); ld = re.sub(r"\D", "", linha)
+                if len(cb) not in (0, 44) or len(ld) not in (0, 47, 48):
+                    st.error("Código de barras deve ter 44 dígitos e linha digitável 47 ou 48.")
+                elif not cb and not ld:
+                    st.error("Informe o código de barras ou a linha digitável.")
+                elif valor <= 0:
+                    st.error("Informe um valor maior que zero.")
                 else:
                     fornecedor = mapa_fornecedores[int(fornecedor_id_manual)]
                     cnpj_fornecedor = re.sub(r"\D", "", str(fornecedor[2] or "")) or None
                     with conectar_db() as conn, conn.cursor() as cur:
-                        cur.execute("INSERT INTO boletos_horte_spoleto (fornecedor_cnpj,fornecedor_id,fornecedor_nome,descricao,codigo_barras,linha_digitavel,valor,vencimento,observacoes) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",(cnpj_fornecedor,int(fornecedor_id_manual),fornecedor[1],ref,cb or None,ld or None,valor,venc,obs))
+                        cur.execute("INSERT INTO boletos_horte_spoleto (fornecedor_cnpj,fornecedor_id,fornecedor_nome,descricao,codigo_barras,linha_digitavel,valor,vencimento,observacoes) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)", (cnpj_fornecedor, int(fornecedor_id_manual), fornecedor[1], ref, cb or None, ld or None, valor, venc, obs))
+                    st.session_state["boletos_modo_cadastro"] = False
                     st.success("Boleto cadastrado manualmente!")
-    with tab_lista:
-        with conectar_db() as conn, conn.cursor() as cur:
-            cur.execute("SELECT id,fornecedor_cnpj,fornecedor_nome,descricao,codigo_barras,linha_digitavel,valor,vencimento,status,observacoes FROM boletos_horte_spoleto ORDER BY CASE WHEN status='PENDENTE' THEN 0 ELSE 1 END, vencimento")
-            registros=cur.fetchall()
-        hoje=date.today()
-        pend=[r for r in registros if r[8]=='PENDENTE']
-        vencidos=[r for r in pend if r[7] < hoje]
-        proximos=[r for r in pend if 0 <= (r[7]-hoje).days <= 5]
-        m1,m2,m3,m4=st.columns(4)
-        m1.metric("Pendentes",len(pend)); m2.metric("Vencidos",len(vencidos)); m3.metric("Vencem em até 5 dias",len(proximos)); m4.metric("Total em aberto",f"R$ {sum(float(r[6] or 0) for r in pend):,.2f}")
-        if vencidos: st.error("⚠️ Atenção: existem boletos vencidos. Confira a lista abaixo.")
-        elif proximos: st.warning("⏰ Existem boletos com vencimento nos próximos 5 dias.")
-        if registros:
-            df=pd.DataFrame([{"ID":r[0],"Fornecedor":r[2],"Referência":r[3] or "—","Valor (R$)":float(r[6] or 0),"Vencimento":r[7].strftime('%d/%m/%Y'),"Status":("VENCIDO" if r[8]=='PENDENTE' and r[7]<hoje else r[8]),"Linha digitável":r[5] or "—"} for r in registros])
-            st.dataframe(df,use_container_width=True,hide_index=True)
-            for r in registros:
-                with st.expander(f"Boleto #{r[0]} · {r[2]} · {r[3] or 'Sem referência'} · vence {r[7].strftime('%d/%m/%Y')}"):
-                    if r[8]=='PENDENTE' and r[7] < hoje: st.error("⚠️ Este boleto está vencido!")
-                    elif r[8]=='PENDENTE' and (r[7]-hoje).days <= 5: st.warning(f"⏰ Vence em {(r[7]-hoje).days} dia(s).")
-                    else: st.write(f"Status: **{r[8]}**")
-                    if r[5]: st.code(r[5], language=None)
-                    elif r[4]: st.code(r[4], language=None)
-                    st.download_button("📄 Baixar boleto em PDF",data=pdf_boleto(r),file_name=f"boleto_{r[0]}.pdf",mime="application/pdf",key=f"pdf_boleto_{r[0]}")
-                    if r[8]=='PENDENTE' and st.button("✅ Marcar como pago",key=f"pago_boleto_{r[0]}"):
-                        with conectar_db() as conn, conn.cursor() as cur: cur.execute("UPDATE boletos_horte_spoleto SET status='PAGO', pago_em=NOW() WHERE id=%s",(r[0],))
-                        st.success("Pagamento registrado."); st.rerun()
-        else: st.info("Nenhum boleto cadastrado ainda. Escaneie um boleto ou faça um lançamento manual.")
+                    st.rerun()
 
 
 if menu == "💳 Boletos":
@@ -3281,6 +3355,57 @@ elif menu.startswith("📸 Escanear"):
             st.info("Adicione produtos à tabela para visualizar os subtotais.")
 
         st.markdown("---")
+        st.subheader("💳 Boleto da nota (opcional)")
+        incluir_boleto_nota = st.checkbox(
+            "Quero cadastrar o boleto desta nota junto com o lançamento",
+            value=False, key=f"incluir_boleto_nota_{ukey}"
+        )
+        dados_boleto_nota = None
+        if incluir_boleto_nota:
+            preparar_tabela_boletos()
+            preparar_cadastro_fornecedores()
+            with conectar_db() as conn, conn.cursor() as cur:
+                cur.execute("SELECT id, nome, cnpj FROM cadastro_fornecedores_spoleto WHERE ativo=TRUE ORDER BY nome, id")
+                fornecedores_boleto_nota = cur.fetchall()
+            if not fornecedores_boleto_nota:
+                st.warning("Não há fornecedores ativos cadastrados. Cadastre o fornecedor primeiro para incluir o boleto.")
+                # Força a validação a impedir que a opção marcada seja ignorada.
+                dados_boleto_nota = {"fornecedor_id": 0}
+            else:
+                mapa_boleto_nota = {int(f[0]): f for f in fornecedores_boleto_nota}
+                cnpj_nota_norm = re.sub(r"\D", "", cnpj_input or "")
+                nome_nota_norm = " ".join(str(fornec_input or "").upper().split())
+                indice_fornecedor = 0
+                for idx_f, forn in enumerate(fornecedores_boleto_nota):
+                    cnpj_forn = re.sub(r"\D", "", str(forn[2] or ""))
+                    nome_forn = " ".join(str(forn[1] or "").upper().split())
+                    if (cnpj_nota_norm and cnpj_forn == cnpj_nota_norm) or (nome_nota_norm and nome_forn == nome_nota_norm):
+                        indice_fornecedor = idx_f
+                        break
+                st.caption("O boleto será salvo no controle de Boletos, separado da DRE. O valor da nota não será lançado novamente como despesa.")
+                cbn1, cbn2 = st.columns(2)
+                with cbn1:
+                    fornecedor_boleto_nota_id = st.selectbox(
+                        "Fornecedor do boleto", options=list(mapa_boleto_nota), index=indice_fornecedor,
+                        format_func=lambda fid: f"{mapa_boleto_nota[fid][1]}" + (f" — CNPJ {mapa_boleto_nota[fid][2]}" if mapa_boleto_nota[fid][2] else ""),
+                        key=f"fornecedor_boleto_nota_{ukey}"
+                    )
+                    codigo_boleto_nota = st.text_input("Código de barras (44 dígitos)", key=f"codigo_boleto_nota_{ukey}")
+                    linha_boleto_nota = st.text_input("Linha digitável (47 ou 48 dígitos)", key=f"linha_boleto_nota_{ukey}")
+                with cbn2:
+                    vencimento_boleto_nota = st.date_input("Vencimento do boleto", value=date.today(), key=f"vencimento_boleto_nota_{ukey}")
+                    valor_boleto_nota = st.number_input("Valor do boleto (R$)", min_value=0.01, value=max(0.01, float(soma_total_itens)), step=0.01, key=f"valor_boleto_nota_{ukey}")
+                    descricao_boleto_nota = st.text_input("Referência do boleto", value=f"Nota {numero_nota_input.strip()}".strip(), key=f"descricao_boleto_nota_{ukey}")
+                dados_boleto_nota = {
+                    "fornecedor_id": int(fornecedor_boleto_nota_id),
+                    "codigo_barras": codigo_boleto_nota,
+                    "linha_digitavel": linha_boleto_nota,
+                    "vencimento": vencimento_boleto_nota,
+                    "valor": valor_boleto_nota,
+                    "descricao": descricao_boleto_nota,
+                }
+
+        st.markdown("---")
         col_save_det, col_canc = st.columns([2, 1])
         # A confirmação pertence a esta nota e a este mês; outra nota exige nova confirmação.
         identidade_nota = hashlib.sha256(json.dumps({
@@ -3324,6 +3449,7 @@ elif menu.startswith("📸 Escanear"):
                             modelo_nota=modelo_nota_input,
                             permitir_repetida=st.session_state.get("nota_origem_manual", False),
                             cadastrar_emitente=not st.session_state.get("nota_origem_manual", False),
+                            dados_boleto=dados_boleto_nota,
                         )
                     except ValueError as erro:
                         st.error(f"Nota não lançada: {erro}")
@@ -3331,6 +3457,8 @@ elif menu.startswith("📸 Escanear"):
                         st.error("Não foi possível gravar a nota. Os dados conferidos foram mantidos; tente novamente após verificar a conexão.")
                     else:
                         st.success(f"✅ {len(lista_salvar)} produto(s) lançados no DRE de {NOMES_MESES[mes_ativo]}!")
+                        if dados_boleto_nota:
+                            st.success("💳 Boleto cadastrado no controle de Boletos junto com a nota.")
                         if not st.session_state.get("nota_origem_manual", False):
                             st.info("🏢 Fornecedor identificado: cadastro automático realizado quando ainda não existia. Confira em Cadastro de Fornecedores (tipo inicial: Outros).")
                         if st.session_state.get("nome_nota_ativa"):
