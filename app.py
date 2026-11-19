@@ -1929,6 +1929,131 @@ def extrair_texto_boleto(arquivo, nome):
     return dados
 
 
+# ----------------- LEITURA DO CÓDIGO DE BARRAS PELA CÂMERA -----------------
+def _mod10_boleto(numero):
+    soma, peso = 0, 2
+    for digito in reversed(numero):
+        resultado = int(digito) * peso
+        soma += resultado // 10 + resultado % 10
+        peso = 1 if peso == 2 else 2
+    return (10 - soma % 10) % 10
+
+
+def _mod11_boleto(numero, bancario):
+    soma, peso = 0, 2
+    for digito in reversed(numero):
+        soma += int(digito) * peso
+        peso = 2 if peso == 9 else peso + 1
+    resto = soma % 11
+    if bancario:
+        dv = 11 - resto
+        return 1 if dv in (0, 10, 11) else dv
+    return 0 if resto in (0, 1) else 11 - resto
+
+
+def _dv_concessionaria(numero, referencia):
+    if referencia in "67":
+        return _mod10_boleto(numero)
+    if referencia in "89":
+        return _mod11_boleto(numero, bancario=False)
+    return None
+
+
+def validar_codigo_barras_boleto(codigo):
+    """Confere o dígito verificador geral do código de 44 dígitos."""
+    if not re.fullmatch(r"\d{44}", codigo or ""):
+        return False
+    if codigo[0] == "8":  # Concessionárias e tributos
+        dv = _dv_concessionaria(codigo[:3] + codigo[4:], codigo[2])
+        return dv is not None and dv == int(codigo[3])
+    return _mod11_boleto(codigo[:4] + codigo[5:], bancario=True) == int(codigo[4])
+
+
+def codigo_barras_para_linha(codigo):
+    if codigo[0] == "8":
+        blocos = [codigo[i:i + 11] for i in range(0, 44, 11)]
+        dvs = [_dv_concessionaria(b, codigo[2]) for b in blocos]
+        if None in dvs:
+            return ""
+        return "".join(b + str(dv) for b, dv in zip(blocos, dvs))
+    campos = (codigo[0:4] + codigo[19:24], codigo[24:34], codigo[34:44])
+    return "".join(c + str(_mod10_boleto(c)) for c in campos) + codigo[4] + codigo[5:19]
+
+
+def linha_para_codigo_barras(linha):
+    if len(linha) == 48:
+        return linha[0:11] + linha[12:23] + linha[24:35] + linha[36:47]
+    if len(linha) == 47:
+        return linha[0:4] + linha[32] + linha[33:47] + linha[4:9] + linha[10:20] + linha[21:31]
+    return ""
+
+
+def valor_vencimento_do_codigo(codigo):
+    """Valor e vencimento impressos no código bancário (fator novo ou antigo)."""
+    from datetime import timedelta
+    if codigo[0] == "8":
+        valor = int(codigo[4:15]) / 100 if codigo[2] in "68" else 0.0
+        return valor, None
+    fator, valor = int(codigo[5:9]), int(codigo[9:19]) / 100
+    vencimento = None
+    if fator >= 1000:
+        candidatos = [date(1997, 10, 7) + timedelta(days=fator), date(2022, 5, 29) + timedelta(days=fator)]
+        vencimento = min(candidatos, key=lambda d: abs((d - date.today()).days))
+    return valor, vencimento
+
+
+def _decodificar_codigo_local(dados_imagem):
+    """Leitura local opcional (requer pyzbar e libzbar0). Sem a biblioteca, retorna None."""
+    try:
+        from PIL import Image, ImageOps
+        from pyzbar.pyzbar import decode, ZBarSymbol
+        imagem = ImageOps.exif_transpose(Image.open(io.BytesIO(dados_imagem))).convert("L")
+    except Exception:
+        return None
+    for angulo in (0, 90):
+        tentativa = imagem.rotate(angulo, expand=True) if angulo else imagem
+        try:
+            simbolos = decode(tentativa, symbols=[ZBarSymbol.I25])
+        except Exception:
+            return None
+        for simbolo in simbolos:
+            digitos = re.sub(r"\D", "", simbolo.data.decode("ascii", "ignore"))
+            if validar_codigo_barras_boleto(digitos):
+                return digitos
+    return None
+
+
+def ler_codigo_boleto_imagem(dados_imagem):
+    """Lê o código pela câmera: decodificador local primeiro, Gemini como alternativa."""
+    codigo = _decodificar_codigo_local(dados_imagem)
+    origem = "leitor local"
+    linha = ""
+    if not codigo:
+        origem = "IA"
+        mime = "image/png" if dados_imagem.startswith(b"\x89PNG\r\n\x1a\n") else "image/jpeg"
+        prompt = ("Esta foto mostra um boleto bancário ou de concessionária (pode ser só a área do código de barras). "
+                  "Leia os números impressos da linha digitável e/ou do código de barras. Não invente dígitos: "
+                  "se algum estiver ilegível, deixe o campo vazio. Responda apenas JSON válido no formato "
+                  '{"linha_digitavel": "somente dígitos (47 ou 48)", "codigo_barras": "somente dígitos (44)"}')
+        dados = chamar_gemini([prompt, types.Part.from_bytes(data=dados_imagem, mime_type=mime)], api_key)
+        if not isinstance(dados, dict):
+            raise ValueError("A leitura não retornou um código válido.")
+        linha = re.sub(r"\D", "", str(dados.get("linha_digitavel") or ""))
+        codigo = re.sub(r"\D", "", str(dados.get("codigo_barras") or ""))
+        if len(linha) not in (47, 48):
+            linha = ""
+        if not validar_codigo_barras_boleto(codigo):
+            codigo = ""
+        if not codigo and linha:
+            convertido = linha_para_codigo_barras(linha)
+            codigo = convertido if validar_codigo_barras_boleto(convertido) else ""
+    if not codigo:
+        return {"codigo_barras": "", "linha_digitavel": linha, "valido": False, "origem": origem}
+    valor, vencimento = valor_vencimento_do_codigo(codigo)
+    return {"codigo_barras": codigo, "linha_digitavel": linha or codigo_barras_para_linha(codigo),
+            "valido": True, "valor": valor, "vencimento": vencimento, "origem": origem}
+
+
 def pdf_boleto(registro):
     from reportlab.lib.pagesizes import A4
     from reportlab.lib import colors
@@ -3397,6 +3522,52 @@ elif menu.startswith("📸 Escanear"):
                         indice_fornecedor = idx_f
                         break
                 st.caption("O boleto será salvo no controle de Boletos, separado da DRE. O valor da nota não será lançado novamente como despesa.")
+                chave_cb_nota = f"codigo_boleto_nota_{ukey}"
+                chave_ld_nota = f"linha_boleto_nota_{ukey}"
+                chave_venc_nota = f"vencimento_boleto_nota_{ukey}"
+                chave_valor_nota = f"valor_boleto_nota_{ukey}"
+                st.session_state.setdefault(chave_venc_nota, date.today())
+                st.session_state.setdefault(chave_valor_nota, max(0.01, round(float(soma_total_itens), 2)))
+
+                # Câmera abre automaticamente ao incluir o boleto; preenche os campos abaixo.
+                usar_camera_boleto = st.toggle("📷 Ler o código de barras com a câmera", value=True,
+                                               key=f"camera_boleto_nota_ativa_{ukey}")
+                if usar_camera_boleto:
+                    st.caption("Aponte para o código de barras ou para a linha digitável do boleto, "
+                               "com boa iluminação e o código na horizontal, e tire a foto.")
+                    foto_codigo = st.camera_input("Fotografar o código de barras do boleto",
+                                                  key=f"camera_boleto_nota_{ukey}")
+                    chave_msg_cam = f"camera_boleto_nota_msg_{ukey}"
+                    if foto_codigo is not None:
+                        bytes_foto = foto_codigo.getvalue()
+                        hash_foto = hashlib.sha256(bytes_foto).hexdigest()
+                        chave_hash_cam = f"camera_boleto_nota_hash_{ukey}"
+                        # Cada foto é lida uma única vez, sem repetir chamadas à IA a cada interação.
+                        if st.session_state.get(chave_hash_cam) != hash_foto:
+                            st.session_state[chave_hash_cam] = hash_foto
+                            try:
+                                with st.spinner("Lendo o código de barras..."):
+                                    leitura = ler_codigo_boleto_imagem(bytes_foto)
+                            except Exception as erro_cam:
+                                st.session_state[chave_msg_cam] = ("erro", f"Não foi possível ler o código: {erro_cam}. Tire outra foto ou digite o código.")
+                            else:
+                                if leitura["valido"]:
+                                    st.session_state[chave_cb_nota] = leitura["codigo_barras"]
+                                    st.session_state[chave_ld_nota] = leitura["linha_digitavel"]
+                                    if leitura.get("valor", 0) >= 0.01:
+                                        st.session_state[chave_valor_nota] = round(leitura["valor"], 2)
+                                    if leitura.get("vencimento"):
+                                        st.session_state[chave_venc_nota] = leitura["vencimento"]
+                                    st.session_state[chave_msg_cam] = ("ok", f"✅ Código lido ({leitura['origem']}) e conferido pelo dígito verificador. Confira valor e vencimento abaixo.")
+                                elif leitura["linha_digitavel"]:
+                                    st.session_state[chave_ld_nota] = leitura["linha_digitavel"]
+                                    st.session_state[chave_msg_cam] = ("aviso", "Linha digitável lida, mas o dígito verificador não confere. Confira os números com o boleto ou tire outra foto.")
+                                else:
+                                    st.session_state[chave_msg_cam] = ("erro", "Não consegui ler o código nesta foto. Aproxime a câmera, evite reflexos e tente novamente, ou digite o código.")
+                        tipo_msg, texto_msg = st.session_state.get(chave_msg_cam, ("", ""))
+                        if texto_msg:
+                            {"ok": st.success, "aviso": st.warning, "erro": st.error}.get(tipo_msg, st.info)(texto_msg)
+
                 cbn1, cbn2 = st.columns(2)
                 with cbn1:
                     fornecedor_boleto_nota_id = st.selectbox(
@@ -3404,11 +3575,11 @@ elif menu.startswith("📸 Escanear"):
                         format_func=lambda fid: f"{mapa_boleto_nota[fid][1]}" + (f" — CNPJ {mapa_boleto_nota[fid][2]}" if mapa_boleto_nota[fid][2] else ""),
                         key=f"fornecedor_boleto_nota_{ukey}"
                     )
-                    codigo_boleto_nota = st.text_input("Código de barras (44 dígitos)", key=f"codigo_boleto_nota_{ukey}")
-                    linha_boleto_nota = st.text_input("Linha digitável (47 ou 48 dígitos)", key=f"linha_boleto_nota_{ukey}")
+                    codigo_boleto_nota = st.text_input("Código de barras (44 dígitos)", key=chave_cb_nota)
+                    linha_boleto_nota = st.text_input("Linha digitável (47 ou 48 dígitos)", key=chave_ld_nota)
                 with cbn2:
-                    vencimento_boleto_nota = st.date_input("Vencimento do boleto", value=date.today(), key=f"vencimento_boleto_nota_{ukey}")
-                    valor_boleto_nota = st.number_input("Valor do boleto (R$)", min_value=0.01, value=max(0.01, float(soma_total_itens)), step=0.01, key=f"valor_boleto_nota_{ukey}")
+                    vencimento_boleto_nota = st.date_input("Vencimento do boleto", format="DD/MM/YYYY", key=chave_venc_nota)
+                    valor_boleto_nota = st.number_input("Valor do boleto (R$)", min_value=0.01, step=0.01, key=chave_valor_nota)
                     descricao_boleto_nota = st.text_input("Referência do boleto", value=f"Nota {numero_nota_input.strip()}".strip(), key=f"descricao_boleto_nota_{ukey}")
                 dados_boleto_nota = {
                     "fornecedor_id": int(fornecedor_boleto_nota_id),
