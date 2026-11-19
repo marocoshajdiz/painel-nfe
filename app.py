@@ -1863,7 +1863,7 @@ def extrair_texto_boleto(arquivo, nome):
             texto_pdf = "\n".join((pg.extract_text() or "") for pg in leitor.pages)
         except Exception:
             texto_pdf = ""
-    prompt = (f"Leia este boleto bancário e extraia somente dados visíveis. O boleto deve pertencer ao CNPJ {CNPJ_FORNECEDOR_BOLETOS} (somente números). Responda JSON válido com fornecedor, cnpj, codigo_barras de 44 dígitos, linha_digitavel de 47 ou 48 dígitos, vencimento YYYY-MM-DD, valor decimal e descricao. Não invente dados; use string vazia ou null quando ilegível. Texto extraído do PDF: {texto_pdf[:12000]}")
+    prompt = (f"Leia este boleto bancário e extraia somente dados visíveis. ATENÇÃO: procure o CNPJ do BENEFICIÁRIO / FAVORECIDO / CEDENTE, não o CNPJ do pagador, sacado ou cliente. O fornecedor esperado é {CNPJ_FORNECEDOR_BOLETOS}. Responda JSON válido com fornecedor, cnpj (CNPJ do beneficiário, somente números), codigo_barras de 44 dígitos, linha_digitavel de 47 ou 48 dígitos, vencimento YYYY-MM-DD, valor decimal e descricao. Não invente dados; se o CNPJ do beneficiário não estiver visível, deixe cnpj vazio. Texto extraído do PDF: {texto_pdf[:12000]}")
     mime = "application/pdf" if nome.lower().endswith('.pdf') else ("image/png" if nome.lower().endswith('.png') else "image/jpeg")
     # Usa o mesmo mecanismo de contingência do leitor fiscal: tenta as chaves
     # e os modelos Gemini configurados, respeitando bloqueios temporários (503/429).
@@ -1875,9 +1875,17 @@ def extrair_texto_boleto(arquivo, nome):
     if not isinstance(dados, dict):
         raise ValueError("A IA não retornou os dados do boleto em formato válido. Tente novamente.")
     cnpj = re.sub(r"\D", "", str(dados.get("cnpj", "")))
-    if cnpj != CNPJ_FORNECEDOR_BOLETOS:
-        raise ValueError(f"CNPJ identificado ({cnpj or 'não identificado'}) não corresponde ao fornecedor configurado.")
+    # PDFs com camada de texto podem conter o CNPJ mesmo quando a IA não o localiza.
+    if not cnpj and texto_pdf:
+        candidatos = re.findall(r"(?:\d{2}\.?\d{3}\.?\d{3}[/ ]?\d{4}[- ]?\d{2})", texto_pdf)
+        candidatos = [re.sub(r"\D", "", item) for item in candidatos]
+        if CNPJ_FORNECEDOR_BOLETOS in candidatos:
+            cnpj = CNPJ_FORNECEDOR_BOLETOS
+    # CNPJ diferente é bloqueado; CNPJ ausente segue para confirmação manual na tela.
+    if cnpj and cnpj != CNPJ_FORNECEDOR_BOLETOS:
+        raise ValueError(f"O CNPJ do beneficiário identificado ({cnpj}) é diferente do fornecedor configurado ({CNPJ_FORNECEDOR_BOLETOS}). Confira se o boleto é do fornecedor Horte correto.")
     dados["cnpj"] = cnpj
+    dados["cnpj_pendente_confirmacao"] = not bool(cnpj)
     dados["codigo_barras"] = re.sub(r"\D", "", str(dados.get("codigo_barras", "")))
     dados["linha_digitavel"] = re.sub(r"\D", "", str(dados.get("linha_digitavel", "")))
     if dados["codigo_barras"] and len(dados["codigo_barras"]) != 44:
@@ -1942,7 +1950,11 @@ def interface_boletos_horte():
             with st.form("confirmar_boleto_lido"):
                 c1,c2 = st.columns(2)
                 with c1:
-                    cnpj = st.text_input("CNPJ identificado", value=dados.get("cnpj", ""), disabled=True)
+                    cnpj = st.text_input("CNPJ do beneficiário", value=dados.get("cnpj", ""), help="Confira o CNPJ do beneficiário/favorecido do boleto. O fornecedor Horte esperado é 03.844.378/0001-60.")
+                    confirmar_cnpj = False
+                    if not dados.get("cnpj"):
+                        st.warning("A leitura não conseguiu localizar o CNPJ. Confira o boleto e informe o CNPJ do beneficiário para liberar o cadastro.")
+                        confirmar_cnpj = st.checkbox("Confirmo que o beneficiário deste boleto é o fornecedor Horte cadastrado", key="boleto_confirmar_cnpj_manual")
                     codigo = st.text_input("Código de barras (44 dígitos)", value=dados.get("codigo_barras", ""))
                     linha = st.text_input("Linha digitável", value=dados.get("linha_digitavel", ""))
                 with c2:
@@ -1950,8 +1962,15 @@ def interface_boletos_horte():
                     valor = st.number_input("Valor (R$)", min_value=0.0, value=float(dados.get("valor") or 0), step=0.01)
                     desc = st.text_input("Descrição / referência", value=dados.get("descricao", ""))
                 if st.form_submit_button("💾 Confirmar e salvar boleto", type="primary"):
+                    cnpj_digitado = re.sub(r"\D", "", cnpj)
                     cb = re.sub(r"\D", "", codigo); ld = re.sub(r"\D", "", linha)
-                    if len(cb) not in (0,44) or len(ld) not in (0,47,48): st.error("Confira o tamanho do código de barras ou da linha digitável.")
+                    if cnpj_digitado and cnpj_digitado != CNPJ_FORNECEDOR_BOLETOS:
+                        st.error("O CNPJ informado não corresponde ao fornecedor Horte cadastrado (03.844.378/0001-60).")
+                    elif not cnpj_digitado:
+                        st.error("Informe o CNPJ do beneficiário para confirmar o fornecedor.")
+                    elif not dados.get("cnpj") and not confirmar_cnpj:
+                        st.error("Marque a confirmação de que o beneficiário é o fornecedor Horte antes de salvar.")
+                    elif len(cb) not in (0,44) or len(ld) not in (0,47,48): st.error("Confira o tamanho do código de barras ou da linha digitável.")
                     elif not cb and not ld: st.error("Informe pelo menos o código de barras ou a linha digitável.")
                     else:
                         with conectar_db() as conn, conn.cursor() as cur:
