@@ -1864,14 +1864,16 @@ def extrair_texto_boleto(arquivo, nome):
         except Exception:
             texto_pdf = ""
     prompt = (f"Leia este boleto bancário e extraia somente dados visíveis. O boleto deve pertencer ao CNPJ {CNPJ_FORNECEDOR_BOLETOS} (somente números). Responda JSON válido com fornecedor, cnpj, codigo_barras de 44 dígitos, linha_digitavel de 47 ou 48 dígitos, vencimento YYYY-MM-DD, valor decimal e descricao. Não invente dados; use string vazia ou null quando ilegível. Texto extraído do PDF: {texto_pdf[:12000]}")
-    cliente = genai.Client(api_key=api_key)
     mime = "application/pdf" if nome.lower().endswith('.pdf') else ("image/png" if nome.lower().endswith('.png') else "image/jpeg")
-    resposta = cliente.models.generate_content(
-        model=MODELO_GEMINI,
-        contents=[prompt, types.Part.from_bytes(data=bruto, mime_type=mime)],
-        config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0),
-    )
-    dados = json.loads(resposta.text or "{}")
+    # Usa o mesmo mecanismo de contingência do leitor fiscal: tenta as chaves
+    # e os modelos Gemini configurados, respeitando bloqueios temporários (503/429).
+    conteudos = [
+        prompt,
+        types.Part.from_bytes(data=bruto, mime_type=mime),
+    ]
+    dados = chamar_gemini(conteudos, api_key)
+    if not isinstance(dados, dict):
+        raise ValueError("A IA não retornou os dados do boleto em formato válido. Tente novamente.")
     cnpj = re.sub(r"\D", "", str(dados.get("cnpj", "")))
     if cnpj != CNPJ_FORNECEDOR_BOLETOS:
         raise ValueError(f"CNPJ identificado ({cnpj or 'não identificado'}) não corresponde ao fornecedor configurado.")
