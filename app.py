@@ -1877,11 +1877,13 @@ def preparar_tabela_boletos():
             documento_nome TEXT,
             observacoes TEXT,
             criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            pago_em TIMESTAMPTZ
+            pago_em TIMESTAMPTZ,
+            arquivo_conteudo BYTEA
         )""")
         # Compatibilidade com a tabela criada em versões anteriores.
         cur.execute("ALTER TABLE boletos_horte_spoleto ALTER COLUMN fornecedor_cnpj DROP NOT NULL")
         cur.execute("ALTER TABLE boletos_horte_spoleto ADD COLUMN IF NOT EXISTS fornecedor_id BIGINT")
+        cur.execute("ALTER TABLE boletos_horte_spoleto ADD COLUMN IF NOT EXISTS arquivo_conteudo BYTEA")
         cur.execute("ALTER TABLE boletos_horte_spoleto ALTER COLUMN fornecedor_nome SET DEFAULT 'Fornecedor'")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_boletos_horte_venc ON boletos_horte_spoleto(vencimento, status)")
 
@@ -1960,53 +1962,65 @@ def pdf_boleto(registro):
     return saida.getvalue()
 
 
-def mostrar_lista_boletos():
-    """Exibe a lista de boletos como tela inicial do módulo."""
+def mostrar_lista_boletos(fornecedores):
+    """Lista de boletos com consulta por fornecedor e downloads claros."""
     with conectar_db() as conn, conn.cursor() as cur:
-        cur.execute("SELECT id,fornecedor_cnpj,fornecedor_nome,descricao,codigo_barras,linha_digitavel,valor,vencimento,status,observacoes FROM boletos_horte_spoleto ORDER BY CASE WHEN status='PENDENTE' THEN 0 ELSE 1 END, vencimento")
+        cur.execute("SELECT id,fornecedor_cnpj,fornecedor_nome,descricao,codigo_barras,linha_digitavel,valor,vencimento,status,observacoes,arquivo_conteudo,documento_nome FROM boletos_horte_spoleto ORDER BY CASE WHEN status='PENDENTE' THEN 0 ELSE 1 END, vencimento")
         registros = cur.fetchall()
+
+    nomes = {int(f[0]): f[1] for f in fornecedores}
+    opcoes = ["Todos os fornecedores"] + sorted({str(r[2] or 'Fornecedor') for r in registros}, key=str.casefold)
+    filtro_col, status_col = st.columns([2, 1])
+    with filtro_col:
+        fornecedor_filtro = st.selectbox("Consultar boletos por fornecedor", opcoes, key="filtro_fornecedor_boletos")
+    with status_col:
+        status_filtro = st.selectbox("Situação", ["Todos", "PENDENTE", "PAGO"], key="filtro_status_boletos")
+
+    filtrados = [r for r in registros if (fornecedor_filtro == "Todos os fornecedores" or r[2] == fornecedor_filtro) and (status_filtro == "Todos" or r[8] == status_filtro)]
     hoje = date.today()
-    pend = [r for r in registros if r[8] == 'PENDENTE']
+    pend = [r for r in filtrados if r[8] == 'PENDENTE']
     vencidos = [r for r in pend if r[7] < hoje]
     proximos = [r for r in pend if 0 <= (r[7] - hoje).days <= 5]
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Pendentes", len(pend))
-    m2.metric("Vencidos", len(vencidos))
-    m3.metric("Vencem em até 5 dias", len(proximos))
+    m1.metric("Boletos encontrados", len(filtrados))
+    m2.metric("Pendentes", len(pend))
+    m3.metric("Vencidos", len(vencidos))
     m4.metric("Total em aberto", f"R$ {sum(float(r[6] or 0) for r in pend):,.2f}")
     if vencidos:
-        st.error("⚠️ Atenção: existem boletos vencidos. Confira a lista abaixo.")
+        st.error("⚠️ Atenção: existem boletos vencidos nesta consulta.")
     elif proximos:
         st.warning("⏰ Existem boletos com vencimento nos próximos 5 dias.")
-    if registros:
-        df = pd.DataFrame([{
-            "ID": r[0], "Fornecedor": r[2], "Referência": r[3] or "—",
-            "Valor (R$)": float(r[6] or 0), "Vencimento": r[7].strftime('%d/%m/%Y'),
-            "Status": ("VENCIDO" if r[8] == 'PENDENTE' and r[7] < hoje else r[8]),
-            "Linha digitável": r[5] or "—"
-        } for r in registros])
+    if filtrados:
+        df = pd.DataFrame([{"Fornecedor": r[2], "Referência": r[3] or "—", "Valor (R$)": float(r[6] or 0), "Vencimento": r[7].strftime('%d/%m/%Y'), "Status": ("VENCIDO" if r[8] == 'PENDENTE' and r[7] < hoje else r[8])} for r in filtrados])
         st.dataframe(df, use_container_width=True, hide_index=True)
-        for r in registros:
-            with st.expander(f"Boleto #{r[0]} · {r[2]} · {r[3] or 'Sem referência'} · vence {r[7].strftime('%d/%m/%Y')}"):
+        for r in filtrados:
+            with st.expander(f"{r[2]} · {r[3] or 'Sem referência'} · R$ {float(r[6] or 0):,.2f} · vence {r[7].strftime('%d/%m/%Y')}"):
                 if r[8] == 'PENDENTE' and r[7] < hoje:
                     st.error("⚠️ Este boleto está vencido!")
-                elif r[8] == 'PENDENTE' and (r[7] - hoje).days <= 5:
-                    st.warning(f"⏰ Vence em {(r[7] - hoje).days} dia(s).")
                 else:
-                    st.write(f"Status: **{r[8]}**")
+                    st.write(f"Situação: **{r[8]}**")
                 if r[5]:
+                    st.caption("Linha digitável")
                     st.code(r[5], language=None)
                 elif r[4]:
+                    st.caption("Código de barras")
                     st.code(r[4], language=None)
-                st.download_button("📄 Baixar boleto em PDF", data=pdf_boleto(r),
-                    file_name=f"boleto_{r[0]}.pdf", mime="application/pdf", key=f"pdf_boleto_{r[0]}")
-                if r[8] == 'PENDENTE' and st.button("✅ Marcar como pago", key=f"pago_boleto_{r[0]}"):
-                    with conectar_db() as conn, conn.cursor() as cur:
-                        cur.execute("UPDATE boletos_horte_spoleto SET status='PAGO', pago_em=NOW() WHERE id=%s", (r[0],))
-                    st.success("Pagamento registrado.")
-                    st.rerun()
+                b1, b2 = st.columns(2)
+                with b1:
+                    if r[10]:
+                        nome = r[11] or f"boleto_{r[0]}"
+                        mime = "application/pdf" if str(nome).lower().endswith('.pdf') else "image/png" if str(nome).lower().endswith('.png') else "image/jpeg"
+                        st.download_button("⬇️ Baixar boleto original", data=bytes(r[10]), file_name=nome, mime=mime, key=f"baixar_original_{r[0]}", use_container_width=True)
+                    else:
+                        st.download_button("⬇️ Baixar ficha do boleto", data=pdf_boleto(r), file_name=f"ficha_boleto_{r[0]}.pdf", mime="application/pdf", key=f"baixar_ficha_{r[0]}", use_container_width=True)
+                with b2:
+                    if r[8] == 'PENDENTE' and st.button("✅ Marcar como pago", key=f"pago_boleto_{r[0]}", use_container_width=True):
+                        with conectar_db() as conn, conn.cursor() as cur:
+                            cur.execute("UPDATE boletos_horte_spoleto SET status='PAGO', pago_em=NOW() WHERE id=%s", (r[0],))
+                        st.success("Pagamento registrado.")
+                        st.rerun()
     else:
-        st.info("Nenhum boleto cadastrado ainda. Clique em **Cadastrar boletos** para começar.")
+        st.info("Nenhum boleto encontrado com esses filtros.")
 
 
 def interface_boletos_horte():
@@ -2025,7 +2039,7 @@ def interface_boletos_horte():
             st.session_state["boletos_modo_cadastro"] = True
             st.rerun()
         st.subheader("📚 Boletos cadastrados")
-        mostrar_lista_boletos()
+        mostrar_lista_boletos(fornecedores)
         return
 
     if st.button("⬅️ Voltar para a lista de boletos", key="voltar_lista_boletos"):
@@ -2075,7 +2089,7 @@ def interface_boletos_horte():
                         fornecedor = mapa_fornecedores[int(fornecedor_id)]
                         cnpj_fornecedor = re.sub(r"\D", "", str(fornecedor[2] or "")) or None
                         with conectar_db() as conn, conn.cursor() as cur:
-                            cur.execute("INSERT INTO boletos_horte_spoleto (fornecedor_cnpj,fornecedor_id,fornecedor_nome,descricao,codigo_barras,linha_digitavel,valor,vencimento,documento_nome,observacoes) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (cnpj_fornecedor, int(fornecedor_id), fornecedor[1], desc, cb or None, ld or None, valor, venc, st.session_state.get("boleto_lido_nome"), f"CNPJ lido no documento: {cnpj_lido or 'não identificado'}"))
+                            cur.execute("INSERT INTO boletos_horte_spoleto (fornecedor_cnpj,fornecedor_id,fornecedor_nome,descricao,codigo_barras,linha_digitavel,valor,vencimento,documento_nome,observacoes,arquivo_conteudo) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (cnpj_fornecedor, int(fornecedor_id), fornecedor[1], desc, cb or None, ld or None, valor, venc, st.session_state.get("boleto_lido_nome"), f"CNPJ lido no documento: {cnpj_lido or 'não identificado'}", psycopg2.Binary(arquivo.getvalue()) if arquivo else None))
                         st.session_state.pop("boleto_lido", None); st.session_state.pop("boleto_lido_nome", None)
                         st.session_state["boletos_modo_cadastro"] = False
                         st.success("Boleto salvo e vinculado ao fornecedor escolhido!")
