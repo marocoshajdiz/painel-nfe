@@ -31,7 +31,7 @@ MODULOS_PERMISSOES = {
     "inventario": "📦 Inventário e Produtos",
     "movimentacao": "📦 Movimentação de Produtos",
     "fornecedores": "🏢 Cadastro de Fornecedores",
-    "boletos": "💳 Controle de Boletos Horte",
+    "boletos": "💳 Boletos",
 }
 
 def conectar_usuarios():
@@ -1650,7 +1650,7 @@ opcoes_menu = [("dre", f"📊 DRE Spoleto ({NOMES_MESES[mes_ativo]})"),
     ("inventario", "📦 Inventário e Produtos"),
     ("movimentacao", "📦 Movimentação de Produtos"),
     ("fornecedores", "🏢 Cadastro de Fornecedores"),
-    ("boletos", "💳 Controle de Boletos Horte")]
+    ("boletos", "💳 Boletos")]
 permitidos = list(MODULOS_PERMISSOES) if identidade["admin"] else identidade["permissoes"]
 visiveis = [nome for codigo, nome in opcoes_menu if codigo in permitidos]
 if identidade["admin"]:
@@ -1829,8 +1829,7 @@ if st.sidebar.button("↪  Sair do Sistema", key="capry_sair", use_container_wid
     st.session_state.autenticado = False
     st.rerun()
 
-# ----------------- CONTROLE DE BOLETOS DO FORNECEDOR HORTE -----------------
-CNPJ_FORNECEDOR_BOLETOS = "03844378000160"
+# ----------------- CONTROLE GERAL DE BOLETOS DE FORNECEDORES -----------------
 
 
 def preparar_tabela_boletos():
@@ -1839,7 +1838,7 @@ def preparar_tabela_boletos():
             id BIGSERIAL PRIMARY KEY,
             fornecedor_cnpj TEXT,
             fornecedor_id BIGINT,
-            fornecedor_nome TEXT NOT NULL DEFAULT 'Fornecedor Horte',
+            fornecedor_nome TEXT NOT NULL DEFAULT 'Fornecedor',
             descricao TEXT,
             codigo_barras TEXT,
             linha_digitavel TEXT,
@@ -1854,6 +1853,7 @@ def preparar_tabela_boletos():
         # Compatibilidade com a tabela criada em versões anteriores.
         cur.execute("ALTER TABLE boletos_horte_spoleto ALTER COLUMN fornecedor_cnpj DROP NOT NULL")
         cur.execute("ALTER TABLE boletos_horte_spoleto ADD COLUMN IF NOT EXISTS fornecedor_id BIGINT")
+        cur.execute("ALTER TABLE boletos_horte_spoleto ALTER COLUMN fornecedor_nome SET DEFAULT 'Fornecedor'")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_boletos_horte_venc ON boletos_horte_spoleto(vencimento, status)")
 
 
@@ -1939,11 +1939,11 @@ def interface_boletos_horte():
         fornecedores = cur.fetchall()
     mapa_fornecedores = {int(f[0]): f for f in fornecedores}
     if not fornecedores:
-        st.warning("Cadastre pelo menos um fornecedor em 🏢 Cadastro de Fornecedores antes de lançar boletos.")
+        st.warning("Cadastre pelo menos um fornecedor em 🏢 Cadastro de Fornecedores antes de lançar boletos. Todos os fornecedores ativos ficarão disponíveis para seleção.")
         return
 
     st.markdown("<style>.boleto-hero{padding:24px;border-radius:18px;background:linear-gradient(120deg,#102A43,#245B83);color:white;margin-bottom:18px}.boleto-hero h2{color:white;margin:0}.boleto-hero p{color:#E5EEF7;margin:6px 0 0}</style>", unsafe_allow_html=True)
-    st.markdown("<div class='boleto-hero'><h2>💳 Controle de Boletos</h2><p>Leia os dados do boleto e escolha manualmente o fornecedor cadastrado</p></div>", unsafe_allow_html=True)
+    st.markdown("<div class='boleto-hero'><h2>💳 Boletos</h2><p>Controle boletos de todos os fornecedores cadastrados, com leitura, vencimentos e comprovantes em um só lugar</p></div>", unsafe_allow_html=True)
     tab_scan, tab_manual, tab_lista = st.tabs(["📷 Escanear boleto", "✍️ Lançamento manual", "📚 Boletos cadastrados"])
     with tab_scan:
         arquivo = st.file_uploader("Envie o boleto em PDF ou foto", type=["pdf","png","jpg","jpeg"], key="boleto_scan_upload")
@@ -1959,7 +1959,7 @@ def interface_boletos_horte():
         dados = st.session_state.get("boleto_lido")
         if dados:
             st.subheader("Confira os dados identificados")
-            st.info("A leitura não escolhe o fornecedor. Selecione abaixo a empresa correta entre os fornecedores cadastrados.")
+            st.info("A leitura não escolhe o fornecedor automaticamente. Selecione qualquer fornecedor ativo do seu cadastro antes de salvar o boleto.")
             with st.form("confirmar_boleto_lido"):
                 c1,c2 = st.columns(2)
                 with c1:
@@ -1985,7 +1985,7 @@ def interface_boletos_horte():
                         st.session_state.pop("boleto_lido",None); st.session_state.pop("boleto_lido_nome",None)
                         st.success("Boleto salvo e vinculado ao fornecedor escolhido!"); st.rerun()
     with tab_manual:
-        st.caption("O lançamento manual do boleto não cria uma nova nota nem altera o CMV/DRE.")
+        st.caption("Cadastre boletos de qualquer fornecedor ativo. O lançamento manual não cria uma nova nota nem altera o CMV/DRE.")
         with st.form("boleto_manual_form", clear_on_submit=True):
             a,b = st.columns(2)
             with a:
@@ -2037,7 +2037,7 @@ def interface_boletos_horte():
         else: st.info("Nenhum boleto cadastrado ainda. Escaneie um boleto ou faça um lançamento manual.")
 
 
-if menu == "💳 Controle de Boletos Horte":
+if menu == "💳 Boletos":
     interface_boletos_horte()
 
 # ==============================================================================
