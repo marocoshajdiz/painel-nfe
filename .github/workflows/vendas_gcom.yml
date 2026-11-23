@@ -1,0 +1,33 @@
+name: Importar vendas do GCOM
+
+on:
+  schedule:
+    # Todo dia às 06:13 de Brasília (09:13 UTC): importa o mês até ontem.
+    - cron: "13 9 * * *"
+  workflow_dispatch:
+    inputs:
+      mes:
+        description: "Mês para importar (AAAA-MM). Deixe vazio para o mês atual."
+        required: false
+        default: ""
+
+jobs:
+  importar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install playwright psycopg2-binary beautifulsoup4
+      - run: python -m playwright install --with-deps chromium
+      - run: python robo_vendas_gcom.py
+        env:
+          GCOM_EMPRESA: ${{ secrets.GCOM_EMPRESA }}
+          GCOM_USUARIO: ${{ secrets.GCOM_USUARIO }}
+          GCOM_SENHA: ${{ secrets.GCOM_SENHA }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          EMAIL_REMETENTE: ${{ secrets.EMAIL_REMETENTE }}
+          EMAIL_SENHA_APP: ${{ secrets.EMAIL_SENHA_APP }}
+          MES_GCOM: ${{ github.event.inputs.mes }}
