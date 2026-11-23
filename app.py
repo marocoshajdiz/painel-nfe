@@ -2178,65 +2178,139 @@ def pdf_boleto(registro):
     return saida.getvalue()
 
 
-def mostrar_lista_boletos(fornecedores):
-    """Lista de boletos com consulta por fornecedor e downloads claros."""
-    with conectar_db() as conn, conn.cursor() as cur:
-        cur.execute("SELECT id,fornecedor_cnpj,fornecedor_nome,descricao,codigo_barras,linha_digitavel,valor,vencimento,status,observacoes,arquivo_conteudo,documento_nome FROM boletos_horte_spoleto ORDER BY CASE WHEN status='PENDENTE' THEN 0 ELSE 1 END, vencimento")
-        registros = cur.fetchall()
+def _status_boleto(r, hoje):
+    if r[8] == 'PAGO':
+        return "🟢 PAGO"
+    return "🔴 VENCIDO" if r[7] < hoje else "🟡 PENDENTE"
 
-    nomes = {int(f[0]): f[1] for f in fornecedores}
-    opcoes = ["Todos os fornecedores"] + sorted({str(r[2] or 'Fornecedor') for r in registros}, key=str.casefold)
-    filtro_col, status_col = st.columns([2, 1])
-    with filtro_col:
-        fornecedor_filtro = st.selectbox("Consultar boletos por fornecedor", opcoes, key="filtro_fornecedor_boletos")
-    with status_col:
-        status_filtro = st.selectbox("Situação", ["Todos", "PENDENTE", "PAGO"], key="filtro_status_boletos")
 
-    filtrados = [r for r in registros if (fornecedor_filtro == "Todos os fornecedores" or r[2] == fornecedor_filtro) and (status_filtro == "Todos" or r[8] == status_filtro)]
-    hoje = date.today()
-    pend = [r for r in filtrados if r[8] == 'PENDENTE']
-    vencidos = [r for r in pend if r[7] < hoje]
-    proximos = [r for r in pend if 0 <= (r[7] - hoje).days <= 5]
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Boletos encontrados", len(filtrados))
-    m2.metric("Pendentes", len(pend))
-    m3.metric("Vencidos", len(vencidos))
-    m4.metric("Total em aberto", f"R$ {sum(float(r[6] or 0) for r in pend):,.2f}")
-    if vencidos:
-        st.error("⚠️ Atenção: existem boletos vencidos nesta consulta.")
-    elif proximos:
-        st.warning("⏰ Existem boletos com vencimento nos próximos 5 dias.")
-    if filtrados:
-        df = pd.DataFrame([{"Fornecedor": r[2], "Referência": r[3] or "—", "Valor (R$)": float(r[6] or 0), "Vencimento": r[7].strftime('%d/%m/%Y'), "Status": ("VENCIDO" if r[8] == 'PENDENTE' and r[7] < hoje else r[8])} for r in filtrados])
-        st.dataframe(df, use_container_width=True, hide_index=True)
-        for r in filtrados:
-            with st.expander(f"{r[2]} · {r[3] or 'Sem referência'} · R$ {float(r[6] or 0):,.2f} · vence {r[7].strftime('%d/%m/%Y')}"):
-                if r[8] == 'PENDENTE' and r[7] < hoje:
-                    st.error("⚠️ Este boleto está vencido!")
-                else:
-                    st.write(f"Situação: **{r[8]}**")
-                if r[5]:
-                    st.caption("Linha digitável")
-                    st.code(r[5], language=None)
-                elif r[4]:
-                    st.caption("Código de barras")
-                    st.code(r[4], language=None)
-                b1, b2 = st.columns(2)
-                with b1:
-                    if r[10]:
-                        nome = r[11] or f"boleto_{r[0]}"
-                        mime = "application/pdf" if str(nome).lower().endswith('.pdf') else "image/png" if str(nome).lower().endswith('.png') else "image/jpeg"
-                        st.download_button("⬇️ Baixar boleto original", data=bytes(r[10]), file_name=nome, mime=mime, key=f"baixar_original_{r[0]}", use_container_width=True)
-                    else:
-                        st.download_button("⬇️ Baixar ficha do boleto", data=pdf_boleto(r), file_name=f"ficha_boleto_{r[0]}.pdf", mime="application/pdf", key=f"baixar_ficha_{r[0]}", use_container_width=True)
-                with b2:
-                    if r[8] == 'PENDENTE' and st.button("✅ Marcar como pago", key=f"pago_boleto_{r[0]}", use_container_width=True):
-                        with conectar_db() as conn, conn.cursor() as cur:
-                            cur.execute("UPDATE boletos_horte_spoleto SET status='PAGO', pago_em=NOW() WHERE id=%s", (r[0],))
-                        st.success("Pagamento registrado.")
-                        st.rerun()
-    else:
+def _tabela_boletos_clicavel(registros, hoje, chave):
+    """Tabela ordenada por vencimento; clicar numa linha retorna o boleto escolhido."""
+    if not registros:
         st.info("Nenhum boleto encontrado com esses filtros.")
+        return None
+    df = pd.DataFrame([{
+        "Fornecedor": r[2], "Referência": r[3] or "—", "Valor (R$)": float(r[6] or 0),
+        "Vencimento": r[7], "Status": _status_boleto(r, hoje),
+    } for r in registros])
+    versao = st.session_state.get("boletos_tabela_versao", 0)
+    evento = st.dataframe(
+        df, use_container_width=True, hide_index=True,
+        on_select="rerun", selection_mode="single-row", key=f"{chave}_{versao}",
+        column_config={
+            "Valor (R$)": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f"),
+            "Vencimento": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY"),
+        },
+    )
+    st.caption("👆 Toque ou clique em um boleto da tabela para baixar ou marcar como pago.")
+    linhas = evento.selection.rows if evento and evento.selection else []
+    return registros[linhas[0]] if linhas else None
+
+
+def _painel_acoes_boleto(r, hoje, chave):
+    """Ações do boleto selecionado na tabela."""
+    with st.container(border=True):
+        st.markdown(f"#### 💳 {r[2]}")
+        st.write(f"**Referência:** {r[3] or '—'}")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Valor", f"R$ {formatar_numero_br(r[6])}")
+        c2.metric("Vencimento", r[7].strftime('%d/%m/%Y'))
+        c3.metric("Situação", _status_boleto(r, hoje))
+        if r[8] == 'PAGO' and r[12]:
+            st.caption(f"Pago em {r[12].astimezone(ZoneInfo('America/Sao_Paulo')).strftime('%d/%m/%Y %H:%M')}")
+        elif r[8] == 'PENDENTE' and r[7] < hoje:
+            st.error(f"⚠️ Vencido há {(hoje - r[7]).days} dia(s).")
+        if r[5]:
+            st.caption("Linha digitável (toque no ícone para copiar)")
+            st.code(r[5], language=None)
+        elif r[4]:
+            st.caption("Código de barras (toque no ícone para copiar)")
+            st.code(r[4], language=None)
+        b1, b2 = st.columns(2)
+        with b1:
+            if r[10]:
+                nome = r[11] or f"boleto_{r[0]}"
+                mime = "application/pdf" if str(nome).lower().endswith('.pdf') else "image/png" if str(nome).lower().endswith('.png') else "image/jpeg"
+                st.download_button("⬇️ Baixar boleto original", data=bytes(r[10]), file_name=nome, mime=mime,
+                                   key=f"{chave}_baixar_{r[0]}", use_container_width=True, type="primary")
+            else:
+                st.download_button("⬇️ Baixar ficha do boleto", data=pdf_boleto(r), file_name=f"ficha_boleto_{r[0]}.pdf",
+                                   mime="application/pdf", key=f"{chave}_ficha_{r[0]}", use_container_width=True, type="primary")
+        with b2:
+            if r[8] == 'PENDENTE':
+                if st.button("✅ Marcar como pago", key=f"{chave}_pago_{r[0]}", use_container_width=True):
+                    with conectar_db() as conn, conn.cursor() as cur:
+                        cur.execute("UPDATE boletos_horte_spoleto SET status='PAGO', pago_em=NOW() WHERE id=%s", (r[0],))
+                    st.session_state["boletos_tabela_versao"] = st.session_state.get("boletos_tabela_versao", 0) + 1
+                    st.session_state["boletos_aviso"] = f"Pagamento registrado: {r[2]} — R$ {formatar_numero_br(r[6])}."
+                    st.rerun()
+            else:
+                if st.button("↩️ Desfazer pagamento", key=f"{chave}_desfazer_{r[0]}", use_container_width=True):
+                    with conectar_db() as conn, conn.cursor() as cur:
+                        cur.execute("UPDATE boletos_horte_spoleto SET status='PENDENTE', pago_em=NULL WHERE id=%s", (r[0],))
+                    st.session_state["boletos_tabela_versao"] = st.session_state.get("boletos_tabela_versao", 0) + 1
+                    st.session_state["boletos_aviso"] = "Boleto voltou para pendente."
+                    st.rerun()
+
+
+def mostrar_lista_boletos(fornecedores):
+    """Boletos em aberto e histórico completo, sempre por ordem de vencimento."""
+    with conectar_db() as conn, conn.cursor() as cur:
+        cur.execute("""SELECT id,fornecedor_cnpj,fornecedor_nome,descricao,codigo_barras,linha_digitavel,valor,
+                              vencimento,status,observacoes,arquivo_conteudo,documento_nome,pago_em
+                       FROM boletos_horte_spoleto ORDER BY vencimento, id""")
+        registros = cur.fetchall()
+    hoje = date.today()
+    if st.session_state.get("boletos_aviso"):
+        st.success(st.session_state.pop("boletos_aviso"))
+
+    aba_aberto, aba_todos = st.tabs(["📌 Em aberto", "📚 Todos os boletos (inclusive pagos)"])
+
+    with aba_aberto:
+        pend = [r for r in registros if r[8] == 'PENDENTE']
+        vencidos = [r for r in pend if r[7] < hoje]
+        proximos = [r for r in pend if 0 <= (r[7] - hoje).days <= 5]
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Pendentes", len(pend))
+        m2.metric("Vencidos", len(vencidos))
+        m3.metric("Vencem em 5 dias", len(proximos))
+        m4.metric("Total em aberto", f"R$ {formatar_numero_br(sum(float(r[6] or 0) for r in pend))}")
+        if vencidos:
+            st.error(f"⚠️ {len(vencidos)} boleto(s) vencido(s), somando R$ {formatar_numero_br(sum(float(r[6] or 0) for r in vencidos))}.")
+        elif proximos:
+            st.warning("⏰ Existem boletos com vencimento nos próximos 5 dias.")
+        escolhido = _tabela_boletos_clicavel(pend, hoje, "tabela_boletos_aberto")
+        if escolhido:
+            _painel_acoes_boleto(escolhido, hoje, "aberto")
+
+    with aba_todos:
+        f1, f2, f3 = st.columns([2, 1, 2])
+        with f1:
+            opcoes = ["Todos os fornecedores"] + sorted({str(r[2] or 'Fornecedor') for r in registros}, key=str.casefold)
+            fornecedor_filtro = st.selectbox("Fornecedor", opcoes, key="filtro_fornecedor_boletos")
+        with f2:
+            status_filtro = st.selectbox("Situação", ["Todos", "Pendente", "Vencido", "Pago"], key="filtro_status_boletos")
+        with f3:
+            busca = st.text_input("🔎 Pesquisar", placeholder="Referência, nota ou valor", key="busca_boletos")
+        def passa(r):
+            if fornecedor_filtro != "Todos os fornecedores" and r[2] != fornecedor_filtro:
+                return False
+            situacao = _status_boleto(r, hoje).split()[-1].capitalize()
+            if status_filtro != "Todos" and situacao != status_filtro:
+                return False
+            if busca.strip():
+                alvo = f"{r[2]} {r[3] or ''} {formatar_numero_br(r[6])} {r[6]}".casefold()
+                return busca.strip().casefold() in alvo
+            return True
+        filtrados = [r for r in registros if passa(r)]
+        pagos = [r for r in filtrados if r[8] == 'PAGO']
+        t1, t2, t3 = st.columns(3)
+        t1.metric("Boletos encontrados", len(filtrados))
+        t2.metric("Total pago", f"R$ {formatar_numero_br(sum(float(r[6] or 0) for r in pagos))}")
+        t3.metric("Total em aberto", f"R$ {formatar_numero_br(sum(float(r[6] or 0) for r in filtrados if r[8] == 'PENDENTE'))}")
+        escolhido = _tabela_boletos_clicavel(filtrados, hoje, "tabela_boletos_todos")
+        if escolhido:
+            _painel_acoes_boleto(escolhido, hoje, "todos")
 
 
 def interface_boletos_horte():
