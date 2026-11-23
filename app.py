@@ -971,6 +971,29 @@ def mostrar_contador_gemini():
             st.metric("Leituras IA bem-sucedidas", sum(x["Sucessos"] for x in linhas))
         else:
             st.info("Nenhuma chamada de geração registrada hoje.")
+        try:
+            with conectar_db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""SELECT chave_hash, modelo, bloqueado_ate FROM gemini_saude_app
+                                   WHERE bloqueado_ate > NOW() ORDER BY bloqueado_ate""")
+                    pausadas = cur.fetchall()
+        except Exception:
+            pausadas = []
+        if pausadas:
+            st.markdown("**APIs em pausa**")
+            st.dataframe(pd.DataFrame([{"API": mapa.get(h, "Chave anterior"), "Modelo": m,
+                "Até": ate.astimezone(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m %H:%M")}
+                for h, m, ate in pausadas]), hide_index=True, use_container_width=True)
+        if st.button("🔓 Liberar APIs em pausa", key="liberar_apis_gemini", use_container_width=True):
+            try:
+                with conectar_db() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("UPDATE gemini_saude_app SET bloqueado_ate=NULL")
+                st.session_state.pop("gemini_bloqueios_por_modelo", None)
+                st.session_state.pop("gemini_modelos_cache", None)
+                st.success("Pausas removidas. Tente ler a nota novamente.")
+            except Exception:
+                st.error("Não foi possível liberar as pausas no Supabase.")
         st.caption("O contador começa após instalar esta versão. Para ver cotas e uso de outros aplicativos, consulte o Google AI Studio. Uma tentativa pode falhar sem consumir a cota diária; não é um medidor de saldo restante.")
 
 
@@ -1155,12 +1178,22 @@ def avisar_erro_gemini(erro):
     for chave in CHAVES_GEMINI:
         texto = texto.replace(chave, "[CHAVE_OCULTA]")
     texto = re.sub(r"AIza[0-9A-Za-z_-]{20,}", "[CHAVE_OCULTA]", texto)
-    texto = texto[:1000]
-    if erro_temporario_gemini(erro) or isinstance(erro, (TimeoutError, RuntimeError)) or "timeout" in type(erro).__name__.lower():
+    texto = texto[:1500]
+    if isinstance(erro, RuntimeError):
+        # Resumo das tentativas, em linhas que quebram corretamente no celular.
+        cabecalho, _, resto = texto.partition(". ")
+        st.warning(cabecalho + ".")
+        for linha in [x.strip() for x in resto.split(";") if x.strip()]:
+            st.markdown(f"- {linha}")
+        if "cota diária" in texto:
+            st.info("Cota diária esgotada: ela é renovada por volta das 5h (horário de Brasília). "
+                    "Se as 4 chaves forem do mesmo projeto do Google, elas dividem a mesma cota.")
+        return
+    if erro_temporario_gemini(erro) or isinstance(erro, TimeoutError) or "timeout" in type(erro).__name__.lower():
         st.warning("A API Gemini atingiu um limite ou está temporariamente indisponível.")
     else:
         st.error("A API Gemini rejeitou a solicitação. Veja o diagnóstico abaixo.")
-    st.code(f"Código: {codigo or 'não informado'}\nTipo: {type(erro).__name__}\nDetalhe: {texto}", language="text")
+    st.markdown(f"**Código:** {codigo or 'não informado'}  \n**Tipo:** {type(erro).__name__}  \n**Detalhe:** {texto}")
 
 
 def erro_cota_gemini(erro):
@@ -1182,7 +1215,10 @@ def codigo_erro_gemini(erro):
 # Ordem fixa de prioridade para TODAS as quatro chaves.
 MODELOS_GEMINI_PRIORIDADE = (
     "gemini-3.8-flash",
+    "gemini-3.7-flash",
     "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
 )
 
@@ -1244,78 +1280,126 @@ def _registrar_saude_gemini(chave, modelo, sucesso, espera=0):
         pass
 
 
+MAX_TENTATIVAS_GEMINI = 8
+
+
+def _segundos_ate_reset_diario():
+    """A cota diária do Gemini reinicia à meia-noite do horário do Pacífico."""
+    from datetime import timedelta
+    agora = datetime.now(ZoneInfo("America/Los_Angeles"))
+    amanha = (agora + timedelta(days=1)).replace(hour=0, minute=5, second=0, microsecond=0)
+    return max(300, int((amanha - agora).total_seconds()))
+
+
+def _classificar_erro_gemini(erro):
+    """Retorna (motivo legível, segundos de pausa, gravar pausa no banco)."""
+    codigo = codigo_erro_gemini(erro)
+    msg = str(erro).upper()
+    nome = type(erro).__name__.upper()
+    if codigo == 429 or "RESOURCE_EXHAUSTED" in msg:
+        if any(t in msg for t in ("PERDAY", "PER_DAY", "PER DAY", "DAILY")):
+            return "cota diária esgotada (429)", _segundos_ate_reset_diario(), True
+        return "limite por minuto (429)", 65, False
+    if codigo in (401, 403) or "API_KEY_INVALID" in msg or "PERMISSION_DENIED" in msg:
+        return f"chave inválida ou sem permissão ({codigo or 'auth'})", 3600, True
+    if codigo == 404:
+        return "modelo indisponível para esta chave (404)", 86400, True
+    if codigo == 400:
+        return "requisição recusada (400)", 0, False
+    if codigo in (500, 502, 503, 504) or "UNAVAILABLE" in msg or "OVERLOADED" in msg:
+        return f"servidor do Google sobrecarregado ({codigo or 503})", 45, False
+    if codigo == 408 or "TIMEOUT" in msg or "TIMEOUT" in nome or "DEADLINE" in msg:
+        return "tempo de resposta esgotado", 45, False
+    if "CONNECT" in nome or "NETWORK" in msg:
+        return "falha de conexão", 30, False
+    return f"erro {codigo or type(erro).__name__}", 60, False
+
+
 def chamar_gemini(conteudos, chave):
-    """Select recently successful available key/model first; remember failures across sessions."""
+    """Tenta as chaves/modelos em ordem de confiabilidade, com limite de tentativas.
+
+    Falhas passageiras (503, tempo esgotado, limite por minuto) só pausam a combinação
+    nesta sessão; cota diária, chave inválida e modelo inexistente ficam gravados no banco.
+    """
     estado = st.session_state
     cache = estado.setdefault('gemini_modelos_cache', {})
     bloqueios = estado.setdefault('gemini_bloqueios_por_modelo', {})
     historico = _ranking_gemini()
     agora = time.time()
-    leitura_fiscal = any(isinstance(c,str) and 'Você é um assistente de leitura de documentos fiscais brasileiros' in c for c in conteudos)
-    candidatos = []
+    leitura_fiscal = any(isinstance(c, str) and 'Você é um assistente de leitura de documentos fiscais brasileiros' in c for c in conteudos)
+    candidatos, proxima_liberacao = [], None
     for indice, chave_atual in enumerate(CHAVES_GEMINI):
         h = hashlib.sha256(chave_atual.encode()).hexdigest()
         for prioridade, modelo in enumerate(MODELOS_GEMINI_PRIORIDADE):
-            sucessos, falhas, ultimo, bloqueado = historico.get((h,modelo),(0,0,0,0))
-            if max(bloqueado, bloqueios.get(f'{h}:{modelo}',0)) > agora:
+            sucessos, falhas, ultimo, bloqueado = historico.get((h, modelo), (0, 0, 0, 0))
+            ate = max(bloqueado, bloqueios.get(f'{h}:{modelo}', 0))
+            if ate > agora:
+                proxima_liberacao = ate if proxima_liberacao is None else min(proxima_liberacao, ate)
                 continue
-            # Prioritize recently successful combinations, then lifetime reliability.
-            pontuacao = (int(ultimo > agora-86400)*100000 +
-                         (sucessos/(sucessos+falhas+1))*1000 +
-                         min(ultimo,agora)/1e8 - prioridade*0.1)
-            candidatos.append((-pontuacao,indice,modelo,chave_atual,h))
+            pontuacao = (int(ultimo > agora - 86400) * 100000 +
+                         (sucessos / (sucessos + falhas + 1)) * 1000 +
+                         min(ultimo, agora) / 1e8 - prioridade * 0.1)
+            candidatos.append((-pontuacao, indice, modelo, chave_atual, h))
     candidatos.sort()
-    falhas_resumo = []
-    for _,indice,modelo,chave_atual,h in candidatos:
+    if not candidatos:
+        hora = (datetime.fromtimestamp(proxima_liberacao, ZoneInfo("America/Sao_Paulo")).strftime('%H:%M')
+                if proxima_liberacao else "em instantes")
+        raise RuntimeError(f"Todas as APIs Gemini estão em pausa até {hora}. "
+                           "Aguarde ou use '🔓 Liberar APIs em pausa' no menu lateral (Consumo das APIs Gemini).")
+    falhas_resumo, respostas_invalidas, tentativas = [], 0, 0
+    for _, indice, modelo, chave_atual, h in candidatos:
+        if tentativas >= MAX_TENTATIVAS_GEMINI:
+            break
         try:
             cliente = genai.Client(api_key=chave_atual,
-                http_options=types.HttpOptions(timeout=20000,
+                http_options=types.HttpOptions(timeout=90000,
                     retry_options=types.HttpRetryOptions(attempts=1)))
-            # Only request the model list once per key per 15 minutes.
-            registro = cache.get(h,{})
-            if registro.get('ate',0) <= time.time():
+            registro = cache.get(h, {})
+            if registro.get('ate', 0) <= time.time():
                 try:
                     modelos = modelos_disponiveis_gemini(cliente)
-                    cache[h] = {'modelos':modelos,'ate':time.time()+900}
+                    cache[h] = {'modelos': modelos, 'ate': time.time() + 900}
                 except Exception:
-                    modelos = None  # transient listing failure must not block generation
+                    modelos = None  # falha ao listar não impede a geração
             else:
                 modelos = registro.get('modelos')
             if modelos is not None and modelo not in modelos:
-                _registrar_saude_gemini(chave_atual,modelo,False,86400)
+                _registrar_saude_gemini(chave_atual, modelo, False, 86400)
                 continue
-            resposta = cliente.models.generate_content(model=modelo,contents=conteudos,
+            tentativas += 1
+            resposta = cliente.models.generate_content(model=modelo, contents=conteudos,
                 config=types.GenerateContentConfig(response_mime_type='application/json'))
             resultado = parse_json_resposta(resposta.text if resposta else None)
             if resultado is None or (leitura_fiscal and validar_e_normalizar_resultado(resultado)[0] is None):
-                registrar_tentativa_gemini(chave_atual,modelo,'erro')
-                _registrar_saude_gemini(chave_atual,modelo,False,120)
+                # A API funcionou; o problema costuma ser a imagem. Não pausa a chave.
+                registrar_tentativa_gemini(chave_atual, modelo, 'erro')
+                respostas_invalidas += 1
                 falhas_resumo.append(f'API {indice+1}/{modelo}: resposta sem itens válidos')
+                if respostas_invalidas >= 2:
+                    raise RuntimeError("A IA respondeu, mas não encontrou produtos legíveis no documento. "
+                                       "Tire outra foto, com a nota inteira, reta e bem iluminada.")
                 continue
-            registrar_tentativa_gemini(chave_atual,modelo,'sucesso')
-            _registrar_saude_gemini(chave_atual,modelo,True)
+            registrar_tentativa_gemini(chave_atual, modelo, 'sucesso')
+            _registrar_saude_gemini(chave_atual, modelo, True)
             estado['gemini_indice_ativo'] = indice
             st.success(f'Leitura concluída com API {indice+1}, modelo {modelo}.')
             return resultado
+        except RuntimeError as erro:
+            if "não encontrou produtos legíveis" in str(erro):
+                raise
+            motivo, espera, persistir = _classificar_erro_gemini(erro)
         except Exception as erro:
-            codigo = codigo_erro_gemini(erro)
-            registrar_tentativa_gemini(chave_atual,modelo,'erro',codigo)
-            msg = str(erro).upper()
-            if codigo == 429:
-                espera = 86400 if any(t in msg for t in ('PER DAY','PER_DAY','DAILY','REQUESTS_PER_DAY')) else 120
-            elif codigo == 404:
-                espera = 86400
-            elif codigo in (401,403):
-                espera = 3600
-            elif codigo in (500,502,503,504,408) or 'TIMEOUT' in msg:
-                espera = 180
-            else:
-                espera = 60
-            bloqueios[f'{h}:{modelo}'] = time.time()+espera
-            _registrar_saude_gemini(chave_atual,modelo,False,espera)
-            falhas_resumo.append(f'API {indice+1}/{modelo}: {codigo or type(erro).__name__}')
-            st.caption(f'API {indice+1}/{modelo}: indisponível. Tentando próxima opção.')
-    raise RuntimeError('Nenhuma combinação Gemini disponível. ' + '; '.join(falhas_resumo[-8:]))
+            motivo, espera, persistir = _classificar_erro_gemini(erro)
+        else:
+            continue
+        registrar_tentativa_gemini(chave_atual, modelo, 'erro', codigo_erro_gemini(erro))
+        if espera:
+            bloqueios[f'{h}:{modelo}'] = time.time() + espera
+            if persistir:
+                _registrar_saude_gemini(chave_atual, modelo, False, espera)
+        falhas_resumo.append(f'API {indice+1}/{modelo}: {motivo}')
+        st.caption(f'API {indice+1}/{modelo}: {motivo}. Tentando próxima opção.')
+    raise RuntimeError('Nenhuma combinação Gemini conseguiu ler agora. ' + '; '.join(falhas_resumo[-8:]))
 
 
 def processar_multiplas_imagens_com_ia(lista_fotos_bytes, chave):
