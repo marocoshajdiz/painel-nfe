@@ -2116,7 +2116,12 @@ def ler_codigo_boleto_imagem(dados_imagem):
     linha = ""
     if not codigo:
         origem = "IA"
-        mime = "image/png" if dados_imagem.startswith(b"\x89PNG\r\n\x1a\n") else "image/jpeg"
+        if dados_imagem.startswith(b"\x89PNG\r\n\x1a\n"):
+            mime = "image/png"
+        elif dados_imagem.startswith(b"RIFF") and dados_imagem[8:12] == b"WEBP":
+            mime = "image/webp"
+        else:
+            mime = "image/jpeg"
         prompt = ("Esta foto mostra um boleto bancário ou de concessionária (pode ser só a área do código de barras). "
                   "Leia os números impressos da linha digitável e/ou do código de barras. Não invente dígitos: "
                   "se algum estiver ilegível, deixe o campo vazio. Responda apenas JSON válido no formato "
@@ -3616,43 +3621,52 @@ elif menu.startswith("📸 Escanear"):
                 st.session_state.setdefault(chave_valor_nota, max(0.01, round(float(soma_total_itens), 2)))
 
                 # Câmera abre automaticamente ao incluir o boleto; preenche os campos abaixo.
-                usar_camera_boleto = st.toggle("📷 Ler o código de barras com a câmera", value=True,
-                                               key=f"camera_boleto_nota_ativa_{ukey}")
-                if usar_camera_boleto:
-                    st.caption("Aponte para o código de barras ou para a linha digitável do boleto, "
-                               "com boa iluminação e o código na horizontal, e tire a foto.")
+                modo_leitura_codigo = st.radio(
+                    "Como ler o código de barras?",
+                    ["📸 Câmera do celular (recomendado)", "🖥️ Câmera na página", "⌨️ Digitar"],
+                    horizontal=True, key=f"modo_leitura_codigo_boleto_{ukey}",
+                    help="A câmera do celular tem foco automático e alta resolução. "
+                         "A câmera na página não permite focar e costuma sair borrada de perto.")
+                foto_codigo = None
+                if modo_leitura_codigo.startswith("📸"):
+                    st.caption("Toque abaixo e escolha **Tirar Foto**. Fotografe o boleto inteiro ou só a parte "
+                               "do código, deitado na horizontal e com boa luz. Toque na tela para focar antes de tirar.")
+                    foto_codigo = st.file_uploader("Foto do boleto", type=["jpg", "jpeg", "png", "webp"],
+                                                   key=f"foto_nativa_boleto_nota_{ukey}")
+                elif modo_leitura_codigo.startswith("🖥️"):
+                    st.caption("Afaste um pouco o boleto (uns 20 cm) para a câmera conseguir focar.")
                     foto_codigo = st.camera_input("Fotografar o código de barras do boleto",
                                                   key=f"camera_boleto_nota_{ukey}")
+                if foto_codigo is not None:
                     chave_msg_cam = f"camera_boleto_nota_msg_{ukey}"
-                    if foto_codigo is not None:
-                        bytes_foto = foto_codigo.getvalue()
-                        hash_foto = hashlib.sha256(bytes_foto).hexdigest()
-                        chave_hash_cam = f"camera_boleto_nota_hash_{ukey}"
-                        # Cada foto é lida uma única vez, sem repetir chamadas à IA a cada interação.
-                        if st.session_state.get(chave_hash_cam) != hash_foto:
-                            st.session_state[chave_hash_cam] = hash_foto
-                            try:
-                                with st.spinner("Lendo o código de barras..."):
-                                    leitura = ler_codigo_boleto_imagem(bytes_foto)
-                            except Exception as erro_cam:
-                                st.session_state[chave_msg_cam] = ("erro", f"Não foi possível ler o código: {erro_cam}. Tire outra foto ou digite o código.")
+                    bytes_foto = foto_codigo.getvalue()
+                    hash_foto = hashlib.sha256(bytes_foto).hexdigest()
+                    chave_hash_cam = f"camera_boleto_nota_hash_{ukey}"
+                    # Cada foto é lida uma única vez, sem repetir chamadas à IA a cada interação.
+                    if st.session_state.get(chave_hash_cam) != hash_foto:
+                        st.session_state[chave_hash_cam] = hash_foto
+                        try:
+                            with st.spinner("Lendo o código de barras..."):
+                                leitura = ler_codigo_boleto_imagem(bytes_foto)
+                        except Exception as erro_cam:
+                            st.session_state[chave_msg_cam] = ("erro", f"Não foi possível ler o código: {erro_cam}. Tire outra foto ou digite o código.")
+                        else:
+                            if leitura["valido"]:
+                                st.session_state[chave_cb_nota] = leitura["codigo_barras"]
+                                st.session_state[chave_ld_nota] = leitura["linha_digitavel"]
+                                if leitura.get("valor", 0) >= 0.01:
+                                    st.session_state[chave_valor_nota] = round(leitura["valor"], 2)
+                                if leitura.get("vencimento"):
+                                    st.session_state[chave_venc_nota] = leitura["vencimento"]
+                                st.session_state[chave_msg_cam] = ("ok", f"✅ Código lido ({leitura['origem']}) e conferido pelo dígito verificador. Confira valor e vencimento abaixo.")
+                            elif leitura["linha_digitavel"]:
+                                st.session_state[chave_ld_nota] = leitura["linha_digitavel"]
+                                st.session_state[chave_msg_cam] = ("aviso", "Linha digitável lida, mas o dígito verificador não confere. Confira os números com o boleto ou tire outra foto.")
                             else:
-                                if leitura["valido"]:
-                                    st.session_state[chave_cb_nota] = leitura["codigo_barras"]
-                                    st.session_state[chave_ld_nota] = leitura["linha_digitavel"]
-                                    if leitura.get("valor", 0) >= 0.01:
-                                        st.session_state[chave_valor_nota] = round(leitura["valor"], 2)
-                                    if leitura.get("vencimento"):
-                                        st.session_state[chave_venc_nota] = leitura["vencimento"]
-                                    st.session_state[chave_msg_cam] = ("ok", f"✅ Código lido ({leitura['origem']}) e conferido pelo dígito verificador. Confira valor e vencimento abaixo.")
-                                elif leitura["linha_digitavel"]:
-                                    st.session_state[chave_ld_nota] = leitura["linha_digitavel"]
-                                    st.session_state[chave_msg_cam] = ("aviso", "Linha digitável lida, mas o dígito verificador não confere. Confira os números com o boleto ou tire outra foto.")
-                                else:
-                                    st.session_state[chave_msg_cam] = ("erro", "Não consegui ler o código nesta foto. Aproxime a câmera, evite reflexos e tente novamente, ou digite o código.")
-                        tipo_msg, texto_msg = st.session_state.get(chave_msg_cam, ("", ""))
-                        if texto_msg:
-                            {"ok": st.success, "aviso": st.warning, "erro": st.error}.get(tipo_msg, st.info)(texto_msg)
+                                st.session_state[chave_msg_cam] = ("erro", "Não consegui ler o código nesta foto. Aproxime a câmera, evite reflexos e tente novamente, ou digite o código.")
+                    tipo_msg, texto_msg = st.session_state.get(chave_msg_cam, ("", ""))
+                    if texto_msg:
+                        {"ok": st.success, "aviso": st.warning, "erro": st.error}.get(tipo_msg, st.info)(texto_msg)
 
                 cbn1, cbn2 = st.columns(2)
                 with cbn1:
