@@ -1,0 +1,30 @@
+name: Avisos de boletos por e-mail
+
+on:
+  schedule:
+    # Todo dia às 07:47 de Brasília (10:47 UTC).
+    - cron: "47 10 * * *"
+  workflow_dispatch:
+    inputs:
+      simular:
+        description: "Só simular (não envia e-mail)"
+        type: boolean
+        default: false
+
+jobs:
+  avisar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install psycopg2-binary
+      - run: python avisos_boletos.py
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          EMAIL_REMETENTE: ${{ secrets.EMAIL_REMETENTE }}
+          EMAIL_SENHA_APP: ${{ secrets.EMAIL_SENHA_APP }}
+          EMAIL_DESTINOS: ${{ secrets.EMAIL_DESTINOS }}
+          EMAIL_SIMULAR: ${{ github.event_name == 'workflow_dispatch' && inputs.simular && '1' || '0' }}
