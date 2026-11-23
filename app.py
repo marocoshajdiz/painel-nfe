@@ -2339,7 +2339,9 @@ def mostrar_lista_boletos(fornecedores):
         elif avisos:
             st.dataframe(pd.DataFrame([{
                 "Enviado em": e.astimezone(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M"),
-                "Aviso": "No dia" if t == "DIA" else "Véspera", "E-mail": d,
+                "Aviso": ("No dia" if str(t).startswith("DIA") else "Véspera")
+                         + (" (1º aviso)" if str(t).endswith("_1") else " (2º aviso)" if str(t).endswith("_2") else ""),
+                "E-mail": d,
                 "Fornecedor": f or "—", "Valor (R$)": float(v or 0),
                 "Vencimento": venc.strftime("%d/%m/%Y") if venc else "—",
             } for e, t, d, f, v, venc in avisos]), hide_index=True, use_container_width=True,
