@@ -728,13 +728,20 @@ def salvar_nota_e_lancar_dre(mes_ref, razao_social, cnpj, valor_total, lista_pro
                 raise ValueError("O fornecedor escolhido para o boleto não está mais ativo. Atualize a tela e selecione novamente.")
             cnpj_boleto = re.sub(r"\D", "", str(fornecedor_boleto[2] or "")) or None
             referencia_boleto = str(dados_boleto.get("descricao") or f"Boleto da nota {numero_nota or ''}").strip()
+            arquivo_boleto = dados_boleto.get("arquivo") or None
+            nome_arquivo_boleto = None
+            if arquivo_boleto:
+                extensao = (".png" if arquivo_boleto.startswith(b"\x89PNG\r\n\x1a\n")
+                            else ".webp" if arquivo_boleto[8:12] == b"WEBP" else ".jpg")
+                nome_arquivo_boleto = f"boleto_nota_{numero_nota or data_nota.strftime('%Y%m%d')}{extensao}"
             cursor.execute("""INSERT INTO boletos_horte_spoleto
                 (fornecedor_cnpj, fornecedor_id, fornecedor_nome, descricao, codigo_barras,
-                 linha_digitavel, valor, vencimento, observacoes)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                 linha_digitavel, valor, vencimento, observacoes, documento_nome, arquivo_conteudo)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (cnpj_boleto, fornecedor_boleto_id, fornecedor_boleto[1], referencia_boleto,
                  codigo_boleto or None, linha_boleto or None, valor_boleto, venc_boleto,
-                 "Boleto cadastrado junto com o lançamento da nota fiscal."))
+                 "Boleto cadastrado junto com o lançamento da nota fiscal.",
+                 nome_arquivo_boleto, psycopg2.Binary(arquivo_boleto) if arquivo_boleto else None))
         conn.commit()
     except Exception:
         conn.rollback()
@@ -3714,6 +3721,8 @@ elif menu.startswith("📸 Escanear"):
                 if foto_codigo is not None:
                     chave_msg_cam = f"camera_boleto_nota_msg_{ukey}"
                     bytes_foto = foto_codigo.getvalue()
+                    # Guarda a foto original para salvar junto com o boleto.
+                    st.session_state[f"foto_original_boleto_nota_{ukey}"] = bytes_foto
                     hash_foto = hashlib.sha256(bytes_foto).hexdigest()
                     chave_hash_cam = f"camera_boleto_nota_hash_{ukey}"
                     # Cada foto é lida uma única vez, sem repetir chamadas à IA a cada interação.
@@ -3762,7 +3771,10 @@ elif menu.startswith("📸 Escanear"):
                     "vencimento": vencimento_boleto_nota,
                     "valor": valor_boleto_nota,
                     "descricao": descricao_boleto_nota,
+                    "arquivo": st.session_state.get(f"foto_original_boleto_nota_{ukey}"),
                 }
+                if dados_boleto_nota["arquivo"]:
+                    st.caption("📎 A foto do boleto será salva junto com ele e poderá ser baixada na tela de Boletos.")
 
         st.markdown("---")
         col_save_det, col_canc = st.columns([2, 1])
