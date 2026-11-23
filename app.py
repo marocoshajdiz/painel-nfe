@@ -2319,6 +2319,32 @@ def mostrar_lista_boletos(fornecedores):
         if escolhido:
             _painel_acoes_boleto(escolhido, hoje, "todos")
 
+    with st.expander("📧 Avisos por e-mail enviados", expanded=False):
+        st.caption("Enviados automaticamente por volta das 8h: na véspera e no dia do vencimento de cada boleto pendente.")
+        try:
+            with conectar_db() as conn, conn.cursor() as cur:
+                cur.execute("SELECT to_regclass('public.avisos_email_boletos')")
+                existe = cur.fetchone()[0]
+                avisos = []
+                if existe:
+                    cur.execute("""SELECT a.enviado_em, a.tipo, a.destino, b.fornecedor_nome, b.valor, b.vencimento
+                                   FROM avisos_email_boletos a LEFT JOIN boletos_horte_spoleto b ON b.id=a.boleto_id
+                                   ORDER BY a.enviado_em DESC LIMIT 100""")
+                    avisos = cur.fetchall()
+        except Exception:
+            avisos, existe = [], True
+            st.warning("Não foi possível consultar o histórico de avisos.")
+        if not existe:
+            st.info("Nenhum aviso enviado ainda. O histórico aparece depois que o envio automático rodar pela primeira vez.")
+        elif avisos:
+            st.dataframe(pd.DataFrame([{
+                "Enviado em": e.astimezone(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M"),
+                "Aviso": "No dia" if t == "DIA" else "Véspera", "E-mail": d,
+                "Fornecedor": f or "—", "Valor (R$)": float(v or 0),
+                "Vencimento": venc.strftime("%d/%m/%Y") if venc else "—",
+            } for e, t, d, f, v, venc in avisos]), hide_index=True, use_container_width=True,
+                column_config={"Valor (R$)": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f")})
+
 
 def interface_boletos_horte():
     preparar_tabela_boletos()
