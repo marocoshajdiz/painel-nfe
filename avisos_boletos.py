@@ -11,6 +11,8 @@ Opcional:
 """
 import html
 import os
+from email.utils import make_msgid
+from urllib.parse import quote
 import smtplib
 import sys
 from datetime import datetime, timedelta
@@ -34,6 +36,9 @@ def tabela_html(titulo, cor, boletos):
         f"<td style='padding:8px;border-bottom:1px solid #e5e7eb;text-align:right;white-space:nowrap'><b>{reais(b['valor'])}</b></td></tr>"
         f"<tr><td colspan='2' style='padding:4px 8px 12px;border-bottom:1px solid #e5e7eb;font-family:monospace;font-size:13px;color:#334155'>"
         f"{html.escape(b['codigo'] or 'Sem linha digitável cadastrada')}</td></tr>"
+        + (f"<tr><td colspan='2' style='padding:4px 8px 16px;border-bottom:1px solid #e5e7eb'>"
+           f"<img src='cid:{b['cid']}' alt='Foto do boleto' style='max-width:100%;border:1px solid #cbd5e1;border-radius:6px'></td></tr>"
+           if b.get("cid") else "")
         for b in boletos)
     total = sum(b["valor"] for b in boletos)
     return (f"<h3 style='color:{cor};margin:24px 0 8px'>{titulo}</h3>"
@@ -56,9 +61,23 @@ def montar_email(hoje, amanha, venc_hoje, venc_amanha):
         corpo.append(tabela_html(f"🔴 Vencem HOJE ({hoje:%d/%m/%Y})", "#b91c1c", venc_hoje))
     if venc_amanha:
         corpo.append(tabela_html(f"🟡 Vencem AMANHÃ ({amanha:%d/%m/%Y})", "#b45309", venc_amanha))
-    corpo.append("<p style='color:#64748b;font-size:12px;margin-top:24px'>Os números abaixo de cada boleto são a linha digitável "
-                 "(copie e cole no app do banco). Boletos com arquivo original seguem em anexo. Depois de pagar, "
-                 "marque como pago na tela de Boletos para não receber novos avisos.</p></div>")
+    gerente = os.environ.get("GERENTE_EMAIL") or os.environ.get("EMAIL_REMETENTE", "")
+    lista = "\n".join(f"- {b['fornecedor']} | {b['referencia']} | {reais(b['valor'])}"
+                      for b in venc_hoje + venc_amanha)
+    link_aviso = (f"mailto:{quote(gerente)}?subject={quote('Boleto pago - favor dar baixa')}"
+                  f"&body={quote('Olá, gerente. Paguei o(s) boleto(s) abaixo, pode dar baixa no sistema:' + chr(10) + lista + chr(10) + chr(10) + 'Comprovante em anexo.')}")
+    corpo.append(
+        "<div style='margin-top:24px;padding:16px;border-radius:10px;background:#fff7ed;border:2px solid #f97316'>"
+        "<p style='margin:0 0 8px;font-size:16px;color:#9a3412'><b>📌 Depois de pagar, avise o gerente</b></p>"
+        "<p style='margin:0 0 12px;color:#7c2d12'>Assim que o pagamento for feito, envie o comprovante ao gerente "
+        "para que ele dê baixa no sistema. Você pode responder este e-mail ou usar o botão abaixo, "
+        "que já abre a mensagem pronta.</p>"
+        + (f"<a href='{html.escape(link_aviso)}' style='display:inline-block;padding:10px 18px;background:#16a34a;"
+           "color:#ffffff;text-decoration:none;border-radius:8px;font-weight:bold'>✅ Avisar o gerente que paguei</a>"
+           if gerente else "")
+        + "</div>")
+    corpo.append("<p style='color:#64748b;font-size:12px;margin-top:16px'>Os números abaixo de cada boleto são a linha digitável "
+                 "(copie e cole no app do banco). Fotos e PDFs dos boletos seguem no e-mail.</p></div>")
     return assunto, "".join(corpo)
 
 
@@ -96,6 +115,21 @@ def main():
                 if not novos:
                     print(f"{destino}: avisos de hoje já enviados.")
                     continue
+                tamanho = 0
+                imagens, pdfs = [], []
+                for b in novos:
+                    b["cid"] = None
+                    if not b["arquivo"] or tamanho + len(b["arquivo"]) > LIMITE_ANEXOS:
+                        continue
+                    dados = bytes(b["arquivo"])
+                    nome = b["arquivo_nome"] or f"boleto_{b['id']}"
+                    tamanho += len(dados)
+                    if dados.startswith(b"%PDF"):
+                        pdfs.append((dados, nome if nome.lower().endswith(".pdf") else nome + ".pdf"))
+                    else:
+                        subtipo = "png" if dados.startswith(b"\x89PNG") else "webp" if dados[8:12] == b"WEBP" else "jpeg"
+                        b["cid"] = make_msgid(domain="painel.spoleto")[1:-1]
+                        imagens.append((dados, subtipo, b["cid"]))
                 assunto, corpo = montar_email(hoje, amanha,
                                               [b for b in novos if b["tipo"] == "DIA"],
                                               [b for b in novos if b["tipo"] == "VESPERA"])
@@ -103,16 +137,19 @@ def main():
                 msg["Subject"] = assunto
                 msg["From"] = f"Painel Spoleto <{os.environ.get('EMAIL_REMETENTE', 'simulacao@local')}>"
                 msg["To"] = destino
-                msg.set_content("Seu leitor de e-mail não exibe HTML. Abra o Painel Spoleto para ver os boletos.")
+                gerente = os.environ.get("GERENTE_EMAIL") or os.environ.get("EMAIL_REMETENTE")
+                if gerente:
+                    msg["Reply-To"] = gerente  # quem responder fala direto com o gerente
+                msg.set_content("Seu leitor de e-mail não exibe HTML. Abra o Painel Spoleto para ver os boletos.\n\n"
+                                "Depois de pagar, avise o gerente (responda este e-mail) para ele dar baixa no sistema.")
                 msg.add_alternative(corpo, subtype="html")
-                tamanho = 0
-                for b in novos:
-                    if b["arquivo"] and tamanho + len(b["arquivo"]) <= LIMITE_ANEXOS:
-                        nome = b["arquivo_nome"] or f"boleto_{b['id']}.pdf"
-                        tipo = ("application", "pdf") if nome.lower().endswith(".pdf") else \
-                               ("image", "png") if nome.lower().endswith(".png") else ("image", "jpeg")
-                        msg.add_attachment(bytes(b["arquivo"]), maintype=tipo[0], subtype=tipo[1], filename=nome)
-                        tamanho += len(b["arquivo"])
+                parte_html = msg.get_payload()[1]
+                for dados, subtipo, cid in imagens:
+                    # A foto aparece dentro do e-mail, logo abaixo do boleto correspondente.
+                    parte_html.add_related(dados, maintype="image", subtype=subtipo, cid=f"<{cid}>",
+                                           filename=f"foto_boleto.{'jpg' if subtipo == 'jpeg' else subtipo}")
+                for dados, nome in pdfs:
+                    msg.add_attachment(dados, maintype="application", subtype="pdf", filename=nome)
                 if simular:
                     print(f"[SIMULAÇÃO] Para {destino} | {assunto} | {len(novos)} boleto(s), anexos: {tamanho // 1024} KB")
                     continue
