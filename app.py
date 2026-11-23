@@ -1387,12 +1387,14 @@ def chamar_gemini(conteudos, chave):
         except RuntimeError as erro:
             if "não encontrou produtos legíveis" in str(erro):
                 raise
-            motivo, espera, persistir = _classificar_erro_gemini(erro)
+            falha_atual = erro
         except Exception as erro:
-            motivo, espera, persistir = _classificar_erro_gemini(erro)
+            falha_atual = erro
         else:
             continue
-        registrar_tentativa_gemini(chave_atual, modelo, 'erro', codigo_erro_gemini(erro))
+        # O Python apaga 'erro' ao sair do except; por isso usamos 'falha_atual'.
+        motivo, espera, persistir = _classificar_erro_gemini(falha_atual)
+        registrar_tentativa_gemini(chave_atual, modelo, 'erro', codigo_erro_gemini(falha_atual))
         if espera:
             bloqueios[f'{h}:{modelo}'] = time.time() + espera
             if persistir:
