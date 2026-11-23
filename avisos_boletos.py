@@ -46,14 +46,15 @@ def tabela_html(titulo, cor, boletos):
             f"<tr><td style='padding:8px'><b>Total</b></td><td style='padding:8px;text-align:right'><b>{reais(total)}</b></td></tr></table>")
 
 
-def montar_email(hoje, amanha, venc_hoje, venc_amanha):
+def montar_email(hoje, amanha, venc_hoje, venc_amanha, turno=1):
     partes = []
     if venc_hoje:
         partes.append(f"{len(venc_hoje)} vence{'m' if len(venc_hoje) > 1 else ''} hoje")
     if venc_amanha:
         partes.append(f"{len(venc_amanha)} vence{'m' if len(venc_amanha) > 1 else ''} amanhã")
     total = sum(b["valor"] for b in venc_hoje + venc_amanha)
-    assunto = f"⚠️ Boletos: {' e '.join(partes)} — {reais(total)}"
+    aviso = "1º aviso" if turno == 1 else "2º aviso"
+    assunto = f"⚠️ {aviso} — Boletos: {' e '.join(partes)} — {reais(total)}"
     corpo = ["<div style='font-family:Arial,sans-serif;max-width:640px;color:#0f172a'>",
              "<h2 style='color:#102b51;margin-bottom:4px'>Spoleto Capry — aviso de boletos</h2>",
              "<p style='color:#64748b;margin-top:0'>Boletos pendentes cadastrados no Painel de Custos &amp; DRE.</p>"]
@@ -86,8 +87,11 @@ def main():
     if not destinos:
         sys.exit("Configure EMAIL_DESTINOS com pelo menos um e-mail.")
     simular = os.environ.get("EMAIL_SIMULAR") == "1"
-    hoje = datetime.now(FUSO).date()
+    agora = datetime.now(FUSO)
+    hoje = agora.date()
     amanha = hoje + timedelta(days=1)
+    # Dois avisos por dia: 1º de manhã (antes do meio-dia) e 2º à tarde.
+    turno = 1 if agora.hour < 12 else 2
     with psycopg2.connect(os.environ["DATABASE_URL"], connect_timeout=15, sslmode="require") as conn:
         with conn.cursor() as cur:
             # Registro dos avisos: impede e-mail repetido se o robô rodar duas vezes no dia.
@@ -102,7 +106,7 @@ def main():
                            WHERE status='PENDENTE' AND vencimento IN (%s, %s)
                            ORDER BY vencimento, fornecedor_nome, id""", (hoje, amanha))
             boletos = [{"id": r[0], "fornecedor": r[1] or "Fornecedor", "referencia": r[2] or "Sem referência",
-                        "valor": float(r[3] or 0), "tipo": "DIA" if r[4] == hoje else "VESPERA",
+                        "valor": float(r[3] or 0), "tipo": ("DIA" if r[4] == hoje else "VESPERA") + f"_{turno}",
                         "codigo": r[5] or r[6] or "", "arquivo_nome": r[7], "arquivo": r[8]} for r in cur.fetchall()]
             if not boletos:
                 print("Nenhum boleto pendente vence hoje ou amanhã.")
@@ -131,8 +135,8 @@ def main():
                         b["cid"] = make_msgid(domain="painel.spoleto")[1:-1]
                         imagens.append((dados, subtipo, b["cid"]))
                 assunto, corpo = montar_email(hoje, amanha,
-                                              [b for b in novos if b["tipo"] == "DIA"],
-                                              [b for b in novos if b["tipo"] == "VESPERA"])
+                                              [b for b in novos if b["tipo"].startswith("DIA")],
+                                              [b for b in novos if b["tipo"].startswith("VESPERA")], turno)
                 msg = EmailMessage()
                 msg["Subject"] = assunto
                 msg["From"] = f"Painel Spoleto <{os.environ.get('EMAIL_REMETENTE', 'simulacao@local')}>"
