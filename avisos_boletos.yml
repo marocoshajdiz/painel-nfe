@@ -2,8 +2,10 @@ name: Avisos de boletos por e-mail
 
 on:
   schedule:
-    # Todo dia às 07:47 de Brasília (10:47 UTC).
+    # 1º aviso: todo dia às 07:47 de Brasília (10:47 UTC).
     - cron: "47 10 * * *"
+    # 2º aviso: todo dia às 13:47 de Brasília (16:47 UTC).
+    - cron: "47 16 * * *"
   workflow_dispatch:
     inputs:
       simular:
