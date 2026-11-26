@@ -3070,6 +3070,7 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
             {"CONTA": "  • Faturamento Delivery", "VALOR": fat_delivery, "%": pct(fat_delivery)},
             {"CONTA": "(-) Imposto Federal", "VALOR": imp_fed, "%": pct(imp_fed)},
             {"CONTA": "(-) Imposto Estadual", "VALOR": imp_est, "%": pct(imp_est)},
+            {"CONTA": "∑ SUBTOTAL IMPOSTOS", "VALOR": imp_fed + imp_est, "%": pct(imp_fed + imp_est)},
             {"CONTA": "🔹 RECEITA LÍQUIDA", "VALOR": rec_liquida, "%": pct(rec_liquida)},
             {"CONTA": "----------------------------------------", "VALOR": None, "%": ""},
             # Compras por categoria são informativas: Horte aparece separado,
@@ -3174,6 +3175,32 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
             {"CONTA": '🔴 TOTAL GERAL DE DESPESAS', "VALOR": total_geral_despesas, "%": pct(total_geral_despesas)},
             {"CONTA": '💰 RESULTADO FINAL (APÓS NÃO OPERACIONAIS)', "VALOR": res_final, "%": pct(res_final)},
         ]
+        # Subtotal no fim de cada grupo: o título fica só com o nome do grupo
+        # e o valor (o mesmo total de antes, sem recalcular) vai para a linha
+        # "∑ SUBTOTAL ..." logo depois da última conta do grupo.
+        GRUPOS_COM_SUBTOTAL = (
+            "🏢 TOTAL OCUPAÇÃO", "👥 TOTAL PESSOAL", "🧾 TOTAL SERVIÇOS", "💡 TOTAL UTILIDADES",
+            "🧹 MATERIAIS DE USO & CONSUMO", "🔧 MANUTENÇÃO", "🛵 DELIVERY",
+            "📢 MARKETING & FRANQUEADOR", "💳 CUSTO FINANCEIRO", "✈️ VIAGENS",
+            "🗂️ DESPESAS ADMINISTRATIVAS", "🏦 EMPRÉSTIMOS", "🏗️ INVESTIMENTOS", "👤 PRÓ-LABORE",
+        )
+        estrutura_com_subtotais, subtotal_pendente = [], None
+        for linha_dre in estrutura_dre_spoleto:
+            eh_item = linha_dre["CONTA"].startswith("  •")
+            if subtotal_pendente and not eh_item:
+                estrutura_com_subtotais.append(subtotal_pendente)
+                subtotal_pendente = None
+            if linha_dre["CONTA"] in GRUPOS_COM_SUBTOTAL:
+                icone, nome_grupo = linha_dre["CONTA"].split(" ", 1)
+                nome_grupo = nome_grupo.replace("TOTAL ", "", 1)
+                estrutura_com_subtotais.append({"CONTA": f"{icone} {nome_grupo}", "VALOR": None, "%": ""})
+                subtotal_pendente = {"CONTA": f"∑ SUBTOTAL {nome_grupo}",
+                                     "VALOR": linha_dre["VALOR"], "%": linha_dre["%"]}
+                continue
+            estrutura_com_subtotais.append(linha_dre)
+        if subtotal_pendente:
+            estrutura_com_subtotais.append(subtotal_pendente)
+        estrutura_dre_spoleto = estrutura_com_subtotais
         df_spoleto_view = pd.DataFrame(estrutura_dre_spoleto)
         df_spoleto_view["VALOR"] = df_spoleto_view["VALOR"].apply(lambda x: f"R$ {formatar_numero_br(x)}" if pd.notnull(x) else "")
         st.caption(
