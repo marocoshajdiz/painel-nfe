@@ -884,6 +884,134 @@ def gerar_excel_dre(nome_mes, df_dre_completo, df_lancamentos):
     return output.getvalue()
 
 
+def gerar_pdf_dre(nome_mes, linhas_dre, indicadores=None, totais=None):
+    """Exporta a DRE em PDF (A4), com o mesmo visual da tabela da tela.
+
+    linhas_dre: lista de dicts {"CONTA", "VALOR" (número ou None), "%" (texto)},
+    a mesma estrutura usada pela tabela HTML e pelo Excel.
+    """
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from xml.sax.saxutils import escape as _esc
+
+    def limpar(texto):
+        # As fontes padrão do PDF não têm emojis nem "∑": evita quadradinhos.
+        texto = str(texto or "").replace("∑", "")
+        texto = "".join(c for c in texto if c.encode("cp1252", "ignore"))
+        return " ".join(texto.split())
+
+    AZUL = colors.HexColor("#102B51")
+    saida = io.BytesIO()
+    doc = SimpleDocTemplate(saida, pagesize=A4, leftMargin=15*mm, rightMargin=15*mm,
+                            topMargin=15*mm, bottomMargin=15*mm,
+                            title=f"DRE Spoleto Capry - {nome_mes}")
+    largura = A4[0] - 30*mm
+    st_cel = ParagraphStyle("cel", fontName="Helvetica", fontSize=8.5, leading=10.5,
+                            textColor=colors.HexColor("#26364A"))
+    st_cel_b = ParagraphStyle("celb", parent=st_cel, fontName="Helvetica-Bold", textColor=AZUL)
+    st_sub = ParagraphStyle("sub", fontName="Helvetica", fontSize=9.5, leading=13,
+                            textColor=colors.HexColor("#35537A"))
+
+    # Faixa de título, como no Excel.
+    cabecalho = Table([[Paragraph('<font color="white" size="15"><b>SPOLETO CAPRY | DRE GERENCIAL</b></font>', st_cel)],
+                       [Paragraph(f'<font color="#D8E7FA">Competência: <b>{_esc(nome_mes)}</b> &nbsp;|&nbsp; Valores em R$ &nbsp;|&nbsp; '
+                                  f'Gerado em {datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m/%Y %H:%M")}</font>', st_cel)]],
+                      colWidths=[largura])
+    cabecalho.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), AZUL),
+                                   ("TOPPADDING", (0, 0), (-1, 0), 9), ("BOTTOMPADDING", (0, -1), (-1, -1), 9),
+                                   ("LEFTPADDING", (0, 0), (-1, -1), 10)]))
+    story = [cabecalho, Spacer(1, 8)]
+
+    if indicadores:
+        celulas = [Paragraph(f'<font size="7.5" color="#526581">{_esc(t)}</font><br/>'
+                             f'<font size="11"><b>R$ {formatar_numero_br(v)}</b></font>', st_cel_b)
+                   for t, v in indicadores]
+        kpis = Table([celulas], colWidths=[largura / len(celulas)] * len(celulas))
+        kpis.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F4F7FC")),
+                                  ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#DBE5F2")),
+                                  ("LINEAFTER", (0, 0), (-2, -1), 0.5, colors.HexColor("#DBE5F2")),
+                                  ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 7)]))
+        story += [kpis, Spacer(1, 8)]
+
+    dados = [["CONTA", "VALOR", "%"]]
+    estilos = [
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1E477C")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LINEBELOW", (0, 1), (-1, -1), 0.3, colors.HexColor("#EEF2F7")),
+        ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ]
+    for linha in linhas_dre:
+        conta = str(linha.get("CONTA") or "")
+        rotulo = conta.strip()
+        valor = linha.get("VALOR")
+        perc = str(linha.get("%") or "")
+        tem_valor = valor is not None and not (isinstance(valor, float) and math.isnan(valor))
+        valor_txt = f"R$ {formatar_numero_br(valor)}" if tem_valor else ""
+        i = len(dados)
+        # Mesma classificação da tabela HTML da tela.
+        if not rotulo or set(rotulo) <= set("-─ ") or "DESPESAS NÃO OPERACIONAIS ──" in rotulo:
+            texto = "" if set(rotulo) <= set("- ") else limpar(rotulo.strip("─ "))
+            dados.append([Paragraph(f'<font size="7.5" color="#64748B"><b>{_esc(texto)}</b></font>', st_cel), "", ""])
+            estilos += [("SPAN", (0, i), (-1, i)), ("TOPPADDING", (0, i), (-1, i), 6)]
+            continue
+        if conta.startswith("  •") or rotulo.startswith("(-)"):
+            classe = "item"
+        elif rotulo.startswith("∑"):
+            classe = "subtotal"
+        elif "RESULTADO FINAL" in rotulo or "TOTAL GERAL DE DESPESAS" in rotulo:
+            classe = "final"
+        elif not valor_txt:
+            classe = "grupo"
+        else:
+            classe = "total"
+        texto = _esc(limpar(rotulo))
+        if classe == "item":
+            dados.append([Paragraph("&nbsp;&nbsp;&nbsp;&nbsp;" + texto, st_cel), valor_txt, perc])
+        else:
+            dados.append([Paragraph(texto, st_cel_b), valor_txt, perc])
+            estilos.append(("FONTNAME", (1, i), (-1, i), "Helvetica-Bold"))
+            estilos.append(("TEXTCOLOR", (1, i), (-1, i), AZUL))
+        if classe == "subtotal":
+            estilos += [("BACKGROUND", (0, i), (-1, i), colors.HexColor("#DBEAFE")),
+                        ("LINEABOVE", (0, i), (-1, i), 0.8, colors.HexColor("#93C5FD")),
+                        ("LINEBELOW", (0, i), (-1, i), 0.8, colors.HexColor("#93C5FD"))]
+        elif classe == "total":
+            estilos.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor("#F1F5F9")))
+        elif classe == "final":
+            estilos.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor("#BFDBFE")))
+        elif classe == "grupo":
+            estilos.append(("TOPPADDING", (0, i), (-1, i), 7))
+        if tem_valor and float(valor) < 0:
+            estilos.append(("TEXTCOLOR", (1, i), (1, i), colors.HexColor("#B91C1C")))
+
+    tabela = Table(dados, colWidths=[largura * 0.64, largura * 0.22, largura * 0.14], repeatRows=1)
+    tabela.setStyle(TableStyle(estilos))
+    story.append(tabela)
+
+    if totais:
+        story.append(Spacer(1, 8))
+        story.append(Paragraph(" &nbsp;|&nbsp; ".join(
+            f"{_esc(nome)}: <b>R$ {formatar_numero_br(v)}</b>" for nome, v in totais), st_sub))
+
+    def rodape(canvas, doc_):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 7.5)
+        canvas.setFillColor(colors.HexColor("#8A99AD"))
+        canvas.drawString(15*mm, 9*mm, f"Spoleto Capry · DRE {nome_mes}")
+        canvas.drawRightString(A4[0] - 15*mm, 9*mm, f"Página {doc_.page}")
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=rodape, onLaterPages=rodape)
+    return saida.getvalue()
+
+
 
 def carregar_chaves_gemini():
     """Lê chaves dos Secrets sem expor seus valores."""
@@ -3360,6 +3488,25 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
             type="primary",
             use_container_width=True,
         )
+        try:
+            dados_pdf = gerar_pdf_dre(
+                NOMES_MESES[mes_ativo], estrutura_dre_spoleto,
+                indicadores=[("Venda Bruta", venda_bruta), ("Total CMV com frete", total_cmv),
+                             ("Lucro Bruto", lucro_bruto), ("Resultado Final", res_final)],
+                totais=[("Total despesas operacionais", total_despesas_operacionais),
+                        ("Subtotal não operacionais", despesas_nao_operacionais),
+                        ("Total geral", total_geral_despesas)],
+            )
+        except Exception as erro_pdf:
+            st.warning(f"Não foi possível gerar o PDF: {type(erro_pdf).__name__}.")
+        else:
+            st.download_button(
+                label="📄 Baixar DRE em PDF",
+                data=dados_pdf,
+                file_name=f"DRE_Spoleto_{mes_ativo}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
 
     # ==============================================================================
     # 2. ABA DE ESCANEAR NOTA & ALIMENTAR DRE
