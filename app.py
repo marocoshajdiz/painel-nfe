@@ -3216,9 +3216,56 @@ if menu.startswith("📊 DRE Spoleto") or menu in ("📈 Dashboard de Gráficos"
                 st.caption("Prévia dos valores editados. Clique em Salvar para gravar no Supabase.")
             else:
                 st.caption("Demonstrativo somente para consulta, atualizado a partir dos lançamentos salvos no mês selecionado.")
-            st.dataframe(
-                df_spoleto_view, use_container_width=True, height=660,
-                hide_index=True, key=f"dre_visualizacao_ao_vivo_{mes_ativo}",
+            # Tabela em HTML: o st.dataframe não aceita negrito, só cor.
+            import html as _html
+            linhas_html = []
+            for _, linha_dre in df_spoleto_view.iterrows():
+                conta = str(linha_dre["CONTA"])
+                valor = str(linha_dre["VALOR"] or "")
+                perc = str(linha_dre["%"] or "")
+                rotulo = conta.strip()
+                if not rotulo or set(rotulo) <= set("-─ ") or "DESPESAS NÃO OPERACIONAIS ──" in rotulo:
+                    classe = "sep"
+                elif conta.startswith("  •"):
+                    classe = "item"
+                elif rotulo.startswith("∑"):
+                    classe = "subtotal"
+                elif "RESULTADO FINAL" in rotulo or "TOTAL GERAL DE DESPESAS" in rotulo:
+                    classe = "final"
+                elif not valor:
+                    classe = "grupo"
+                elif rotulo.startswith("(-)"):
+                    classe = "item"
+                else:
+                    classe = "total"
+                if classe == "sep":
+                    texto_sep = "" if set(rotulo) <= set("- ") else _html.escape(rotulo.strip("─ "))
+                    linhas_html.append(f'<tr class="sep"><td colspan="3">{texto_sep}</td></tr>')
+                    continue
+                linhas_html.append(
+                    f'<tr class="{classe}"><td>{_html.escape(rotulo)}</td>'
+                    f'<td class="num">{_html.escape(valor)}</td><td class="num">{_html.escape(perc)}</td></tr>')
+            st.markdown(
+                """<style>
+                .dre-box{max-height:660px;overflow:auto;border:1px solid #e2e8f0;border-radius:10px}
+                .dre-tab{width:100%;border-collapse:collapse;font-size:14px;color:#26364a}
+                .dre-tab th{position:sticky;top:0;background:#f8fafc;color:#64748b;font-weight:600;
+                            text-align:left;padding:10px 12px;border-bottom:1px solid #e2e8f0;z-index:1}
+                .dre-tab td{padding:8px 12px;border-bottom:1px solid #eef2f7}
+                .dre-tab td.num,.dre-tab th.num{text-align:right;white-space:nowrap}
+                .dre-tab tr.item td:first-child{padding-left:30px}
+                .dre-tab tr.grupo td{font-weight:700;color:#102b51;padding-top:14px}
+                .dre-tab tr.subtotal td{font-weight:800;color:#102b51;background:#dbeafe;
+                                        border-top:2px solid #93c5fd;border-bottom:2px solid #93c5fd}
+                .dre-tab tr.total td{font-weight:700;color:#102b51;background:#f1f5f9}
+                .dre-tab tr.final td{font-weight:800;color:#0f172a;background:#bfdbfe;font-size:15px}
+                .dre-tab tr.sep td{padding:4px 12px;background:#ffffff;color:#64748b;
+                                   font-size:12px;font-weight:700;text-align:center;letter-spacing:1px}
+                </style>"""
+                '<div class="dre-box"><table class="dre-tab"><thead><tr><th>CONTA</th>'
+                '<th class="num">VALOR</th><th class="num">%</th></tr></thead><tbody>'
+                + "".join(linhas_html) + "</tbody></table></div>",
+                unsafe_allow_html=True,
             )
             st.markdown(
                 f"**Total despesas operacionais:** R$ {formatar_numero_br(total_despesas_operacionais)}"
